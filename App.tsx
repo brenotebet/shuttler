@@ -1,9 +1,25 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import StackNavigator from './navigation/StackNavigator';
 import { LocationProvider } from './location/LocationContext';
+import * as Notifications from 'expo-notifications';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+    shouldShowBanner: true, 
+    shouldShowList: true,  
+  }),
+});
 
 export default function App() {
+  useEffect(() => {
+    registerForPushNotificationsAsync();
+    Notifications.requestPermissionsAsync();
+  }, []);
+
   return (
     <LocationProvider>
       <NavigationContainer>
@@ -11,4 +27,12 @@ export default function App() {
       </NavigationContainer>
     </LocationProvider>
   );
+}
+
+async function registerForPushNotificationsAsync() {
+  const { status } = await Notifications.requestPermissionsAsync();
+  if (status !== 'granted') return;
+
+  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  console.log('Push token:', token);
 }

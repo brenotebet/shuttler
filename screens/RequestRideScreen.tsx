@@ -1,65 +1,88 @@
-import React, { useState } from 'react';
-import { View, Text, Button, Alert } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, Button, Alert, StyleSheet } from 'react-native';
 import * as Location from 'expo-location';
 import { Picker } from '@react-native-picker/picker';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 
-const DESTINATIONS = [
+const LOCATIONS = [
   { name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
-  { name: 'PAC', latitude: 38.6079, longitude: -89.81561 },
+  { name: 'PAC', latitude: 38.60790, longitude: -89.81561 },
   { name: 'Performance Center', latitude: 38.59875, longitude: -89.82447 },
 ];
 
-export default function RequestRideScreen() {
-  const [selected, setSelected] = useState<string | null>(null);
+export default function RequestRideScreen({ navigation }: { navigation: any }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [busOnline, setBusOnline] = useState(false);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'buses', 'busA'), (docSnap) => {
+      setBusOnline(docSnap.exists());
+    });
+    return () => unsub();
+  }, []);
 
   const handleRequest = async () => {
-    if (!selected) {
-      Alert.alert('Please select a drop-off location.');
-      return;
-    }
-
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Location permission denied');
+      Alert.alert('Permission denied for location');
       return;
     }
 
-    const pickup = await Location.getCurrentPositionAsync({});
-    const dropoff = DESTINATIONS.find((d) => d.name === selected);
+    const location = await Location.getCurrentPositionAsync({});
+    const selectedDropoff = LOCATIONS[selectedIndex];
 
     try {
       await addDoc(collection(db, 'rideRequests'), {
         studentEmail: auth.currentUser?.email,
         pickup: {
-          latitude: pickup.coords.latitude,
-          longitude: pickup.coords.longitude,
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
         },
-        dropoff,
+        dropoff: {
+          latitude: selectedDropoff.latitude,
+          longitude: selectedDropoff.longitude,
+          name: selectedDropoff.name,
+        },
         status: 'pending',
         timestamp: serverTimestamp(),
       });
-      Alert.alert('Ride requested!');
+
+      Alert.alert('Ride requested successfully!');
+      navigation.goBack();
     } catch (err: any) {
-      Alert.alert('Error', err.message);
+      Alert.alert('Error requesting ride', err.message);
     }
   };
 
+  if (!busOnline) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.warningText}>
+          No buses are currently online. Please try again later.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={{ padding: 20 }}>
-      <Text>Choose a drop-off location:</Text>
+      <Text>Select Drop-off Location</Text>
       <Picker
-        selectedValue={selected}
-        onValueChange={(itemValue: React.SetStateAction<string | null>) => setSelected(itemValue)}
-        style={{ marginVertical: 10 }}
+        selectedValue={selectedIndex}
+        onValueChange={(itemValue) => setSelectedIndex(itemValue)}
+        style={{ marginBottom: 20 }}
       >
-        <Picker.Item label="Select a destination..." value={null} />
-        {DESTINATIONS.map((d) => (
-          <Picker.Item key={d.name} label={d.name} value={d.name} />
+        {LOCATIONS.map((loc, index) => (
+          <Picker.Item label={loc.name} value={index} key={loc.name} />
         ))}
       </Picker>
       <Button title="Request Ride" onPress={handleRequest} />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  warningText: { fontSize: 16, color: 'red', textAlign: 'center' },
+});

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useRef } from 'react';
 import * as Location from 'expo-location';
-import { setDoc, doc } from 'firebase/firestore';
+import { setDoc, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 
 type LocationContextType = {
@@ -42,12 +42,18 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     setIsSharing(true);
   };
 
-  const stopSharing = () => {
+  const stopSharing = async () => {
     if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-      setIsSharing(false);
+    clearInterval(intervalRef.current);
+    intervalRef.current = null;
+    setIsSharing(false);
+
+    try {
+      await deleteDoc(doc(db, 'buses', 'busA'));
+    } catch (err) {
+      console.error('Failed to clear bus location:', err);
     }
+  }
   };
 
   return (

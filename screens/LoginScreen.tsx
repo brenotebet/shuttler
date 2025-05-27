@@ -20,36 +20,36 @@ export default function LoginScreen({ navigation }: Props) {
   const [isDriver, setIsDriver] = useState(false);
 
   const handleLogin = async () => {
-    if (isDriver) {
-      if (adminAccounts[email] === password) {
-        navigation.replace('AdminDriver');
-      } else {
-        Alert.alert('Invalid driver credentials');
-      }
-      return;
+  if (isDriver) {
+    if (adminAccounts[email] === password) {
+      navigation.replace('DriverScreen'); // 🔄 Changed from 'AdminDriver'
+    } else {
+      Alert.alert('Invalid driver credentials');
     }
+    return;
+  }
 
-    if (!email.endsWith('@mckendree.edu')) {
-      Alert.alert('Only McKendree emails allowed');
-      return;
-    }
+  if (!email.endsWith('@mckendree.edu')) {
+    Alert.alert('Only McKendree emails allowed');
+    return;
+  }
 
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      navigation.replace('Map');
-    } catch (err: any) {
-      if (err.code === 'auth/user-not-found') {
-        try {
-          await createUserWithEmailAndPassword(auth, email, password);
-          navigation.replace('Map');
-        } catch (e: any) {
-          Alert.alert('Error creating account', e.message);
-        }
-      } else {
-        Alert.alert('Login Error', err.message);
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+    navigation.replace('Map');
+  } catch (err: any) {
+    if (err.code === 'auth/user-not-found') {
+      try {
+        await createUserWithEmailAndPassword(auth, email, password);
+        navigation.replace('Map');
+      } catch (e: any) {
+        Alert.alert('Error creating account', e.message);
       }
+    } else {
+      Alert.alert('Login Error', err.message);
     }
-  };
+  }
+};
 
   return (
     <View style={{ padding: 20 }}>

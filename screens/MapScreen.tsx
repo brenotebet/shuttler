@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, Button } from 'react-native';
 import MapView, { Marker, Polyline, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -8,6 +8,8 @@ const polyline = require('@mapbox/polyline');
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import { GOOGLE_MAPS_API_KEY } from '../config';
+import * as Notifications from 'expo-notifications';
+
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Map'>;
@@ -20,9 +22,13 @@ export default function MapScreen({ navigation }: Props) {
   const [rideId, setRideId] = useState<string | null>(null);
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [eta, setEta] = useState<string | null>(null);
+  const [busOnline, setBusOnline] = useState(true);
+  const notifiedRef = useRef(false);
+
+
 
   useEffect(() => {
-    (async () => {
+    (async () =>{
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission denied');
@@ -35,14 +41,41 @@ export default function MapScreen({ navigation }: Props) {
         latitudeDelta: 0.005,
         longitudeDelta: 0.005,
       });
-    })();
+      if (ride?.status === 'accepted' && busLocation && ride?.pickup) {
+          const dist = getDistanceInMeters(
+            busLocation.latitude,
+            busLocation.longitude,
+            ride.pickup.latitude,
+            ride.pickup.longitude
+          );
+          
+
+          if (dist < 50 && !notifiedRef.current) {
+            Alert.alert('Heads up!', 'The bus is arriving at your pickup location!');
+            notifiedRef.current = true; // prevent duplicate alerts
+          }
+        }
+      })();
+          
 
     const unsubBus = onSnapshot(doc(db, 'buses', 'busA'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setBusLocation({ latitude: data.latitude, longitude: data.longitude });
-      }
-    });
+  if (docSnap.exists()) {
+    const data = docSnap.data();
+    const lastUpdated = new Date(data.timestamp);
+    const now = new Date();
+    const secondsAgo = (now.getTime() - lastUpdated.getTime()) / 1000;
+    setBusOnline(true);
+
+    if (secondsAgo < 10) {
+      setBusLocation({ latitude: data.latitude, longitude: data.longitude });
+    } else {
+      setBusLocation(null);
+      setBusOnline(false);
+    }
+  } else {
+    setBusLocation(null);
+  }
+});
 
     const rideQuery = query(
       collection(db, 'rideRequests'),
@@ -117,6 +150,49 @@ export default function MapScreen({ navigation }: Props) {
     fetchRoute();
   }, [ride, busLocation]);
 
+  function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+      const toRad = (value: number) => (value * Math.PI) / 180;
+      const R = 6371000; // Earth radius in meters
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) *
+          Math.cos(toRad(lat2)) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    useEffect(() => {
+      if (ride?.status === 'accepted') {
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Your ride has been accepted! 🎉',
+            body: 'A bus is on the way to pick you up.',
+          },
+          trigger: null,
+        });
+      } else if (ride?.status === 'in-transit') {
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'You are now in transit 🚌',
+            body: 'Sit tight! You’re on your way to your destination.',
+          },
+          trigger: null,
+        });
+      } else if (ride?.status === 'completed') {
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'You have arrived!',
+            body: 'Your ride has been completed.',
+          },
+          trigger: null,
+        });
+      }
+    }, [ride?.status]);
+
   if (!region) {
     return (
       <View style={styles.center}>
@@ -127,6 +203,11 @@ export default function MapScreen({ navigation }: Props) {
 
   return (
     <View style={{ flex: 1 }}>
+      {!busLocation && (
+        <View style={{ backgroundColor: 'yellow', padding: 10 }}>
+          <Text style={{ textAlign: 'center' }}>No buses are currently online.</Text>
+        </View>
+      )}
       <MapView style={styles.map} region={region} showsUserLocation>
         {busLocation && (
           <Marker coordinate={busLocation} title="Bus A" pinColor="blue" />
@@ -164,11 +245,19 @@ export default function MapScreen({ navigation }: Props) {
       )}
 
       {!ride && (
-        <Button title="Go to request" onPress={() => navigation.navigate('RequestRide')} />
+        <Button
+          title="Request A Bogey Bus Ride"
+          onPress={() => {
+            if (!busOnline) {
+              Alert.alert('No buses available', 'You cannot request a ride right now.');
+            } else {
+              navigation.navigate('RequestRide');
+            }
+          }}
+        />
       )}
 
-      <Button title="Go to admin" onPress={() => navigation.navigate('AdminDriver')} />
-      <Button title="Go to driver" onPress={() => navigation.navigate('DriverScreen')} />
+      
     </View>
   );
 }
