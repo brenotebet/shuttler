@@ -37,9 +37,9 @@ import {
   query,
   where,
   onSnapshot,
-  runTransaction,
   doc,
   deleteDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -170,18 +170,28 @@ export default function DriverScreen() {
       setActiveBusIds(recentIds);
     });
 
-    // (c) Subscribe to this driver’s assigned rideRequests
+    // (c) Subscribe to ride requests (pending or assigned to this driver)
     unsubRide = onSnapshot(
-      query(
-        collection(db, 'rideRequests'),
-        where('driverId', '==', driverId),
-        where('status', 'in', ['accepted', 'in-transit'])
-      ),
+      query(collection(db, 'rideRequests'), where('status', 'in', ['pending', 'accepted', 'in-transit'])),
       (snapshot) => {
-        if (!snapshot.empty) {
-          const docSnap = snapshot.docs[0];
-          setRide({ id: docSnap.id, ...(docSnap.data() as any) });
-          setRideId(docSnap.id);
+        const list: any[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push({ id: docSnap.id, ...(docSnap.data() as any) });
+        });
+
+        // Ride already assigned to this driver takes priority
+        const current = list.find(
+          (r) => r.driverId === driverId && r.status !== 'completed'
+        );
+        const pending = list.find(
+          (r) => r.status === 'pending' && !r.driverId
+        );
+
+        const selected = current || pending || null;
+
+        if (selected) {
+          setRide(selected);
+          setRideId(selected.id);
         } else {
           setRide(null);
           setRideId(null);
@@ -197,6 +207,19 @@ export default function DriverScreen() {
       if (unsubRide) unsubRide();
     };
   }, [driverId]);
+
+  // Update ride status helper
+  const updateStatus = async (id: string, newStatus: string) => {
+    try {
+      const data: any = { status: newStatus };
+      if (newStatus === 'accepted' && driverId) {
+        data.driverId = driverId;
+      }
+      await updateDoc(doc(db, 'rideRequests', id), data);
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    }
+  };
 
   // ───────────────────────────────────────────────────────────────────
   // 2) Fetch route & ETA whenever “ride” or driver location updates
@@ -350,32 +373,34 @@ export default function DriverScreen() {
   return (
     <SafeAreaView style={{ flex: 1 }}>
       {/* ───── Top-Right “Start/Stop Sharing” Button ───── */}
-      <View style={styles.topRightButtonContainer}>
-        <TouchableOpacity
-          style={styles.shareButton}
-          onPress={async () => {
-            if (!driverId) {
-              Alert.alert('Driver ID missing');
-              return;
-            }
-            try {
-              if (isSharing) {
-                await stopSharing();
-              } else {
-                await startSharing(driverId);
+      {(ride?.status === 'accepted' || ride?.status === 'in-transit') && (
+        <View style={styles.topRightButtonContainer}>
+          <TouchableOpacity
+            style={styles.shareButton}
+            onPress={async () => {
+              if (!driverId) {
+                Alert.alert('Driver ID missing');
+                return;
               }
-            } catch (err) {
-              console.error(err);
-              Alert.alert('Error toggling location sharing');
-            }
-          }}
-        >
-          <Icon name={isSharing ? 'gps-off' : 'gps-fixed'} size={24} color="#fff" />
-          <Text style={styles.shareButtonText}>
-            {isSharing ? 'Stop Sharing' : 'Start Sharing'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+              try {
+                if (isSharing) {
+                  await stopSharing();
+                } else {
+                  await startSharing(driverId);
+                }
+              } catch (err) {
+                console.error(err);
+                Alert.alert('Error toggling location sharing');
+              }
+            }}
+          >
+            <Icon name={isSharing ? 'gps-off' : 'gps-fixed'} size={24} color="#fff" />
+            <Text style={styles.shareButtonText}>
+              {isSharing ? 'Stop Sharing' : 'Start Sharing'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* ───── Banner if no fresh driver location ───── */}
       {!busOnline && (
@@ -506,27 +531,79 @@ export default function DriverScreen() {
           <>
             <Text style={styles.cardTitle}>Ride Status: {ride.status}</Text>
             <Text style={styles.cardSubtitle}>
-              {ride.status === 'accepted' ? 'Navigate to Pickup' : 'Dropping Off'}
+              {ride.status === 'accepted'
+                ? 'Navigate to Pickup'
+                : ride.status === 'in-transit'
+                ? 'Dropping Off'
+                : 'Awaiting Acceptance'}
             </Text>
-            {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={async () => {
-                if (rideId) {
-                  await deleteDoc(doc(db, 'rideRequests', rideId));
-                  setRide(null);
-                  setRideId(null);
-                  setRouteCoords([]);
-                  setEta(null);
-                  Alert.alert('Ride cancelled');
-                }
-              }}
-            >
-              <Text style={styles.cancelButtonText}>Cancel Ride</Text>
-            </TouchableOpacity>
+            {eta && ride.status !== 'pending' && (
+              <Text style={styles.etaText}>ETA: {eta}</Text>
+            )}
+
+            {ride.status === 'pending' && !ride.driverId && (
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => rideId && updateStatus(rideId, 'accepted')}
+              >
+                <Text style={styles.cancelButtonText}>Accept Ride</Text>
+              </TouchableOpacity>
+            )}
+
+            {ride.status === 'accepted' && ride.driverId === driverId && (
+              <>
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => rideId && updateStatus(rideId, 'in-transit')}
+                >
+                  <Text style={styles.actionButtonText}>Passenger Picked Up</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={async () => {
+                    if (rideId) {
+                      await deleteDoc(doc(db, 'rideRequests', rideId));
+                      setRide(null);
+                      setRideId(null);
+                      setRouteCoords([]);
+                      setEta(null);
+                      Alert.alert('Ride cancelled');
+                    }
+                  }}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel Ride</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {ride.status === 'in-transit' && ride.driverId === driverId && (
+              <>
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => rideId && updateStatus(rideId, 'completed')}
+                >
+                  <Text style={styles.actionButtonText}>Passenger Dropped Off</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={async () => {
+                    if (rideId) {
+                      await deleteDoc(doc(db, 'rideRequests', rideId));
+                      setRide(null);
+                      setRideId(null);
+                      setRouteCoords([]);
+                      setEta(null);
+                      Alert.alert('Ride cancelled');
+                    }
+                  }}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel Ride</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </>
         ) : (
-          <Text style={styles.noRideText}>No active ride assigned</Text>
+          <Text style={styles.noRideText}>No active requests</Text>
         )}
       </Animated.View>
     </SafeAreaView>
@@ -632,6 +709,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#4B2E83',
     marginBottom: 12,
+  },
+  actionButton: {
+    backgroundColor: '#4B2E83',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
   },
   cancelButton: {
     backgroundColor: '#4B2E83',
