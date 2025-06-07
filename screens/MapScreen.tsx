@@ -142,6 +142,9 @@ export default function MapScreen() {
 
     // Subscribe to live buses
     unsubBus = onSnapshot(collection(db, 'buses'), (snapshot) => {
+      if (snapshot.metadata.hasPendingWrites) {
+        return;
+      }
       const recentBuses = snapshot.docs
         .map((docSnap) => {
           const data = docSnap.data();

@@ -112,6 +112,9 @@ export default function DriverScreen() {
 
     // (b) Subscribe to “buses” collection for live driver location
     unsubBus = onSnapshot(collection(db, 'buses'), (snapshot) => {
+      if (snapshot.metadata.hasPendingWrites) {
+        return;
+      }
       const recent = snapshot.docs
         .map((docSnap) => {
           const data = docSnap.data();
@@ -373,6 +376,7 @@ export default function DriverScreen() {
   return (
     <SafeAreaView style={{ flex: 1 }}>
       {/* ───── Top-Right “Start/Stop Sharing” Button ───── */}
+
       {(ride?.status !== 'accepted' && ride?.status !== 'in-transit') && (
 
         <View style={styles.topRightButtonContainer}>
