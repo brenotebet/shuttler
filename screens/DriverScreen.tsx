@@ -373,7 +373,8 @@ export default function DriverScreen() {
   return (
     <SafeAreaView style={{ flex: 1 }}>
       {/* ───── Top-Right “Start/Stop Sharing” Button ───── */}
-      {(ride?.status === 'accepted' || ride?.status === 'in-transit') && (
+      {(ride?.status !== 'accepted' && ride?.status !== 'in-transit') && (
+
         <View style={styles.topRightButtonContainer}>
           <TouchableOpacity
             style={styles.shareButton}
