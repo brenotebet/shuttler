@@ -22,9 +22,17 @@ import MapView, {
   Polygon,
   Polyline,
   Region,
-  MapStyleElement,
   Marker,
 } from 'react-native-maps';
+import {
+  campusCoords,
+  outerRing,
+  grayscaleMapStyle,
+  MIN_LAT_DELTA,
+  MAX_LAT_DELTA,
+  MIN_LON_DELTA,
+  MAX_LON_DELTA,
+} from '../src/constants/mapConfig';
 import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -64,55 +72,6 @@ const LOCATIONS = [
   { id: 'stop5', name: 'McKendree West Clubhouse', latitude: 38.60573, longitude: -89.82468 },
 ];
 
-// === CAMPUS BOUNDARY (hole) in CCW order ===
-const campusCoords = [
-  { latitude: 38.59678, longitude: -89.82788 }, // SW
-  { latitude: 38.59667, longitude: -89.79585 }, // SE
-  { latitude: 38.61627, longitude: -89.80259 }, // NE
-  { latitude: 38.61775, longitude: -89.82802 }, // NW
-];
-// === OUTER RING (CW) ===
-const outerRing = [
-  { latitude: 90, longitude: -180 },
-  { latitude: 90, longitude: 180 },
-  { latitude: -90, longitude: 180 },
-  { latitude: -90, longitude: -180 },
-];
-// === GRAYSCALE MAP STYLE ===
-const grayscaleMapStyle: MapStyleElement[] = [
-  { elementType: 'geometry', stylers: [{ color: '#f5f5f5' }] },
-  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#616161' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#f5f5f5' }] },
-  {
-    featureType: 'administrative.land_parcel',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#bdbdbd' }],
-  },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{weight: '2'} ,{ color: '#ffffff' }] },
-  {
-    featureType: 'road.arterial',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#757575' }],
-  },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{weight: '3'}, { color: '#dadada' }] },
-  {
-    featureType: 'road.highway',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#616161' }],
-  },
-  { featureType: 'road.local', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
-  { featureType: 'transit.line', elementType: 'geometry', stylers: [{ color: '#e5e5e5' }] },
-  { featureType: 'transit.station', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c9c9c9' }] },
-  {
-    featureType: 'water',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#9e9e9e' }],
-  },
-];
 
 function computeBearing(
   lat1: number,
@@ -155,11 +114,7 @@ export default function MapScreen() {
   // Animate bottom card
   const slideAnim = useRef(new Animated.Value(0)).current;
 
-  // Zoom limits
-  const MIN_LAT_DELTA = 0.005;
-  const MAX_LAT_DELTA = 0.1;
-  const MIN_LON_DELTA = 0.005;
-  const MAX_LON_DELTA = 0.02;
+
 
   // Bus icon
   const busIcon = require('../assets/bus-icon.png');
@@ -242,7 +197,18 @@ export default function MapScreen() {
         }
       });
 
-      setActiveBusIds(recentBuses.map((b) => b.id));
+      const recentIds = recentBuses.map((b) => b.id);
+      Object.keys(busRegions.current).forEach((key) => {
+        if (!recentIds.includes(key)) delete busRegions.current[key];
+      });
+      Object.keys(lastCoords.current).forEach((key) => {
+        if (!recentIds.includes(key)) delete lastCoords.current[key];
+      });
+      Object.keys(headings.current).forEach((key) => {
+        if (!recentIds.includes(key)) delete headings.current[key];
+      });
+
+      setActiveBusIds(recentIds);
     });
 
     // Subscribe to this student's rideRequests
@@ -276,8 +242,7 @@ export default function MapScreen() {
   }, []);
 
   // 2) Fetch route + ETA whenever ride or bus updates
-  useEffect(() => {
-    const fetchRoute = async () => {
+  const fetchRoute = async () => {
       if (!ride || !driverId) {
         setRouteCoords([]);
         setEta(null);
@@ -320,9 +285,18 @@ export default function MapScreen() {
         setRouteCoords([]);
         setEta(null);
       }
+      };
+
+    const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const driverOnline = activeBusIds.includes(driverId || '');
+  useEffect(() => {
+    if (!driverId) return;
+    if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
+    fetchTimeout.current = setTimeout(fetchRoute, 2000);
+    return () => {
+      if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
     };
-    fetchRoute();
-  }, [ride, activeBusIds]);
+  }, [driverId, ride?.status, driverOnline]);
 
   // 3) Schedule notifications on ride status change
   useEffect(() => {

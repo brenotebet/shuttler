@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useRef, useEffect } from 'r
 import * as Location from 'expo-location';
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { setDoc, doc, deleteDoc, query, collection, where, getDocs } from 'firebase/firestore';
+import { setDoc, doc, deleteDoc, query, collection, where, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 
 type LocationContextType = {
@@ -19,7 +19,7 @@ const LocationContext = createContext<LocationContextType>({
 
 export const LocationProvider = ({ children }: { children: React.ReactNode }) => {
   const [isSharing, setIsSharing] = useState(false);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const watchSub = useRef<Location.LocationSubscription | null>(null);
   const currentDriverId = useRef<string | null>(null);
 
   // Stop location sharing if the app goes into the background
@@ -41,37 +41,39 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }, [isSharing]);
 
   const startSharing = async (driverId: string) => {
-    // Prevent duplicate intervals
-    if (isSharing || intervalRef.current) return;
+    // Prevent duplicate subscriptions
+    if (isSharing || watchSub.current) return;
 
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return;
 
     currentDriverId.current = driverId;
 
-    intervalRef.current = setInterval(async () => {
-      try {
-        const loc = await Location.getCurrentPositionAsync({});
-        if (currentDriverId.current) {
-          await setDoc(doc(db, 'buses', currentDriverId.current), {
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-            timestamp: new Date().toISOString(),
-          });
+    watchSub.current = await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 1 },
+      async (loc) => {
+        try {
+          if (currentDriverId.current) {
+            await setDoc(doc(db, 'buses', currentDriverId.current), {
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              timestamp: serverTimestamp(),
+            });
+          }
+        } catch (err) {
+          console.error('Error sharing location:', err);
         }
-      } catch (err) {
-        console.error('Error sharing location:', err);
       }
-    }, 3000);
+    );
 
     setIsSharing(true);
   };
 
   const stopSharing = async () => {
-  if (!intervalRef.current || !currentDriverId.current) return;
+  if (!watchSub.current || !currentDriverId.current) return;
 
-  clearInterval(intervalRef.current);
-  intervalRef.current = null;
+  watchSub.current.remove();
+  watchSub.current = null;
   setIsSharing(false);
 
   const driverDocId = currentDriverId.current;
@@ -79,13 +81,11 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   try {
     await deleteDoc(doc(db, 'buses', driverDocId));
 
-    const busesSnap = await getDocs(collection(db, 'buses'));
-    const onlineBuses = busesSnap.docs.filter(docSnap => {
-      const data = docSnap.data();
-      const timestamp = new Date(data.timestamp);
-      const secondsAgo = (new Date().getTime() - timestamp.getTime()) / 1000;
-      return secondsAgo < 15;
-    });
+    const threshold = Timestamp.fromDate(new Date(Date.now() - 15000));
+    const busesSnap = await getDocs(
+      query(collection(db, 'buses'), where('timestamp', '>=', threshold))
+    );
+    const onlineBuses = busesSnap.docs;
 
     if (onlineBuses.length === 0) {
       const pendingRidesSnap = await getDocs(
