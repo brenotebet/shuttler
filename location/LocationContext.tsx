@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, useRef } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 import * as Location from 'expo-location';
+import { AppState, AppStateStatus } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { setDoc, doc, deleteDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 
@@ -19,6 +21,24 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const [isSharing, setIsSharing] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentDriverId = useRef<string | null>(null);
+
+  // Stop location sharing if the app goes into the background
+  useEffect(() => {
+    const onChange = (state: AppStateStatus) => {
+      if (state !== 'active' && isSharing) {
+        stopSharing();
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Location sharing stopped',
+            body: 'Sharing was turned off because the app was closed.',
+          },
+          trigger: null,
+        });
+      }
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => sub.remove();
+  }, [isSharing]);
 
   const startSharing = async (driverId: string) => {
     // Prevent duplicate intervals
