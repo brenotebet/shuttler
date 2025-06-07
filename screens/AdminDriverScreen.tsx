@@ -1,6 +1,17 @@
+// src/screens/AdminDriverScreen.tsx
+
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, Button, Alert, StyleSheet } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import {
+  View,
+  Text,
+  FlatList,
+  TouchableOpacity,
+  Alert,
+  StyleSheet,
+  ActivityIndicator,
+  SafeAreaView,
+} from 'react-native';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Polygon, MapStyleElement } from 'react-native-maps';
 import { db } from '../firebase/firebaseconfig';
 import {
   collection,
@@ -8,135 +19,292 @@ import {
   updateDoc,
   doc,
   query,
-  where
+  where,
 } from 'firebase/firestore';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../navigation/StackNavigator';
+import { useDriver } from '../drivercontext/DriverContext';
+import { useNavigation } from '@react-navigation/native';
+import Icon from 'react-native-vector-icons/MaterialIcons';
+import { GOOGLE_MAPS_API_KEY } from '../config';
 
-type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'AdminDriver'>;
-};
+const polyline = require('@mapbox/polyline');
 
-interface RideRequest {
-  id: string;
-  status: 'pending' | 'accepted' | 'in-transit' | 'completed';
-  studentEmail: string;
-  pickup: { latitude: number; longitude: number };
-  dropoff: { latitude: number; longitude: number; name: string };
-}
+// Grayscale map style (same as student/driver)
+const grayscaleMapStyle: MapStyleElement[] = [
+  { elementType: 'geometry', stylers: [{ color: '#f5f5f5' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#616161' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#f5f5f5' }] },
+  {
+    featureType: 'administrative.land_parcel',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#bdbdbd' }],
+  },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+  {
+    featureType: 'road.arterial',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#757575' }],
+  },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#dadada' }] },
+  {
+    featureType: 'road.highway',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#616161' }],
+  },
+  { featureType: 'road.local', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
+  { featureType: 'transit.line', elementType: 'geometry', stylers: [{ color: '#e5e5e5' }] },
+  { featureType: 'transit.station', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c9c9c9' }] },
+  {
+    featureType: 'water',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#9e9e9e' }],
+  },
+];
 
-export default function AdminDriverScreen({ navigation }: Props) {
-  const [requests, setRequests] = useState<RideRequest[]>([]);
-  const [activeRideId, setActiveRideId] = useState<string | null>(null);
+// Campus bounds (same as before):
+const campusCoords = [
+  { latitude: 38.59678, longitude: -89.82788 }, // SW
+  { latitude: 38.59667, longitude: -89.79585 }, // SE
+  { latitude: 38.61627, longitude: -89.80259 }, // NE
+  { latitude: 38.61775, longitude: -89.82802 }, // NW
+];
+const outerRing = [
+  { latitude: 90, longitude: -180 },
+  { latitude: 90, longitude: 180 },
+  { latitude: -90, longitude: 180 },
+  { latitude: -90, longitude: -180 },
+];
+
+export default function AdminDriverScreen() {
+  const navigation = useNavigation<{ navigate: (screen: string) => void }>();
+  const { driverId } = useDriver();
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-  const q = query(collection(db, 'rideRequests'), where('status', 'in', ['pending', 'accepted', 'in-transit']));
-  const unsub = onSnapshot(q, (snapshot) => {
-    const safeData: RideRequest[] = [];
+    if (!driverId) {
+      setRequests([]);
+      setLoading(false);
+      return;
+    }
 
-    snapshot.forEach((docSnap) => {
-      const d = docSnap.data();
+    // Fetch all “pending” & “accepted” & “in-transit” rides
+    const q = query(
+      collection(db, 'rideRequests'),
+      where('status', 'in', ['pending', 'accepted', 'in-transit'])
+    );
 
-      if (
-        d.status &&
-        d.studentEmail &&
-        d.pickup?.latitude &&
-        d.dropoff?.latitude &&
-        d.dropoff?.name
-      ) {
-        safeData.push({
+    const unsub = onSnapshot(q, (snapshot) => {
+      const arr: any[] = [];
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        arr.push({
           id: docSnap.id,
-          status: d.status,
-          studentEmail: d.studentEmail,
-          pickup: d.pickup,
-          dropoff: d.dropoff,
+          ...(d as any),
         });
-      }
+      });
+
+      // Filter: show rides that belong to this driver OR are pending
+      const myList = arr.filter(
+        (r) =>
+          r.driverId === driverId ||
+          (r.status === 'pending' && !r.driverId)
+      );
+      setRequests(myList);
+      setLoading(false);
     });
 
-    setRequests(safeData);
+    return () => unsub();
+  }, [driverId]);
 
-    const active = safeData.find((r) => r.status === 'accepted' || r.status === 'in-transit');
-    setActiveRideId(active ? active.id : null);
-  });
-
-  return () => unsub();
-}, []);
-
-  const updateStatus = async (id: string, newStatus: RideRequest['status']) => {
+  // Accept / Picked Up / Dropped Off logic
+  const updateStatus = async (id: string, newStatus: string) => {
     try {
-      await updateDoc(doc(db, 'rideRequests', id), { status: newStatus });
+      const updateData: any = { status: newStatus };
+      if (newStatus === 'accepted' && driverId) {
+        updateData.driverId = driverId;
+      }
+      await updateDoc(doc(db, 'rideRequests', id), updateData);
     } catch (err: any) {
       Alert.alert('Error', err.message);
     }
   };
 
-  const renderItem = ({ item }: { item: RideRequest }) => (
-    <View style={styles.card}>
-      <Text style={styles.title}>From: {item.studentEmail}</Text>
-      <Text>To: {item.dropoff?.name || 'Unknown'}</Text>
-      <MapView
-        style={styles.map}
-        initialRegion={{
-          latitude: item.pickup.latitude,
-          longitude: item.pickup.longitude,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
-        }}
-        scrollEnabled={false}
-        zoomEnabled={false}
-      >
-        <Marker coordinate={item.pickup} title="Pickup" pinColor="green" />
-        <Marker coordinate={item.dropoff} title="Drop-off" pinColor="red" />
-        <Polyline
-          coordinates={[item.pickup, item.dropoff]}
-          strokeWidth={3}
-          strokeColor="purple"
-        />
-      </MapView>
+  // Render each request card
+  const renderItem = ({ item }: { item: any }) => {
+    // We'll fetch & draw the route polyline between pickup→dropoff for preview
+    const [route, setRoute] = useState<Array<{ latitude: number; longitude: number }>>([]);
 
-      {item.status === 'pending' && !activeRideId && (
-        <Button title="Accept Ride" onPress={() => updateStatus(item.id, 'accepted')} />
-      )}
+    useEffect(() => {
+      let isActive = true;
+      const loadRoute = async () => {
+        const origin = `${item.pickup.latitude},${item.pickup.longitude}`;
+        const destination = `${item.dropoff.latitude},${item.dropoff.longitude}`;
+        try {
+          const res = await fetch(
+            `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`
+          );
+          const json = await res.json();
+          if (json.routes?.length && isActive) {
+            const points = polyline.decode(json.routes[0].overview_polyline.points);
+            const coords = points.map(([lat, lng]: [number, number]) => ({
+              latitude: lat,
+              longitude: lng,
+            }));
+            setRoute(coords);
+          }
+        } catch (e) {
+          console.warn('AdminDriver: loadRoute error', e);
+        }
+      };
+      loadRoute();
+      return () => {
+        isActive = false;
+      };
+    }, [item]);
 
-      {item.status === 'accepted' && (
-        <Button title="Passenger Picked Up" onPress={() => updateStatus(item.id, 'in-transit')} />
-      )}
+    return (
+      <View style={styles.card}>
+        <Text style={styles.title}>Student: {item.studentEmail}</Text>
+        <Text>Destination: {item.dropoff?.name || 'Unknown'}</Text>
+        <MapView
+          provider={PROVIDER_GOOGLE}
+          style={styles.smallMap}
+          initialRegion={{
+            latitude: (item.pickup.latitude + item.dropoff.latitude) / 2,
+            longitude: (item.pickup.longitude + item.dropoff.longitude) / 2,
+            latitudeDelta: Math.abs(item.pickup.latitude - item.dropoff.latitude) + 0.005,
+            longitudeDelta: Math.abs(item.pickup.longitude - item.dropoff.longitude) + 0.005,
+          }}
+          scrollEnabled={false}
+          zoomEnabled={false}
+          rotateEnabled={false}
+          pitchEnabled={false}
+          customMapStyle={grayscaleMapStyle}
+        >
+          {/* Dim outside campus */}
+          <Polygon
+            coordinates={outerRing}
+            holes={[campusCoords]}
+            fillColor="rgba(0,0,0,0.2)"
+            strokeWidth={0}
+          />
+          <Polygon
+            coordinates={campusCoords}
+            strokeColor="black"
+            strokeWidth={2}
+            fillColor="transparent"
+          />
 
-      {item.status === 'in-transit' && (
-        <Button title="Passenger Dropped Off" onPress={() => updateStatus(item.id, 'completed')} />
-      )}
-    </View>
-  );
+          <Marker coordinate={item.pickup} title="Pickup" pinColor="green" />
+          <Marker
+            coordinate={{ latitude: item.dropoff.latitude, longitude: item.dropoff.longitude }}
+            title="Drop-Off"
+            pinColor="red"
+          />
+
+          {route.length > 0 && (
+            <Polyline coordinates={route} strokeWidth={3} strokeColor="#4B2E83" />
+          )}
+        </MapView>
+
+        {item.status === 'pending' && !item.driverId && (
+          <TouchableOpacity
+            style={styles.acceptButton}
+            onPress={() => updateStatus(item.id, 'accepted')}
+          >
+            <Text style={styles.acceptButtonText}>Accept Ride</Text>
+          </TouchableOpacity>
+        )}
+
+        {item.status === 'accepted' && item.driverId === driverId && (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => updateStatus(item.id, 'in-transit')}
+          >
+            <Text style={styles.actionButtonText}>Passenger Picked Up</Text>
+          </TouchableOpacity>
+        )}
+
+        {item.status === 'in-transit' && item.driverId === driverId && (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => updateStatus(item.id, 'completed')}
+          >
+            <Text style={styles.actionButtonText}>Passenger Dropped Off</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator size="large" color="#4B2E83" />
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={{ flex: 1 }}>
       <Text style={styles.header}>Ride Requests</Text>
       <FlatList
         data={requests}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        ListEmptyComponent={<Text>No active requests</Text>}
+        ListEmptyComponent={<Text style={styles.noRequests}>No active requests</Text>}
+        contentContainerStyle={{ paddingBottom: 20 }}
       />
-      <Button title="Go to Driver Location Screen" onPress={() => navigation.navigate('DriverScreen')} />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 10 },
-  header: { fontSize: 20, fontWeight: 'bold', marginBottom: 10 },
-  card: {
-    marginBottom: 20,
-    padding: 10,
-    borderWidth: 1,
-    borderRadius: 10,
-    backgroundColor: '#f9f9f9',
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    margin: 12,
+    textAlign: 'center',
   },
-  title: { fontWeight: 'bold', marginBottom: 5 },
-  map: {
+  noRequests: {
+    textAlign: 'center',
+    color: '#555',
+    marginTop: 20,
+    fontSize: 16,
+  },
+  card: {
+    marginHorizontal: 12,
+    marginBottom: 20,
+    padding: 12,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    elevation: 2,
+  },
+  title: { fontWeight: 'bold', marginBottom: 4 },
+  smallMap: {
     height: 150,
     width: '100%',
-    marginVertical: 10,
+    marginVertical: 8,
   },
+  acceptButton: {
+    backgroundColor: '#4B2E83',
+    borderRadius: 8,
+    paddingVertical: 10,
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  acceptButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
+  actionButton: {
+    backgroundColor: '#4B2E83',
+    borderRadius: 8,
+    paddingVertical: 10,
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  actionButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
 });

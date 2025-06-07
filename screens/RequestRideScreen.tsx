@@ -2,13 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Button, Alert, StyleSheet } from 'react-native';
 import * as Location from 'expo-location';
 import { Picker } from '@react-native-picker/picker';
-import { collection, addDoc, serverTimestamp, doc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, onSnapshot, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 
-const LOCATIONS = [
-  { name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
-  { name: 'PAC', latitude: 38.60790, longitude: -89.81561 },
-  { name: 'Performance Center', latitude: 38.59875, longitude: -89.82447 },
+export const LOCATIONS = [
+  { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
+  { id: 'stop2', name: 'PAC', latitude: 38.60790, longitude: -89.81561 },
+  { id: 'stop3', name: 'Performance Center', latitude: 38.59875, longitude: -89.82447 },
+  { id: 'stop4', name: 'Carnegie Hall', latitude: 38.60699, longitude: -89.81709},
+  { id: 'stop5', name: 'McKendree West Clubhouse', latitude: 38.60573, longitude: -89.82468},
 ];
 
 export default function RequestRideScreen({ navigation }: { navigation: any }) {
@@ -16,44 +18,69 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
   const [busOnline, setBusOnline] = useState(false);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'buses', 'busA'), (docSnap) => {
-      setBusOnline(docSnap.exists());
+    const unsub = onSnapshot(collection(db, 'buses'), (snapshot) => {
+      let anyBusOnline = false;
+
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const lastUpdated = new Date(data.timestamp?.toDate?.() || data.timestamp);
+        const now = new Date();
+        const secondsAgo = (now.getTime() - lastUpdated.getTime()) / 1000;
+
+        if (secondsAgo < 15) {
+          anyBusOnline = true;
+        }
+      });
+
+      setBusOnline(anyBusOnline);
     });
+
     return () => unsub();
   }, []);
 
   const handleRequest = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission denied for location');
-      return;
-    }
+  const { status } = await Location.requestForegroundPermissionsAsync();
+  if (status !== 'granted') {
+    Alert.alert('Permission denied for location');
+    return;
+  }
 
-    const location = await Location.getCurrentPositionAsync({});
-    const selectedDropoff = LOCATIONS[selectedIndex];
+  const existing = await getDocs(query(
+    collection(db, 'rideRequests'),
+    where('studentEmail', '==', auth.currentUser?.email),
+    where('status', 'in', ['pending', 'accepted', 'in-transit'])
+  ));
 
-    try {
-      await addDoc(collection(db, 'rideRequests'), {
-        studentEmail: auth.currentUser?.email,
-        pickup: {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-        },
-        dropoff: {
-          latitude: selectedDropoff.latitude,
-          longitude: selectedDropoff.longitude,
-          name: selectedDropoff.name,
-        },
-        status: 'pending',
-        timestamp: serverTimestamp(),
-      });
+  if (!existing.empty) {
+    Alert.alert('You already have a ride in progress.');
+    return;
+  }
 
-      Alert.alert('Ride requested successfully!');
-      navigation.goBack();
-    } catch (err: any) {
-      Alert.alert('Error requesting ride', err.message);
-    }
-  };
+  const location = await Location.getCurrentPositionAsync({});
+  const selectedDropoff = LOCATIONS[selectedIndex];
+
+  try {
+    await addDoc(collection(db, 'rideRequests'), {
+      studentEmail: auth.currentUser?.email,
+      pickup: {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      },
+      dropoff: {
+        latitude: selectedDropoff.latitude,
+        longitude: selectedDropoff.longitude,
+        name: selectedDropoff.name,
+      },
+      status: 'pending',
+      timestamp: serverTimestamp(),
+    });
+
+    Alert.alert('Ride requested successfully!');
+    navigation.goBack();
+  } catch (err: any) {
+    Alert.alert('Error requesting ride', err.message);
+  }
+};
 
   if (!busOnline) {
     return (

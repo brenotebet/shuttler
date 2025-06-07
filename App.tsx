@@ -3,6 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import StackNavigator from './navigation/StackNavigator';
 import { LocationProvider } from './location/LocationContext';
 import * as Notifications from 'expo-notifications';
+import { DriverProvider } from './drivercontext/DriverContext';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -21,11 +22,13 @@ export default function App() {
   }, []);
 
   return (
-    <LocationProvider>
-      <NavigationContainer>
-        <StackNavigator />
-      </NavigationContainer>
-    </LocationProvider>
+    <DriverProvider>
+      <LocationProvider>
+        <NavigationContainer>
+          <StackNavigator />
+        </NavigationContainer>
+      </LocationProvider>
+    </DriverProvider>
   );
 }
 
