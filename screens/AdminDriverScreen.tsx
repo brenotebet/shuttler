@@ -11,7 +11,8 @@ import {
   ActivityIndicator,
   SafeAreaView,
 } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Polygon, MapStyleElement } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
+import { campusCoords, outerRing, grayscaleMapStyle } from '../src/constants/mapConfig';
 import { db } from '../firebase/firebaseconfig';
 import {
   collection,
@@ -28,55 +29,111 @@ import { GOOGLE_MAPS_API_KEY } from '../config';
 
 const polyline = require('@mapbox/polyline');
 
-// Grayscale map style (same as student/driver)
-const grayscaleMapStyle: MapStyleElement[] = [
-  { elementType: 'geometry', stylers: [{ color: '#f5f5f5' }] },
-  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#616161' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#f5f5f5' }] },
-  {
-    featureType: 'administrative.land_parcel',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#bdbdbd' }],
-  },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-  {
-    featureType: 'road.arterial',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#757575' }],
-  },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#dadada' }] },
-  {
-    featureType: 'road.highway',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#616161' }],
-  },
-  { featureType: 'road.local', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
-  { featureType: 'transit.line', elementType: 'geometry', stylers: [{ color: '#e5e5e5' }] },
-  { featureType: 'transit.station', elementType: 'geometry', stylers: [{ color: '#eeeeee' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c9c9c9' }] },
-  {
-    featureType: 'water',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#9e9e9e' }],
-  },
-];
+// Component to render a single ride request card
+function RideRequestCard({
+  item,
+  driverId,
+  updateStatus,
+}: {
+  item: any;
+  driverId: string | null;
+  updateStatus: (id: string, status: string) => void;
+}) {
+  const [route, setRoute] = useState<Array<{ latitude: number; longitude: number }>>([]);
 
-// Campus bounds (same as before):
-const campusCoords = [
-  { latitude: 38.59678, longitude: -89.82788 }, // SW
-  { latitude: 38.59667, longitude: -89.79585 }, // SE
-  { latitude: 38.61627, longitude: -89.80259 }, // NE
-  { latitude: 38.61775, longitude: -89.82802 }, // NW
-];
-const outerRing = [
-  { latitude: 90, longitude: -180 },
-  { latitude: 90, longitude: 180 },
-  { latitude: -90, longitude: 180 },
-  { latitude: -90, longitude: -180 },
-];
+  useEffect(() => {
+    let isActive = true;
+    const loadRoute = async () => {
+      const origin = `${item.pickup.latitude},${item.pickup.longitude}`;
+      const destination = `${item.dropoff.latitude},${item.dropoff.longitude}`;
+      try {
+        const res = await fetch(
+          `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`
+        );
+        const json = await res.json();
+        if (json.routes?.length && isActive) {
+          const points = polyline.decode(json.routes[0].overview_polyline.points);
+          const coords = points.map(([lat, lng]: [number, number]) => ({
+            latitude: lat,
+            longitude: lng,
+          }));
+          setRoute(coords);
+        }
+      } catch (e) {
+        console.warn('AdminDriver: loadRoute error', e);
+      }
+    };
+    loadRoute();
+    return () => {
+      isActive = false;
+    };
+  }, [item]);
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.title}>Student: {item.studentEmail}</Text>
+      <Text>Destination: {item.dropoff?.name || 'Unknown'}</Text>
+      <MapView
+        provider={PROVIDER_GOOGLE}
+        style={styles.smallMap}
+        initialRegion={{
+          latitude: (item.pickup.latitude + item.dropoff.latitude) / 2,
+          longitude: (item.pickup.longitude + item.dropoff.longitude) / 2,
+          latitudeDelta: Math.abs(item.pickup.latitude - item.dropoff.latitude) + 0.005,
+          longitudeDelta: Math.abs(item.pickup.longitude - item.dropoff.longitude) + 0.005,
+        }}
+        scrollEnabled={false}
+        zoomEnabled={false}
+        rotateEnabled={false}
+        pitchEnabled={false}
+        customMapStyle={grayscaleMapStyle}
+      >
+        {/* Dim outside campus */}
+        <Polygon
+          coordinates={outerRing}
+          holes={[campusCoords]}
+          fillColor="rgba(0,0,0,0.2)"
+          strokeWidth={0}
+        />
+        <Polygon
+          coordinates={campusCoords}
+          strokeColor="black"
+          strokeWidth={2}
+          fillColor="transparent"
+        />
+
+        <Marker coordinate={item.pickup} title="Pickup" pinColor="green" />
+        <Marker
+          coordinate={{ latitude: item.dropoff.latitude, longitude: item.dropoff.longitude }}
+          title="Drop-Off"
+          pinColor="red"
+        />
+
+        {route.length > 0 && <Polyline coordinates={route} strokeWidth={3} strokeColor="#4B2E83" />}
+      </MapView>
+
+      {item.status === 'pending' && !item.driverId && (
+        <TouchableOpacity style={styles.acceptButton} onPress={() => updateStatus(item.id, 'accepted')}>
+          <Text style={styles.acceptButtonText}>Accept Ride</Text>
+        </TouchableOpacity>
+      )}
+
+      {item.status === 'accepted' && item.driverId === driverId && (
+        <TouchableOpacity style={styles.actionButton} onPress={() => updateStatus(item.id, 'in-transit')}>
+          <Text style={styles.actionButtonText}>Passenger Picked Up</Text>
+        </TouchableOpacity>
+      )}
+
+      {item.status === 'in-transit' && item.driverId === driverId && (
+        <TouchableOpacity style={styles.actionButton} onPress={() => updateStatus(item.id, 'completed')}>
+          <Text style={styles.actionButtonText}>Passenger Dropped Off</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// Grayscale map style (shared)
 
 export default function AdminDriverScreen() {
   const navigation = useNavigation<{ navigate: (screen: string) => void }>();
@@ -133,113 +190,9 @@ export default function AdminDriverScreen() {
     }
   };
 
-  // Render each request card
-  const renderItem = ({ item }: { item: any }) => {
-    // We'll fetch & draw the route polyline between pickup→dropoff for preview
-    const [route, setRoute] = useState<Array<{ latitude: number; longitude: number }>>([]);
-
-    useEffect(() => {
-      let isActive = true;
-      const loadRoute = async () => {
-        const origin = `${item.pickup.latitude},${item.pickup.longitude}`;
-        const destination = `${item.dropoff.latitude},${item.dropoff.longitude}`;
-        try {
-          const res = await fetch(
-            `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`
-          );
-          const json = await res.json();
-          if (json.routes?.length && isActive) {
-            const points = polyline.decode(json.routes[0].overview_polyline.points);
-            const coords = points.map(([lat, lng]: [number, number]) => ({
-              latitude: lat,
-              longitude: lng,
-            }));
-            setRoute(coords);
-          }
-        } catch (e) {
-          console.warn('AdminDriver: loadRoute error', e);
-        }
-      };
-      loadRoute();
-      return () => {
-        isActive = false;
-      };
-    }, [item]);
-
-    return (
-      <View style={styles.card}>
-        <Text style={styles.title}>Student: {item.studentEmail}</Text>
-        <Text>Destination: {item.dropoff?.name || 'Unknown'}</Text>
-        <MapView
-          provider={PROVIDER_GOOGLE}
-          style={styles.smallMap}
-          initialRegion={{
-            latitude: (item.pickup.latitude + item.dropoff.latitude) / 2,
-            longitude: (item.pickup.longitude + item.dropoff.longitude) / 2,
-            latitudeDelta: Math.abs(item.pickup.latitude - item.dropoff.latitude) + 0.005,
-            longitudeDelta: Math.abs(item.pickup.longitude - item.dropoff.longitude) + 0.005,
-          }}
-          scrollEnabled={false}
-          zoomEnabled={false}
-          rotateEnabled={false}
-          pitchEnabled={false}
-          customMapStyle={grayscaleMapStyle}
-        >
-          {/* Dim outside campus */}
-          <Polygon
-            coordinates={outerRing}
-            holes={[campusCoords]}
-            fillColor="rgba(0,0,0,0.2)"
-            strokeWidth={0}
-          />
-          <Polygon
-            coordinates={campusCoords}
-            strokeColor="black"
-            strokeWidth={2}
-            fillColor="transparent"
-          />
-
-          <Marker coordinate={item.pickup} title="Pickup" pinColor="green" />
-          <Marker
-            coordinate={{ latitude: item.dropoff.latitude, longitude: item.dropoff.longitude }}
-            title="Drop-Off"
-            pinColor="red"
-          />
-
-          {route.length > 0 && (
-            <Polyline coordinates={route} strokeWidth={3} strokeColor="#4B2E83" />
-          )}
-        </MapView>
-
-        {item.status === 'pending' && !item.driverId && (
-          <TouchableOpacity
-            style={styles.acceptButton}
-            onPress={() => updateStatus(item.id, 'accepted')}
-          >
-            <Text style={styles.acceptButtonText}>Accept Ride</Text>
-          </TouchableOpacity>
-        )}
-
-        {item.status === 'accepted' && item.driverId === driverId && (
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => updateStatus(item.id, 'in-transit')}
-          >
-            <Text style={styles.actionButtonText}>Passenger Picked Up</Text>
-          </TouchableOpacity>
-        )}
-
-        {item.status === 'in-transit' && item.driverId === driverId && (
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => updateStatus(item.id, 'completed')}
-          >
-            <Text style={styles.actionButtonText}>Passenger Dropped Off</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
+  const renderItem = ({ item }: { item: any }) => (
+    <RideRequestCard item={item} driverId={driverId} updateStatus={updateStatus} />
+  );
 
   if (loading) {
     return (

@@ -37,5 +37,7 @@ async function registerForPushNotificationsAsync() {
   if (status !== 'granted') return;
 
   const token = (await Notifications.getExpoPushTokenAsync()).data;
-  console.log('Push token:', token);
+  if (__DEV__) {
+    console.log('Push token:', token);
+  }
 }
