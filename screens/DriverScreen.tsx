@@ -646,7 +646,7 @@ const styles = StyleSheet.create({
   // Top-right share button
   topRightButtonContainer: {
     position: 'absolute',
-    bottom: 20,
+    top: 160,
     right: 10,
     zIndex: 500,
   },
