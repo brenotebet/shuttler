@@ -480,7 +480,7 @@ export default function DriverScreen() {
               coordinate={regionRef as any}
               anchor={{ x: 0.5, y: 1.0 }}
             >
-              <Image source={busIcon} style={{ width: 50, height: 50 }} resizeMode="contain" />
+              <Image source={busIcon} style={{ width: 120, height: 120 }} resizeMode="contain" />
             </MarkerAnimated>
           );
         })}

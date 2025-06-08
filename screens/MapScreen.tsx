@@ -538,7 +538,7 @@ export default function MapScreen() {
             >
               <Image
                 source={busIcon}
-                style={{ width: 50, height: 50 }}
+                style={{ width: 120, height: 120 }}
                 resizeMode="contain"
               />
             </MarkerAnimated>
