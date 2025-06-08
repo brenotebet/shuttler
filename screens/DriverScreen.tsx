@@ -48,6 +48,28 @@ import { GOOGLE_MAPS_API_KEY } from '../config';
 
 const polyline = require('@mapbox/polyline');
 
+function computeBearing(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+) {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  const φ1 = toRad(lat1),
+    φ2 = toRad(lat2),
+    Δλ = toRad(lon2 - lon1);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x =
+    Math.cos(φ1) * Math.sin(φ2) -
+    Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function quantizeBearing(bearing: number) {
+  return (Math.round(bearing / 90) * 90) % 360;
+}
+
 export default function DriverScreen() {
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
   const { driverId } = useDriver();
@@ -68,6 +90,10 @@ export default function DriverScreen() {
   // 4) AnimatedRegion for each bus-ID (should be only this driver)
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
+  const headings = useRef<{ [id: string]: number }>({});
+  const [busLocations, setBusLocations] = useState<{
+    [id: string]: { latitude: number; longitude: number; heading: number };
+  }>({});
 
   // 5) Slide-up bottom card when a ride is active
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -133,9 +159,32 @@ export default function DriverScreen() {
 
       setBusOnline(recent.length > 0);
 
+      const newLocations: {
+        [id: string]: { latitude: number; longitude: number; heading: number };
+      } = {};
+
       recent.forEach((bus) => {
         const { id, latitude, longitude } = bus;
+
+        const prev = lastCoords.current[id];
+        if (prev) {
+          const raw = computeBearing(
+            prev.latitude,
+            prev.longitude,
+            latitude,
+            longitude
+          );
+          headings.current[id] = quantizeBearing(raw);
+        } else {
+          headings.current[id] = 0;
+        }
+
         lastCoords.current[id] = { latitude, longitude };
+        newLocations[id] = {
+          latitude,
+          longitude,
+          heading: headings.current[id],
+        };
 
         if (!busRegions.current[id]) {
           busRegions.current[id] = new AnimatedRegion({
@@ -162,12 +211,17 @@ export default function DriverScreen() {
         }
       });
 
+      setBusLocations(newLocations);
+
       const recentIds = recent.map((b) => b.id);
       Object.keys(busRegions.current).forEach((key) => {
         if (!recentIds.includes(key)) delete busRegions.current[key];
       });
       Object.keys(lastCoords.current).forEach((key) => {
         if (!recentIds.includes(key)) delete lastCoords.current[key];
+      });
+      Object.keys(headings.current).forEach((key) => {
+        if (!recentIds.includes(key)) delete headings.current[key];
       });
 
       setActiveBusIds(recentIds);
@@ -472,12 +526,15 @@ export default function DriverScreen() {
         />
 
         {/* Driver’s animated bus marker */}
-        {Object.keys(busRegions.current).map((id) => {
-          const regionRef = busRegions.current[id];
+        {activeBusIds.map((id) => {
+          const loc = busLocations[id];
+          if (!loc) return null;
           return (
             <MarkerAnimated
               key={id}
-              coordinate={regionRef as any}
+              coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
+              flat
+              rotation={loc.heading}
               anchor={{ x: 0.5, y: 1.0 }}
             >
               <Image source={busIcon} style={{ width: 50, height: 50 }} resizeMode="contain" />
