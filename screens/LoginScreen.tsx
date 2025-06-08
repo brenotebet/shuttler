@@ -18,6 +18,7 @@ import {
   createUserWithEmailAndPassword,
 } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
+import { signInWithQuickLaunch } from '../quicklaunch/quicklaunchAuth';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import { useDriver } from '../drivercontext/DriverContext';
@@ -71,6 +72,15 @@ export default function LoginScreen({ navigation }: Props) {
     }
   };
 
+  const handleQuickLaunch = async () => {
+    try {
+      await signInWithQuickLaunch();
+      navigation.replace('StudentHome');
+    } catch (e: any) {
+      Alert.alert('SSO Error', e.message);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
@@ -116,6 +126,13 @@ export default function LoginScreen({ navigation }: Props) {
 
         <TouchableOpacity style={styles.button} onPress={handleLogin}>
           <Text style={styles.buttonText}>Login / Sign Up</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.button, { marginTop: 12 }]}
+          onPress={handleQuickLaunch}
+        >
+          <Text style={styles.buttonText}>Login with QuickLaunch</Text>
         </TouchableOpacity>
       </KeyboardAvoidingView>
     </SafeAreaView>
