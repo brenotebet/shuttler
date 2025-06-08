@@ -91,6 +91,10 @@ function computeBearing(
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
+function quantizeBearing(bearing: number) {
+  return (Math.round(bearing / 90) * 90) % 360;
+}
+
 export default function MapScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [region, setRegion] = useState<Region | null>(null);
@@ -101,6 +105,9 @@ export default function MapScreen() {
   const [eta, setEta] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [busOnline, setBusOnline] = useState<boolean>(false);
+  const [busLocations, setBusLocations] = useState<{
+    [id: string]: { latitude: number; longitude: number; heading: number };
+  }>({});
 
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedDropoffIndex, setSelectedDropoffIndex] = useState<number | null>(null);
@@ -163,21 +170,32 @@ export default function MapScreen() {
 
       setBusOnline(recentBuses.length > 0);
 
+      const newLocations: {
+        [id: string]: { latitude: number; longitude: number; heading: number };
+      } = {};
+
       recentBuses.forEach((bus) => {
         const { id, latitude, longitude } = bus;
 
         const prev = lastCoords.current[id];
-        // compute heading if we have a previous point
         if (prev) {
-          headings.current[id] = computeBearing(
+          const raw = computeBearing(
             prev.latitude,
             prev.longitude,
             latitude,
             longitude
           );
+          headings.current[id] = quantizeBearing(raw);
+        } else {
+          headings.current[id] = 0;
         }
-        lastCoords.current[id] = { latitude, longitude };
 
+        lastCoords.current[id] = { latitude, longitude };
+        newLocations[id] = {
+          latitude,
+          longitude,
+          heading: headings.current[id],
+        };
 
         if (!busRegions.current[id]) {
           busRegions.current[id] = new AnimatedRegion({
@@ -187,18 +205,22 @@ export default function MapScreen() {
             longitudeDelta: 0,
           });
         } else {
-          busRegions.current[id].timing({
-            toValue: {
-              latitude,
-              longitude,
-              latitudeDelta: 0,
-              longitudeDelta: 0,
-            } as any,
-            duration: 2900,
-            useNativeDriver: false,
-          } as any).start();
+          busRegions.current[id]
+            .timing({
+              toValue: {
+                latitude,
+                longitude,
+                latitudeDelta: 0,
+                longitudeDelta: 0,
+              } as any,
+              duration: 2900,
+              useNativeDriver: false,
+            } as any)
+            .start();
         }
       });
+
+      setBusLocations(newLocations);
 
       const recentIds = recentBuses.map((b) => b.id);
       Object.keys(busRegions.current).forEach((key) => {
@@ -526,14 +548,14 @@ export default function MapScreen() {
 
         {/* Animated Bus Markers */}
         {activeBusIds.map((id) => {
-          const regionRef = busRegions.current[id];
-          if (!regionRef) return null;
+          const loc = busLocations[id];
+          if (!loc) return null;
           return (
             <MarkerAnimated
               key={id}
-              coordinate={regionRef as any}
+              coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
               flat
-              rotation={headings.current[id] || 0}
+              rotation={loc.heading}
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <Image
