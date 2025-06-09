@@ -341,7 +341,7 @@ export default function DriverScreen() {
     return () => {
       if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
     };
-  }, [driverId, ride?.status, driverOnline]);
+  }, [driverId, ride?.status, driverOnline, busLocations[driverId]]);
 
   // ───────────────────────────────────────────────────────────────────
   // 3) Schedule local notifications for accepted/in-transit/completed
