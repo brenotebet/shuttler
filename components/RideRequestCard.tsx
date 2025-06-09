@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 import { campusCoords, outerRing, grayscaleMapStyle } from '../src/constants/mapConfig';
 import { GOOGLE_MAPS_API_KEY } from '../config';
 
@@ -73,12 +74,15 @@ export default function RideRequestCard({ item, driverId, updateStatus }: Props)
       >
         <Polygon coordinates={outerRing} holes={[campusCoords]} fillColor="rgba(0,0,0,0.2)" strokeWidth={0} />
         <Polygon coordinates={campusCoords} strokeColor="black" strokeWidth={2} fillColor="transparent" />
-        <Marker coordinate={item.pickup} title="Pickup" pinColor="green" />
+        <Marker coordinate={item.pickup} anchor={{ x: 0.5, y: 1 }}>
+          <Icon name="location-on" size={28} color="#4B2E83" />
+        </Marker>
         <Marker
           coordinate={{ latitude: item.dropoff.latitude, longitude: item.dropoff.longitude }}
-          title="Drop-Off"
-          pinColor="red"
-        />
+          anchor={{ x: 0.5, y: 1 }}
+        >
+          <Icon name="flag" size={26} color="#4B2E83" />
+        </Marker>
         {route.length > 0 && <Polyline coordinates={route} strokeWidth={3} strokeColor="#4B2E83" />}
       </MapView>
 

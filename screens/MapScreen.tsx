@@ -551,8 +551,10 @@ export default function MapScreen() {
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             title={stop.name}
-            pinColor="#4B2E83"
-          />
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <Icon name="location-on" size={32} color="#4B2E83" />
+          </Marker>
         ))}
 
         {/* Animated Bus Markers */}
@@ -583,9 +585,10 @@ export default function MapScreen() {
               latitude: ride.pickup.latitude,
               longitude: ride.pickup.longitude,
             }}
-            title="Pickup Location"
-            pinColor="#4B2E83"
-          />
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <Icon name="location-on" size={38} color="#4B2E83" />
+          </MarkerAnimated>
         )}
         {ride?.dropoff && (
           <MarkerAnimated
@@ -593,9 +596,10 @@ export default function MapScreen() {
               latitude: ride.dropoff.latitude,
               longitude: ride.dropoff.longitude,
             }}
-            title={`Drop-off: ${ride.dropoff.name}`}
-            pinColor="#4B2E83"
-          />
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <Icon name="flag" size={34} color="#4B2E83" />
+          </MarkerAnimated>
         )}
 
         {/* Route Polyline */}

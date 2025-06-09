@@ -431,11 +431,25 @@ export default function DriverScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      {/* ───── Top-Right “Start/Stop Sharing” Button ───── */}
+      {/* ───── Bottom-Right “Start/Stop Sharing” Button ───── */}
 
       {(ride?.status !== 'accepted' && ride?.status !== 'in-transit') && (
 
-        <View style={styles.topRightButtonContainer}>
+        <Animated.View
+          style={[
+            styles.bottomRightButtonContainer,
+            {
+              transform: [
+                {
+                  translateY: slideAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, -300],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
           <TouchableOpacity
             style={styles.shareButton}
             onPress={async () => {
@@ -460,7 +474,7 @@ export default function DriverScreen() {
               {isSharing ? 'Stop Sharing' : 'Start Sharing'}
             </Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       )}
 
       {/* ───── Banner if no fresh driver location ───── */}
@@ -555,9 +569,10 @@ export default function DriverScreen() {
               latitude: ride.pickup.latitude,
               longitude: ride.pickup.longitude,
             }}
-            title="Pickup Here"
-            pinColor="#4B2E83"
-          />
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <Icon name="location-on" size={40} color="#4B2E83" />
+          </Marker>
         )}
 
         {/* Drop-off marker */}
@@ -567,9 +582,10 @@ export default function DriverScreen() {
               latitude: ride.dropoff.latitude,
               longitude: ride.dropoff.longitude,
             }}
-            title={`Drop-Off: ${ride.dropoff.name}`}
-            pinColor="#4B2E83"
-          />
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <Icon name="flag" size={36} color="#4B2E83" />
+          </Marker>
         )}
 
         {/* Route polyline */}
@@ -706,10 +722,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Top-right share button
-  topRightButtonContainer: {
+  // Bottom-right share button
+  bottomRightButtonContainer: {
     position: 'absolute',
-    top: 160,
+    bottom: 20,
     right: 10,
     zIndex: 500,
   },
