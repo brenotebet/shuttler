@@ -88,7 +88,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     currentDriverIdGlobal = driverId;
 
     watchSub.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 1 },
+      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 0 },
       async (loc) => {
         try {
           if (currentDriverId.current) {
@@ -107,7 +107,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     await Location.startLocationUpdatesAsync(LOCATION_TASK, {
       accuracy: Location.Accuracy.High,
       timeInterval: 3000,
-      distanceInterval: 1,
+      distanceInterval: 0,
       showsBackgroundLocationIndicator: false,
       foregroundService: {
         notificationTitle: 'BogeyBus',

@@ -17,14 +17,24 @@
       "supportsTablet": true,
       "config": {
         "googleMapsApiKey": "AIzaSyDwGsJH6urDO1c1LYUqnQeprYNesmNSBFs"
-    }
+    },
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Allow BogeyBus to access your location while using the app.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow BogeyBus to access your location even when the app is in the background.",
+        "UIBackgroundModes": ["location"]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
