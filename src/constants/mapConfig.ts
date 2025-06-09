@@ -28,11 +28,21 @@ export const grayscaleMapStyle: MapStyleElement[] = [
   { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
   { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
   {
+    featureType: 'road',
+    elementType: 'geometry.stroke',
+    stylers: [{ weight: 2 }],
+  },
+  {
     featureType: 'road.arterial',
     elementType: 'labels.text.fill',
     stylers: [{ color: '#757575' }],
   },
   { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#dadada' }] },
+  {
+    featureType: 'road.highway',
+    elementType: 'geometry.stroke',
+    stylers: [{ weight: 3 }],
+  },
   {
     featureType: 'road.highway',
     elementType: 'labels.text.fill',
