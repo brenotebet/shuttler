@@ -323,7 +323,7 @@ export default function MapScreen() {
     return () => {
       if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
     };
-  }, [driverId, ride?.status, driverOnline, busLocations[driverId]]);
+  }, [driverId, ride?.status, driverOnline, busLocations[driverId ?? '']]);
 
   // 3) Schedule notifications on ride status change
   useEffect(() => {
