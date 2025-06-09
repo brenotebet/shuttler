@@ -1,9 +1,45 @@
 import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { setDoc, doc, deleteDoc, query, collection, where, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
+import {
+  setDoc,
+  doc,
+  deleteDoc,
+  query,
+  collection,
+  where,
+  getDocs,
+  serverTimestamp,
+  Timestamp,
+} from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
+
+const LOCATION_TASK = 'driver-location-task';
+let currentDriverIdGlobal: string | null = null;
+
+if (!TaskManager.isTaskDefined(LOCATION_TASK)) {
+  TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
+    if (error) {
+      console.error('Background location task error:', error);
+      return;
+    }
+    const { locations } = data as any;
+    const loc = locations?.[0];
+    if (loc && currentDriverIdGlobal) {
+      try {
+        await setDoc(doc(db, 'buses', currentDriverIdGlobal), {
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          timestamp: serverTimestamp(),
+        });
+      } catch (err) {
+        console.error('Error updating location in background:', err);
+      }
+    }
+  });
+}
 
 type LocationContextType = {
   isSharing: boolean;
@@ -22,15 +58,14 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const watchSub = useRef<Location.LocationSubscription | null>(null);
   const currentDriverId = useRef<string | null>(null);
 
-  // Stop location sharing if the app goes into the background
+  // Remind the driver to stop sharing if the app moves to the background
   useEffect(() => {
     const onChange = (state: AppStateStatus) => {
       if (state !== 'active' && isSharing) {
-        stopSharing();
         Notifications.scheduleNotificationAsync({
           content: {
-            title: 'Location sharing stopped',
-            body: 'Sharing was turned off because the app was closed.',
+            title: 'Sharing still active',
+            body: 'Remember to stop sharing your location when finished driving.',
           },
           trigger: null,
         });
@@ -41,16 +76,19 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }, [isSharing]);
 
   const startSharing = async (driverId: string) => {
-    // Prevent duplicate subscriptions
     if (isSharing || watchSub.current) return;
 
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') return;
+    const fg = await Location.requestForegroundPermissionsAsync();
+    if (fg.status !== 'granted') return;
+
+    const bg = await Location.requestBackgroundPermissionsAsync();
+    if (bg.status !== 'granted') return;
 
     currentDriverId.current = driverId;
+    currentDriverIdGlobal = driverId;
 
     watchSub.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 1 },
+      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 0 },
       async (loc) => {
         try {
           if (currentDriverId.current) {
@@ -66,17 +104,31 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       }
     );
 
+    await Location.startLocationUpdatesAsync(LOCATION_TASK, {
+      accuracy: Location.Accuracy.High,
+      timeInterval: 3000,
+      distanceInterval: 0,
+      showsBackgroundLocationIndicator: false,
+      foregroundService: {
+        notificationTitle: 'BogeyBus',
+        notificationBody: 'Sharing your location',
+      },
+    });
+
     setIsSharing(true);
   };
 
   const stopSharing = async () => {
-  if (!watchSub.current || !currentDriverId.current) return;
+    if (!watchSub.current || !currentDriverId.current) return;
 
-  watchSub.current.remove();
-  watchSub.current = null;
-  setIsSharing(false);
+    watchSub.current.remove();
+    watchSub.current = null;
 
-  const driverDocId = currentDriverId.current;
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK);
+
+    setIsSharing(false);
+
+    const driverDocId = currentDriverId.current;
 
   try {
     await deleteDoc(doc(db, 'buses', driverDocId));
@@ -100,6 +152,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }
 
   currentDriverId.current = null;
+  currentDriverIdGlobal = null;
 };
 
 
