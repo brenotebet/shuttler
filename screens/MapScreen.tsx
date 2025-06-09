@@ -112,6 +112,8 @@ export default function MapScreen() {
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedDropoffIndex, setSelectedDropoffIndex] = useState<number | null>(null);
 
+  const mapRef = useRef<MapView | null>(null);
+
   const notifiedRef = useRef(false);
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
@@ -499,6 +501,7 @@ export default function MapScreen() {
 
       {/* Map */}
       <MapView
+        ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={styles.map}
         region={region}
@@ -514,25 +517,31 @@ export default function MapScreen() {
           const latMax = 38.61775;
           const lonMin = -89.82802;
           const lonMax = -89.79585;
-          let clampedLat = Math.min(Math.max(newRegion.latitude, latMin), latMax);
-          let clampedLon = Math.min(
-            Math.max(newRegion.longitude, lonMin),
-            lonMax
-          );
-          let clampedLatDelta = Math.min(
-            Math.max(newRegion.latitudeDelta, MIN_LAT_DELTA),
-            MAX_LAT_DELTA
-          );
-          let clampedLonDelta = Math.min(
-            Math.max(newRegion.longitudeDelta, MIN_LON_DELTA),
-            MAX_LON_DELTA
-          );
-          setRegion({
-            latitude: clampedLat,
-            longitude: clampedLon,
-            latitudeDelta: clampedLatDelta,
-            longitudeDelta: clampedLonDelta,
-          });
+
+          const clampedRegion = {
+            latitude: Math.min(Math.max(newRegion.latitude, latMin), latMax),
+            longitude: Math.min(Math.max(newRegion.longitude, lonMin), lonMax),
+            latitudeDelta: Math.min(
+              Math.max(newRegion.latitudeDelta, MIN_LAT_DELTA),
+              MAX_LAT_DELTA
+            ),
+            longitudeDelta: Math.min(
+              Math.max(newRegion.longitudeDelta, MIN_LON_DELTA),
+              MAX_LON_DELTA
+            ),
+          };
+
+          const needsAdjustment =
+            clampedRegion.latitude !== newRegion.latitude ||
+            clampedRegion.longitude !== newRegion.longitude ||
+            clampedRegion.latitudeDelta !== newRegion.latitudeDelta ||
+            clampedRegion.longitudeDelta !== newRegion.longitudeDelta;
+
+          setRegion(clampedRegion);
+
+          if (needsAdjustment) {
+            mapRef.current?.animateToRegion(clampedRegion, 300);
+          }
         }}
       >
         {}
