@@ -58,21 +58,33 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const watchSub = useRef<Location.LocationSubscription | null>(null);
   const currentDriverId = useRef<string | null>(null);
 
-  // Remind the driver to stop sharing if the app moves to the background
+  // Remind the driver if location is still being shared when the app
+  // goes to the background or is closed.
   useEffect(() => {
+    const notify = () => {
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Location Still On',
+          body:
+            'Location sharing is active. If you\'re done with your shift, please stop sharing before closing the app.',
+        },
+        trigger: null,
+      });
+    };
+
     const onChange = (state: AppStateStatus) => {
       if (state !== 'active' && isSharing) {
-        Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Sharing still active',
-            body: 'Remember to stop sharing your location when finished driving.',
-          },
-          trigger: null,
-        });
+        notify();
       }
     };
+
     const sub = AppState.addEventListener('change', onChange);
-    return () => sub.remove();
+    return () => {
+      sub.remove();
+      if (isSharing) {
+        notify();
+      }
+    };
   }, [isSharing]);
 
   const startSharing = async (driverId: string) => {
