@@ -14,14 +14,11 @@ import MapView, {
   PROVIDER_GOOGLE,
   MarkerAnimated,
   AnimatedRegion,
-  Polygon,
   Polyline,
   Region,
   Marker,
 } from 'react-native-maps';
 import {
-  campusCoords,
-  outerRing,
   grayscaleMapStyle,
   MIN_LAT_DELTA,
   MAX_LAT_DELTA,
@@ -533,21 +530,6 @@ export default function DriverScreen() {
           }
         }}
       >
-        {/* Dim outside campus */}
-        <Polygon
-          coordinates={outerRing}
-          holes={[campusCoords]}
-          fillColor="rgba(0,0,0,0.2)"
-          strokeWidth={0}
-        />
-        <Polygon
-          coordinates={campusCoords}
-          strokeColor="black"
-          strokeWidth={2}
-          fillColor="transparent"
-        />
-
-        {/* Driver’s animated bus marker */}
         {activeBusIds.map((id) => {
           const loc = busLocations[id];
           if (!loc) return null;
