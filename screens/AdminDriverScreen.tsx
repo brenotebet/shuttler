@@ -90,7 +90,7 @@ export default function AdminDriverScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 , marginTop: 60}}>
       <Text style={styles.header}>Ride Requests</Text>
       <FlatList
         data={requests}
