@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 import * as Location from 'expo-location';
-import * as TaskManager from 'expo-task-manager';
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import {
@@ -16,30 +15,6 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 
-const LOCATION_TASK = 'driver-location-task';
-let currentDriverIdGlobal: string | null = null;
-
-if (!TaskManager.isTaskDefined(LOCATION_TASK)) {
-  TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
-    if (error) {
-      console.error('Background location task error:', error);
-      return;
-    }
-    const { locations } = data as any;
-    const loc = locations?.[0];
-    if (loc && currentDriverIdGlobal) {
-      try {
-        await setDoc(doc(db, 'buses', currentDriverIdGlobal), {
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-          timestamp: serverTimestamp(),
-        });
-      } catch (err) {
-        console.error('Error updating location in background:', err);
-      }
-    }
-  });
-}
 
 type LocationContextType = {
   isSharing: boolean;
@@ -93,11 +68,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     const fg = await Location.requestForegroundPermissionsAsync();
     if (fg.status !== 'granted') return;
 
-    const bg = await Location.requestBackgroundPermissionsAsync();
-    if (bg.status !== 'granted') return;
-
     currentDriverId.current = driverId;
-    currentDriverIdGlobal = driverId;
 
     watchSub.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 0 },
@@ -116,16 +87,6 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       }
     );
 
-    await Location.startLocationUpdatesAsync(LOCATION_TASK, {
-      accuracy: Location.Accuracy.High,
-      timeInterval: 3000,
-      distanceInterval: 0,
-      showsBackgroundLocationIndicator: false,
-      foregroundService: {
-        notificationTitle: 'BogeyBus',
-        notificationBody: 'Sharing your location',
-      },
-    });
 
     setIsSharing(true);
   };
@@ -135,8 +96,6 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
     watchSub.current.remove();
     watchSub.current = null;
-
-    await Location.stopLocationUpdatesAsync(LOCATION_TASK);
 
     setIsSharing(false);
 
@@ -164,7 +123,6 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }
 
   currentDriverId.current = null;
-  currentDriverIdGlobal = null;
 };
 
 
