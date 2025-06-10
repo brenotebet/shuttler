@@ -6,11 +6,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 type DriverContextType = {
   driverId: string | null;
   setDriverId: (id: string | null) => void;
+  logout: () => void;
 };
 
 const DriverContext = createContext<DriverContextType>({
   driverId: null,
   setDriverId: () => {},
+  logout: () => {},
 });
 
 // Named export:
@@ -37,8 +39,13 @@ export const DriverProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  const logout = () => {
+    setDriverIdState(null);
+    AsyncStorage.removeItem('driverId');
+  };
+
   return (
-    <DriverContext.Provider value={{ driverId, setDriverId }}>
+    <DriverContext.Provider value={{ driverId, setDriverId, logout }}>
       {children}
     </DriverContext.Provider>
   );
