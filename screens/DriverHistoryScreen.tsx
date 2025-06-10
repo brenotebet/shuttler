@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 import { db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
@@ -68,7 +69,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '600',
-    color: '#4B2E83',
+    color: PRIMARY_COLOR,
     marginBottom: 12,
     textAlign: 'center',
   },

@@ -6,7 +6,6 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
-  Alert,
   TouchableOpacity,
   Animated,
   Image,
@@ -45,6 +44,9 @@ import { db } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { GOOGLE_MAPS_API_KEY } from '../config';
+import { showAlert } from '../src/utils/alerts';
+import { PRIMARY_COLOR } from '../src/constants/theme';
+import MapMarker from '../components/MapMarker';
 
 const polyline = require('@mapbox/polyline');
 
@@ -126,7 +128,7 @@ export default function DriverScreen() {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission denied');
+        showAlert('Permission denied');
         return;
       }
       const loc = await Location.getCurrentPositionAsync({});
@@ -276,7 +278,7 @@ export default function DriverScreen() {
       }
       await updateDoc(doc(db, 'rideRequests', id), data);
     } catch (err: any) {
-      Alert.alert('Error', err.message);
+      showAlert(err.message, 'Error');
     }
   };
 
@@ -393,7 +395,7 @@ export default function DriverScreen() {
         ride.pickup.longitude
       );
       if (dist < 50) {
-        Alert.alert('Almost There!', 'You are within 50 meters of pickup.');
+        showAlert('You are within 50 meters of pickup.', 'Almost There!');
         notifiedRef.current = true;
       }
     }
@@ -424,7 +426,7 @@ export default function DriverScreen() {
   if (!region) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color="#4B2E83" />
+        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
       </SafeAreaView>
     );
   }
@@ -454,7 +456,7 @@ export default function DriverScreen() {
             style={styles.shareButton}
             onPress={async () => {
               if (!driverId) {
-                Alert.alert('Driver ID missing');
+                showAlert('Driver ID missing');
                 return;
               }
               try {
@@ -465,7 +467,7 @@ export default function DriverScreen() {
                 }
               } catch (err) {
                 console.error(err);
-                Alert.alert('Error toggling location sharing');
+                showAlert('Error toggling location sharing');
               }
             }}
           >
@@ -571,7 +573,7 @@ export default function DriverScreen() {
             }}
             anchor={{ x: 0.5, y: 1 }}
           >
-            <Icon name="location-on" size={40} color="#4B2E83" />
+            <MapMarker icon="location-on" />
           </Marker>
         )}
 
@@ -584,13 +586,17 @@ export default function DriverScreen() {
             }}
             anchor={{ x: 0.5, y: 1 }}
           >
-            <Icon name="flag" size={36} color="#4B2E83" />
+            <MapMarker icon="flag" />
           </Marker>
         )}
 
         {/* Route polyline */}
         {routeCoords.length > 0 && (
-          <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#4B2E83" />
+          <Polyline
+            coordinates={routeCoords}
+            strokeWidth={4}
+            strokeColor={PRIMARY_COLOR}
+          />
         )}
       </MapView>
 
@@ -651,7 +657,7 @@ export default function DriverScreen() {
                       setRideId(null);
                       setRouteCoords([]);
                       setEta(null);
-                      Alert.alert('Ride cancelled');
+                      showAlert('Ride cancelled');
                     }
                   }}
                 >
@@ -677,7 +683,7 @@ export default function DriverScreen() {
                       setRideId(null);
                       setRouteCoords([]);
                       setEta(null);
-                      Alert.alert('Ride cancelled');
+                      showAlert('Ride cancelled');
                     }
                   }}
                 >
@@ -732,7 +738,7 @@ const styles = StyleSheet.create({
   shareButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 20,
@@ -791,11 +797,11 @@ const styles = StyleSheet.create({
   etaText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#4B2E83',
+    color: PRIMARY_COLOR,
     marginBottom: 12,
   },
   actionButton: {
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',
@@ -807,7 +813,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   cancelButton: {
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',

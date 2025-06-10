@@ -4,7 +4,6 @@ import React, { useEffect, useState } from 'react';
 import {
   Text,
   FlatList,
-  Alert,
   StyleSheet,
   ActivityIndicator,
   SafeAreaView,
@@ -20,6 +19,8 @@ import {
 } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
 import RideRequestCard from '../components/RideRequestCard';
+import { showAlert } from '../src/utils/alerts';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 
 // Grayscale map style (shared)
 
@@ -73,7 +74,7 @@ export default function AdminDriverScreen() {
       }
       await updateDoc(doc(db, 'rideRequests', id), updateData);
     } catch (err: any) {
-      Alert.alert('Error', err.message);
+      showAlert(err.message, 'Error');
     }
   };
 
@@ -84,7 +85,7 @@ export default function AdminDriverScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color="#4B2E83" />
+        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
       </SafeAreaView>
     );
   }

@@ -5,6 +5,7 @@ import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { auth, db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 
 export default function StudentHistoryScreen() {
   const [rides, setRides] = useState<any[]>([]);
@@ -32,7 +33,7 @@ export default function StudentHistoryScreen() {
         renderItem={({ item }) => (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Icon name="place" size={20} color="#4B2E83" style={{ marginRight: 6 }} />
+              <Icon name="place" size={20} color={PRIMARY_COLOR} style={{ marginRight: 6 }} />
               <Text style={styles.cardTitle}>Drop-off: {item.dropoff?.name}</Text>
             </View>
             <Text style={styles.cardDetail}>Completed on: {item.timestamp?.toDate().toLocaleString()}</Text>
@@ -55,7 +56,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     margin: 20,
-    color: '#4B2E83',
+    color: PRIMARY_COLOR,
     textAlign: 'center'
   },
   card: {

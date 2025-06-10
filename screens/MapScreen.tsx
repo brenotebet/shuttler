@@ -7,7 +7,6 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
-  Alert,
   TouchableOpacity,
   Animated,
   Image,
@@ -24,6 +23,7 @@ import MapView, {
   Region,
   Marker,
 } from 'react-native-maps';
+import MapMarker from '../components/MapMarker';
 import {
   campusCoords,
   outerRing,
@@ -33,6 +33,7 @@ import {
   MIN_LON_DELTA,
   MAX_LON_DELTA,
 } from '../src/constants/mapConfig';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -50,6 +51,7 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { GOOGLE_MAPS_API_KEY } from '../config';
+import { showAlert } from '../src/utils/alerts';
 
 
 const polyline = require('@mapbox/polyline');
@@ -137,7 +139,7 @@ export default function MapScreen() {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission denied');
+        showAlert('Permission denied');
         return;
       }
       const loc = await Location.getCurrentPositionAsync({});
@@ -371,7 +373,7 @@ export default function MapScreen() {
         ride.pickup.longitude
       );
       if (dist < 50) {
-        Alert.alert('Heads up!', 'The bus is arriving at your pickup location!');
+        showAlert('The bus is arriving at your pickup location!', 'Heads up!');
         notifiedRef.current = true;
       }
     }
@@ -406,7 +408,7 @@ export default function MapScreen() {
   // Handle "Request Ride"
   const handleRequest = async (index: number) => {
     if (!busOnline) {
-      Alert.alert('No buses are currently online. Please try again later.');
+      showAlert('No buses are currently online. Please try again later.');
       return;
     }
     const existing = await getDocs(
@@ -417,12 +419,12 @@ export default function MapScreen() {
       )
     );
     if (!existing.empty) {
-      Alert.alert('You already have a ride in progress.');
+      showAlert('You already have a ride in progress.');
       return;
     }
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission denied for location');
+      showAlert('Permission denied for location');
       return;
     }
     const location = await Location.getCurrentPositionAsync({});
@@ -442,18 +444,18 @@ export default function MapScreen() {
         status: 'pending',
         timestamp: serverTimestamp(),
       });
-      Alert.alert('Ride requested successfully!');
+      showAlert('Ride requested successfully!');
       setShowLocationList(false);
       setSelectedDropoffIndex(null);
     } catch (err: any) {
-      Alert.alert('Error requesting ride', err.message);
+      showAlert(err.message, 'Error requesting ride');
     }
   };
 
   if (!region) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color="#4B2E83" />
+        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
       </SafeAreaView>
     );
   }
@@ -550,10 +552,9 @@ export default function MapScreen() {
           <Marker
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
-            title={stop.name}
             anchor={{ x: 0.5, y: 1 }}
           >
-            <Icon name="location-on" size={32} color="#4B2E83" />
+            <MapMarker icon="location-on" />
           </Marker>
         ))}
 
@@ -587,7 +588,7 @@ export default function MapScreen() {
             }}
             anchor={{ x: 0.5, y: 1 }}
           >
-            <Icon name="location-on" size={38} color="#4B2E83" />
+            <MapMarker icon="location-on" />
           </MarkerAnimated>
         )}
         {ride?.dropoff && (
@@ -598,13 +599,17 @@ export default function MapScreen() {
             }}
             anchor={{ x: 0.5, y: 1 }}
           >
-            <Icon name="flag" size={34} color="#4B2E83" />
+            <MapMarker icon="flag" />
           </MarkerAnimated>
         )}
 
         {/* Route Polyline */}
         {routeCoords.length > 0 && (
-          <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#4B2E83" />
+          <Polyline
+            coordinates={routeCoords}
+            strokeWidth={4}
+            strokeColor={PRIMARY_COLOR}
+          />
         )}
       </MapView>
 
@@ -641,7 +646,7 @@ export default function MapScreen() {
                   setRideId(null);
                   setRouteCoords([]);
                   setEta(null);
-                  Alert.alert('Ride request cancelled');
+                  showAlert('Ride request cancelled');
                 }
               }}
             >
@@ -763,11 +768,11 @@ const styles = StyleSheet.create({
   etaText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#4B2E83',
+    color: PRIMARY_COLOR,
     marginBottom: 12,
   },
   cancelButton: {
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',
