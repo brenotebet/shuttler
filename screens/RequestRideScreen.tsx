@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Button, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import * as Location from 'expo-location';
 import { Picker } from '@react-native-picker/picker';
 import { collection, addDoc, serverTimestamp, doc, onSnapshot, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
+import { showAlert } from '../src/utils/alerts';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -41,7 +43,7 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
   const handleRequest = async () => {
   const { status } = await Location.requestForegroundPermissionsAsync();
   if (status !== 'granted') {
-    Alert.alert('Permission denied for location');
+    showAlert('Permission denied for location');
     return;
   }
 
@@ -52,7 +54,7 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
   ));
 
   if (!existing.empty) {
-    Alert.alert('You already have a ride in progress.');
+    showAlert('You already have a ride in progress.');
     return;
   }
 
@@ -75,10 +77,10 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
       timestamp: serverTimestamp(),
     });
 
-    Alert.alert('Ride requested successfully!');
+    showAlert('Ride requested successfully!');
     navigation.goBack();
   } catch (err: any) {
-    Alert.alert('Error requesting ride', err.message);
+    showAlert(err.message, 'Error requesting ride');
   }
 };
 
@@ -104,7 +106,9 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
           <Picker.Item label={loc.name} value={index} key={loc.name} />
         ))}
       </Picker>
-      <Button title="Request Ride" onPress={handleRequest} />
+      <TouchableOpacity style={styles.button} onPress={handleRequest}>
+        <Text style={styles.buttonText}>Request Ride</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -112,4 +116,15 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   warningText: { fontSize: 16, color: 'red', textAlign: 'center' },
+  button: {
+    backgroundColor: PRIMARY_COLOR,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
 });

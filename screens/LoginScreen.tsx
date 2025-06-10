@@ -9,7 +9,6 @@ import {
   TextInput,
   TouchableOpacity,
   Text,
-  Alert,
   Switch,
   StyleSheet,
 } from 'react-native';
@@ -22,6 +21,8 @@ import { signInWithQuickLaunch } from '../quicklaunch/quicklaunchAuth';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import { useDriver } from '../drivercontext/DriverContext';
+import { showAlert } from '../src/utils/alerts';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 
 const adminAccounts: { [key: string]: string } = {
   driver1: 'bus123',
@@ -45,13 +46,13 @@ export default function LoginScreen({ navigation }: Props) {
         setDriverId(email);
         navigation.replace('DriverHome');
       } else {
-        Alert.alert('Invalid driver credentials');
+        showAlert('Invalid driver credentials');
       }
       return;
     }
 
     if (!email.endsWith('@mckendree.edu')) {
-      Alert.alert('Only McKendree emails allowed');
+      showAlert('Only McKendree emails allowed');
       return;
     }
 
@@ -64,10 +65,10 @@ export default function LoginScreen({ navigation }: Props) {
           await createUserWithEmailAndPassword(auth, email, password);
           navigation.replace('StudentHome');
         } catch (e: any) {
-          Alert.alert('Error creating account', e.message);
+          showAlert(e.message, 'Error creating account');
         }
       } else {
-        Alert.alert('Login Error', err.message);
+        showAlert(err.message, 'Login Error');
       }
     }
   };
@@ -77,7 +78,7 @@ export default function LoginScreen({ navigation }: Props) {
       await signInWithQuickLaunch();
       navigation.replace('StudentHome');
     } catch (e: any) {
-      Alert.alert('SSO Error', e.message);
+      showAlert(e.message, 'SSO Error');
     }
   };
 
@@ -117,7 +118,7 @@ export default function LoginScreen({ navigation }: Props) {
         <View style={styles.switchRow}>
           <Text style={styles.switchLabel}>Login as Driver</Text>
           <Switch
-            trackColor={{ false: '#ccc', true: '#4B2E83' }}
+            trackColor={{ false: '#ccc', true: PRIMARY_COLOR }}
             thumbColor="#fff"
             onValueChange={setIsDriver}
             value={isDriver}
@@ -149,7 +150,7 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 28,
     fontWeight: '600',
-    color: '#4B2E83',
+    color: PRIMARY_COLOR,
     textAlign: 'center',
     marginBottom: 32,
   },
@@ -180,7 +181,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   button: {
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
