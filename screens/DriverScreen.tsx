@@ -44,6 +44,7 @@ import { GOOGLE_MAPS_API_KEY } from '../config';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import MapMarker from '../components/MapMarker';
+import { LOCATIONS } from './RequestRideScreen';
 
 const polyline = require('@mapbox/polyline');
 
@@ -545,6 +546,17 @@ export default function DriverScreen() {
             </MarkerAnimated>
           );
         })}
+
+        {LOCATIONS.map((stop) => (
+          <Marker
+            description= {stop.name}
+            key={stop.id}
+            coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+            anchor={{ x: 0.5, y: 1 }}
+            >
+          <MapMarker icon="location-on" />
+          </Marker>
+        ))}
 
         {/* Pickup marker */}
         {ride?.pickup && (

@@ -550,6 +550,7 @@ export default function MapScreen() {
         {/* Permanent Stop Markers */}
         {LOCATIONS.map((stop) => (
           <Marker
+            description= {stop.name}
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
