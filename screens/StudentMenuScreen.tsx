@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import { auth } from '../firebase/firebaseconfig';
+import MenuItem from '../components/MenuItem';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 
 export default function StudentMenuScreen() {
@@ -20,12 +21,18 @@ export default function StudentMenuScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('StudentHistory')}>
-        <Text style={styles.buttonText}>History</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.button} onPress={handleLogout}>
-        <Text style={styles.buttonText}>Logout</Text>
-      </TouchableOpacity>
+      <MenuItem
+        icon="history"
+        title="History"
+        description="Take a look at your past completed rides"
+        onPress={() => navigation.navigate('StudentHistory')}
+      />
+      <MenuItem
+        icon="logout"
+        title="Logout"
+        description="Sign out of your account"
+        onPress={handleLogout}
+      />
     </SafeAreaView>
   );
 }
@@ -33,9 +40,10 @@ export default function StudentMenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#fff',
+    paddingTop: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
   },
   button: {
     backgroundColor: PRIMARY_COLOR,
