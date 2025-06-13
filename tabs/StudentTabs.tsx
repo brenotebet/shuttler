@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import MapScreen from '../screens/MapScreen';
-import StudentHistoryScreen from '../screens/StudentHistoryScreen';
+import StudentMenuScreen from '../screens/StudentMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 const Tab = createBottomTabNavigator();
@@ -26,8 +26,8 @@ export default function StudentTabs() {
 
           if (route.name === 'Map') {
             iconName = 'map';
-          } else if (route.name === 'RideHistory') {
-            iconName = 'history';
+          } else if (route.name === 'Menu') {
+            iconName = 'menu';
           }
 
           return <Icon name={iconName} size={size} color={color} />;
@@ -35,11 +35,7 @@ export default function StudentTabs() {
       })}
     >
       <Tab.Screen name="Map" component={MapScreen} />
-      <Tab.Screen
-        name="RideHistory"
-        component={StudentHistoryScreen}
-        options={{ title: 'History' }}
-      />
+      <Tab.Screen name="Menu" component={StudentMenuScreen} />
     </Tab.Navigator>
   );
 }
