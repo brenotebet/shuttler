@@ -478,7 +478,7 @@ export default function DriverScreen() {
       )}
 
       {/* ───── Banner if no fresh driver location ───── */}
-      {!busOnline && (
+      {!driverOnline && (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>
             Not sharing location. Tap “Start Sharing” to go online.

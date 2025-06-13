@@ -2,9 +2,8 @@
 
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import AdminDriverScreen from '../screens/AdminDriverScreen';
 import DriverScreen from '../screens/DriverScreen';
-import DriverHistoryScreen from '../screens/DriverHistoryScreen';
+import DriverMenuScreen from '../screens/DriverMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 const Tab = createBottomTabNavigator();
@@ -24,12 +23,10 @@ export default function DriverTabs() {
         },
         tabBarIcon: ({ focused, color, size }) => {
           let iconName = 'help-outline';
-          if (route.name === 'AdminPanel') {
-            iconName = 'list-alt';
-          } else if (route.name === 'LiveLocation') {
+          if (route.name === 'LiveLocation') {
             iconName = 'location-on';
-          } else if (route.name === 'RideHistory') {
-            iconName = 'history';
+          } else if (route.name === 'Menu') {
+            iconName = 'menu';
           }
           return <Icon name={iconName} size={28} color={color} />;
         },
@@ -37,9 +34,8 @@ export default function DriverTabs() {
         tabBarInactiveTintColor: '#aaa',
       })}
     >
-      <Tab.Screen name="AdminPanel" component={AdminDriverScreen} />
       <Tab.Screen name="LiveLocation" component={DriverScreen} />
-      <Tab.Screen name="RideHistory" component={DriverHistoryScreen} />
+      <Tab.Screen name="Menu" component={DriverMenuScreen} />
     </Tab.Navigator>
   );
 }
