@@ -47,13 +47,16 @@ export default function DriverHistoryScreen() {
   );
 
   const destinationCounts: { [key: string]: number } = {};
-  const hourlyCounts = Array(24).fill(0);
+  const hourlyCounts = Array(12).fill(0); // 7am - 6pm
   rides.forEach((r) => {
     const dest = r.dropoff?.name || 'Unknown';
     destinationCounts[dest] = (destinationCounts[dest] || 0) + 1;
     const ts = r.completedTimestamp?.toDate?.() || r.timestamp?.toDate?.();
     if (ts) {
-      hourlyCounts[ts.getHours()] += 1;
+      const hr = ts.getHours();
+      if (hr >= 7 && hr <= 18) {
+        hourlyCounts[hr - 7] += 1;
+      }
     }
   });
 
@@ -74,7 +77,7 @@ export default function DriverHistoryScreen() {
   }));
 
   const barData = {
-    labels: hourlyCounts.map((_, i) => i.toString()),
+    labels: Array.from({ length: 12 }, (_, i) => (i + 7).toString()),
     datasets: [{ data: hourlyCounts }],
   };
 
@@ -130,7 +133,7 @@ export default function DriverHistoryScreen() {
 
           {hourlyCounts.some((v) => v > 0) && (
             <>
-              <Text style={styles.sectionTitle}>Rides by Hour</Text>
+              <Text style={styles.sectionTitle}>Rides by Hour (7am-6pm)</Text>
               <BarChart
                 data={barData}
                 width={screenWidth - 32}
@@ -157,7 +160,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     paddingHorizontal: 16,
     paddingTop: 16,
-    marginTop: 60
+    paddingBottom: 16,
+    marginTop: 60,
   },
   title: {
     fontSize: 22,
@@ -182,15 +186,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginBottom: 4,
     color: '#333',
+    flexWrap: 'wrap',
   },
   cardText: {
     fontSize: 14,
     color: '#555',
     marginBottom: 4,
+    flexWrap: 'wrap',
   },
   cardTimestamp: {
     fontSize: 12,
     color: '#777',
+    flexWrap: 'wrap',
   },
   emptyText: {
     fontSize: 16,
