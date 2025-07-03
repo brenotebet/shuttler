@@ -36,6 +36,7 @@ import {
   doc,
   deleteDoc,
   updateDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -273,6 +274,17 @@ export default function DriverScreen() {
       const data: any = { status: newStatus };
       if (newStatus === 'accepted' && driverId) {
         data.driverId = driverId;
+      }
+      if (newStatus === 'completed' && ride) {
+        const distance =
+          getDistanceInMeters(
+            ride.pickup.latitude,
+            ride.pickup.longitude,
+            ride.dropoff.latitude,
+            ride.dropoff.longitude
+          ) / 1000;
+        data.distance = distance;
+        data.completedTimestamp = serverTimestamp();
       }
       await updateDoc(doc(db, 'rideRequests', id), data);
     } catch (err: any) {
