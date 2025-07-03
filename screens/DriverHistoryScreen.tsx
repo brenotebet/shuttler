@@ -1,7 +1,7 @@
 // src/screens/DriverHistoryScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ScrollView, Dimensions } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Dimensions } from 'react-native';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { db } from '../firebase/firebaseconfig';
@@ -23,13 +23,19 @@ export default function DriverHistoryScreen() {
       orderBy('timestamp', 'desc')
     );
 
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setRides(data);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setRides(data);
+      },
+      (err) => {
+        console.error('Failed to fetch ride history', err);
+      }
+    );
 
     return () => unsub();
   }, [driverId]);
@@ -81,66 +87,67 @@ export default function DriverHistoryScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>Driver Dashboard</Text>
-      <View style={styles.metrics}>
-        <Text style={styles.metricText}>Total Rides: {totalRides}</Text>
-        <Text style={styles.metricText}>
-          Total Distance: {totalDistance.toFixed(2)} km
-        </Text>
-      </View>
-
-      {destinationData.length > 0 && (
-        <>
-          <Text style={styles.sectionTitle}>Rides by Destination</Text>
-          <PieChart
-            data={destinationData}
-            width={screenWidth - 32}
-            height={220}
-            accessor="count"
-            chartConfig={chartConfig}
-            backgroundColor="transparent"
-            paddingLeft="15"
-          />
-        </>
+    <FlatList
+      style={styles.container}
+      data={rides}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => (
+        <View style={styles.card}>
+          <Text style={styles.cardStudent}>Student: {item.studentEmail}</Text>
+          <Text style={styles.cardText}>Drop-off: {item.dropoff?.name}</Text>
+          <Text style={styles.cardTimestamp}>
+            {item.timestamp?.toDate
+              ? item.timestamp.toDate().toLocaleString()
+              : 'No timestamp'}
+          </Text>
+        </View>
       )}
-
-      {hourlyCounts.some((v) => v > 0) && (
+      ListEmptyComponent={<Text style={styles.emptyText}>No completed rides yet.</Text>}
+      ListHeaderComponent={
         <>
-          <Text style={styles.sectionTitle}>Rides by Hour</Text>
-          <BarChart
-            data={barData}
-            width={screenWidth - 32}
-            height={220}
-            fromZero
-            chartConfig={chartConfig}
-            yAxisLabel=""
-            yAxisSuffix=""
-          />
-        </>
-      )}
-
-      <Text style={styles.sectionTitle}>Recent Rides</Text>
-      <FlatList
-        data={rides}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <Text style={styles.cardStudent}>Student: {item.studentEmail}</Text>
-            <Text style={styles.cardText}>Drop-off: {item.dropoff?.name}</Text>
-            <Text style={styles.cardTimestamp}>
-              {item.timestamp?.toDate
-                ? item.timestamp.toDate().toLocaleString()
-                : 'No timestamp'}
+          <Text style={styles.title}>Driver Dashboard</Text>
+          <View style={styles.metrics}>
+            <Text style={styles.metricText}>Total Rides: {totalRides}</Text>
+            <Text style={styles.metricText}>
+              Total Distance: {totalDistance.toFixed(2)} km
             </Text>
           </View>
-        )}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No completed rides yet.</Text>
-        }
-        contentContainerStyle={rides.length === 0 && styles.emptyContainer}
-      />
-    </ScrollView>
+
+          {destinationData.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>Rides by Destination</Text>
+              <PieChart
+                data={destinationData}
+                width={screenWidth - 32}
+                height={220}
+                accessor="count"
+                chartConfig={chartConfig}
+                backgroundColor="transparent"
+                paddingLeft="15"
+              />
+            </>
+          )}
+
+          {hourlyCounts.some((v) => v > 0) && (
+            <>
+              <Text style={styles.sectionTitle}>Rides by Hour</Text>
+              <BarChart
+                data={barData}
+                width={screenWidth - 32}
+                height={220}
+                fromZero
+                chartConfig={chartConfig}
+                yAxisLabel=""
+                yAxisSuffix=""
+              />
+            </>
+          )}
+
+          <Text style={styles.sectionTitle}>Recent Rides</Text>
+        </>
+      }
+      contentContainerStyle={rides.length === 0 && styles.emptyContainer}
+    />
   );
 }
 

@@ -1,14 +1,26 @@
 import React from 'react';
 import { SafeAreaView, TouchableOpacity, Text, StyleSheet } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import {
+  BottomTabNavigationProp,
+} from '@react-navigation/bottom-tabs';
+import {
+  CompositeNavigationProp,
+  useNavigation,
+} from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
+import { StudentTabParamList } from '../tabs/StudentTabs';
 import { auth } from '../firebase/firebaseconfig';
 import MenuItem from '../components/MenuItem';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 
 export default function StudentMenuScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation = useNavigation<
+    CompositeNavigationProp<
+      BottomTabNavigationProp<StudentTabParamList, 'Menu'>,
+      NativeStackNavigationProp<RootStackParamList>
+    >
+  >();
 
   const handleLogout = async () => {
     try {

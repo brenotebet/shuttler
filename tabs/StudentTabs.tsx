@@ -4,7 +4,12 @@ import MapScreen from '../screens/MapScreen';
 import StudentMenuScreen from '../screens/StudentMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-const Tab = createBottomTabNavigator();
+export type StudentTabParamList = {
+  Map: undefined;
+  Menu: undefined;
+};
+
+const Tab = createBottomTabNavigator<StudentTabParamList>();
 
 export default function StudentTabs() {
   return (

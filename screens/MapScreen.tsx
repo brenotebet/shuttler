@@ -35,8 +35,15 @@ import {
 } from '../src/constants/mapConfig';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import * as Location from 'expo-location';
-import { useNavigation } from '@react-navigation/native';
+import {
+  BottomTabNavigationProp,
+} from '@react-navigation/bottom-tabs';
+import {
+  CompositeNavigationProp,
+  useNavigation,
+} from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { StudentTabParamList } from '../tabs/StudentTabs';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import {
   collection,
@@ -90,7 +97,12 @@ function quantizeBearing(bearing: number) {
 }
 
 export default function MapScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation = useNavigation<
+    CompositeNavigationProp<
+      BottomTabNavigationProp<StudentTabParamList, 'Map'>,
+      NativeStackNavigationProp<RootStackParamList>
+    >
+  >();
   const [region, setRegion] = useState<Region | null>(null);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
   const [ride, setRide] = useState<any>(null);
