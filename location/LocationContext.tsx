@@ -70,6 +70,19 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
     currentDriverId.current = driverId;
 
+    // Immediately post the driver's current location so students can
+    // see the bus without waiting for the first watchPosition update.
+    try {
+      const loc = await Location.getCurrentPositionAsync({});
+      await setDoc(doc(db, 'buses', driverId), {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        timestamp: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error('Error obtaining initial location:', err);
+    }
+
     watchSub.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 0 },
       async (loc) => {

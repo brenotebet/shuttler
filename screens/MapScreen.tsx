@@ -331,6 +331,29 @@ export default function MapScreen() {
     };
   }, [driverId, ride?.status, driverOnline, busLocations[driverId ?? '']]);
 
+  // Shorten the displayed route as the driver progresses along it
+  useEffect(() => {
+    if (!driverId) return;
+    const loc = busLocations[driverId];
+    if (!loc || routeCoords.length === 0) return;
+
+    let idx = 0;
+    while (
+      idx < routeCoords.length &&
+      getDistanceInMeters(
+        loc.latitude,
+        loc.longitude,
+        routeCoords[idx].latitude,
+        routeCoords[idx].longitude
+      ) < 30
+    ) {
+      idx++;
+    }
+    if (idx > 0) {
+      setRouteCoords(routeCoords.slice(idx));
+    }
+  }, [busLocations[driverId ?? ''], routeCoords, driverId]);
+
   // 3) Schedule notifications on ride status change
   useEffect(() => {
     if (ride?.status === 'accepted') {
@@ -552,9 +575,16 @@ export default function MapScreen() {
       >
         {}
         {/* Permanent Stop Markers */}
-        {LOCATIONS.map((stop) => (
+        {LOCATIONS.filter(
+          (stop) =>
+            !(
+              ride?.dropoff &&
+              Math.abs(stop.latitude - ride.dropoff.latitude) < 0.0001 &&
+              Math.abs(stop.longitude - ride.dropoff.longitude) < 0.0001
+            )
+        ).map((stop) => (
           <Marker
-            description= {stop.name}
+            description={stop.name}
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
