@@ -355,6 +355,29 @@ export default function DriverScreen() {
     };
   }, [driverId, ride?.status, driverOnline, busLocations[driverId ?? '']]);
 
+  // Gradually remove visited points from the route polyline
+  useEffect(() => {
+    if (!driverId) return;
+    const loc = busLocations[driverId];
+    if (!loc || routeCoords.length === 0) return;
+
+    let idx = 0;
+    while (
+      idx < routeCoords.length &&
+      getDistanceInMeters(
+        loc.latitude,
+        loc.longitude,
+        routeCoords[idx].latitude,
+        routeCoords[idx].longitude
+      ) < 30
+    ) {
+      idx++;
+    }
+    if (idx > 0) {
+      setRouteCoords(routeCoords.slice(idx));
+    }
+  }, [busLocations[driverId ?? ''], routeCoords, driverId]);
+
   // ───────────────────────────────────────────────────────────────────
   // 3) Schedule local notifications for accepted/in-transit/completed
   // ───────────────────────────────────────────────────────────────────
@@ -559,13 +582,20 @@ export default function DriverScreen() {
           );
         })}
 
-        {LOCATIONS.map((stop) => (
+        {LOCATIONS.filter(
+          (stop) =>
+            !(
+              ride?.dropoff &&
+              Math.abs(stop.latitude - ride.dropoff.latitude) < 0.0001 &&
+              Math.abs(stop.longitude - ride.dropoff.longitude) < 0.0001
+            )
+        ).map((stop) => (
           <Marker
-            description= {stop.name}
+            description={stop.name}
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
-            >
+          >
           <MapMarker icon="location-on" />
           </Marker>
         ))}
