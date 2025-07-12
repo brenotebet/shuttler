@@ -42,7 +42,7 @@ import { db } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import MapMarker from '../components/MapMarker';
 import { LOCATIONS } from './RequestRideScreen';
 import { fetchDirections } from '../src/utils/directions';
@@ -794,7 +794,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
     padding: 20,
     paddingBottom: 40,
     borderTopLeftRadius: 20,

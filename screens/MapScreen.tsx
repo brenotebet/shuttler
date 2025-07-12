@@ -33,7 +33,7 @@ import {
   MIN_LON_DELTA,
   MAX_LON_DELTA,
 } from '../src/constants/mapConfig';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import * as Location from 'expo-location';
 import {
   BottomTabNavigationProp,
@@ -475,7 +475,7 @@ export default function MapScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {/* Floating Search Bar */}
       <TouchableOpacity
         style={styles.searchContainer}   // <- no inline top override here
@@ -718,7 +718,7 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
     paddingHorizontal: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -742,7 +742,7 @@ const styles = StyleSheet.create({
     top: 140,
     left: 20,
     right: 20,
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
     borderRadius: 12,
     maxHeight: 250,
     shadowColor: '#000',
@@ -766,7 +766,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
     padding: 20,
     paddingBottom: 40,
     borderTopLeftRadius: 20,

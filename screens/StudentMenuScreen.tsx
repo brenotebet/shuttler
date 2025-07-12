@@ -12,7 +12,7 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { StudentTabParamList } from '../tabs/StudentTabs';
 import { auth } from '../firebase/firebaseconfig';
 import MenuItem from '../components/MenuItem';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 
 export default function StudentMenuScreen() {
   const navigation = useNavigation<
@@ -52,7 +52,7 @@ export default function StudentMenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
     paddingTop: 40,
     justifyContent: 'center',
     alignItems: 'center',

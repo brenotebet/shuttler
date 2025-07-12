@@ -21,7 +21,8 @@ import {
 import { useDriver } from '../drivercontext/DriverContext';
 import RideRequestCard from '../components/RideRequestCard';
 import { showAlert } from '../src/utils/alerts';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
+import HeaderBar from '../components/HeaderBar';
 
 // Grayscale map style (shared)
 
@@ -92,8 +93,8 @@ export default function AdminDriverScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, marginTop: 60 }}>
-      <Text style={styles.header}>Ride Requests</Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
+      <HeaderBar title="Ride Requests" />
       <FlatList
         data={requests}
         keyExtractor={(item) => item.id}
@@ -107,12 +108,6 @@ export default function AdminDriverScreen() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    margin: 12,
-    textAlign: 'center',
-  },
   noRequests: {
     textAlign: 'center',
     color: '#555',
