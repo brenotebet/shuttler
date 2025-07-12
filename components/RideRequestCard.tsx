@@ -3,9 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { campusCoords, outerRing, grayscaleMapStyle } from '../src/constants/mapConfig';
-import { GOOGLE_MAPS_API_KEY } from '../config';
-
-const polyline = require('@mapbox/polyline');
+import { fetchDirections } from '../src/utils/directions';
 
 type RideRequest = {
   id: string;
@@ -28,19 +26,9 @@ export default function RideRequestCard({ item, driverId, updateStatus }: Props)
   useEffect(() => {
     let isActive = true;
     const loadRoute = async () => {
-      const origin = `${item.pickup.latitude},${item.pickup.longitude}`;
-      const destination = `${item.dropoff.latitude},${item.dropoff.longitude}`;
       try {
-        const res = await fetch(
-          `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`
-        );
-        const json = await res.json();
-        if (json.routes?.length && isActive) {
-          const points = polyline.decode(json.routes[0].overview_polyline.points);
-          const coords = points.map(([lat, lng]: [number, number]) => ({
-            latitude: lat,
-            longitude: lng,
-          }));
+        const { coords } = await fetchDirections(item.pickup, item.dropoff);
+        if (isActive) {
           setRoute(coords);
         }
       } catch (e) {
