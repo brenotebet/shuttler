@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, Dimensions } from 'react-native';
 import { PieChart, BarChart, StackedBarChart } from 'react-native-chart-kit';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import HeaderBar from '../components/HeaderBar';
 import { db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
@@ -90,23 +91,24 @@ export default function DriverHistoryScreen() {
   };
 
   return (
-    <FlatList
-      style={styles.container}
-      data={rides}
-      keyExtractor={(item) => item.id}
-      renderItem={({ item }) => (
-        <View style={styles.card}>
-          <Text style={styles.cardStudent}>Student: {item.studentEmail}</Text>
-          <Text style={styles.cardText}>Drop-off: {item.dropoff?.name}</Text>
-          <Text style={styles.cardTimestamp}>
-            {item.timestamp?.toDate
-              ? item.timestamp.toDate().toLocaleString()
-              : 'No timestamp'}
-          </Text>
-        </View>
-      )}
-      ListEmptyComponent={<Text style={styles.emptyText}>No completed rides yet.</Text>}
-      ListHeaderComponent={
+    <View style={styles.container}>
+      <HeaderBar title="History" />
+      <FlatList
+        data={rides}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <View style={styles.card}>
+            <Text style={styles.cardStudent}>Student: {item.studentEmail}</Text>
+            <Text style={styles.cardText}>Drop-off: {item.dropoff?.name}</Text>
+            <Text style={styles.cardTimestamp}>
+              {item.timestamp?.toDate
+                ? item.timestamp.toDate().toLocaleString()
+                : 'No timestamp'}
+            </Text>
+          </View>
+        )}
+        ListEmptyComponent={<Text style={styles.emptyText}>No completed rides yet.</Text>}
+        ListHeaderComponent={
         <>
           <Text style={styles.title}>Driver Dashboard</Text>
           <View style={styles.metrics}>
@@ -148,15 +150,16 @@ export default function DriverHistoryScreen() {
           <Text style={styles.title}>Recent Rides</Text>
         </>
       }
-      contentContainerStyle={rides.length === 0 && styles.emptyContainer}
-    />
+        contentContainerStyle={rides.length === 0 && styles.emptyContainer}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 16,
@@ -169,7 +172,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   card: {
-    backgroundColor: '#f9f9f9',
+    backgroundColor: CARD_BACKGROUND,
     marginHorizontal: 20,
     marginBottom: 12,
     borderRadius: 12,

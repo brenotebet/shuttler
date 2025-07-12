@@ -3,9 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { campusCoords, outerRing, grayscaleMapStyle } from '../src/constants/mapConfig';
-import { GOOGLE_MAPS_API_KEY } from '../config';
-
-const polyline = require('@mapbox/polyline');
+import { fetchDirections } from '../src/utils/directions';
+import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
 
 type RideRequest = {
   id: string;
@@ -28,19 +27,9 @@ export default function RideRequestCard({ item, driverId, updateStatus }: Props)
   useEffect(() => {
     let isActive = true;
     const loadRoute = async () => {
-      const origin = `${item.pickup.latitude},${item.pickup.longitude}`;
-      const destination = `${item.dropoff.latitude},${item.dropoff.longitude}`;
       try {
-        const res = await fetch(
-          `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`
-        );
-        const json = await res.json();
-        if (json.routes?.length && isActive) {
-          const points = polyline.decode(json.routes[0].overview_polyline.points);
-          const coords = points.map(([lat, lng]: [number, number]) => ({
-            latitude: lat,
-            longitude: lng,
-          }));
+        const { coords } = await fetchDirections(item.pickup, item.dropoff);
+        if (isActive) {
           setRoute(coords);
         }
       } catch (e) {
@@ -75,15 +64,17 @@ export default function RideRequestCard({ item, driverId, updateStatus }: Props)
         <Polygon coordinates={outerRing} holes={[campusCoords]} fillColor="rgba(0,0,0,0.2)" strokeWidth={0} />
         <Polygon coordinates={campusCoords} strokeColor="black" strokeWidth={2} fillColor="transparent" />
         <Marker coordinate={item.pickup} anchor={{ x: 0.5, y: 1 }}>
-          <Icon name="location-on" size={28} color="#4B2E83" />
+          <Icon name="location-on" size={28} color={PRIMARY_COLOR} />
         </Marker>
         <Marker
           coordinate={{ latitude: item.dropoff.latitude, longitude: item.dropoff.longitude }}
           anchor={{ x: 0.5, y: 1 }}
         >
-          <Icon name="flag" size={26} color="#4B2E83" />
+          <Icon name="flag" size={26} color={PRIMARY_COLOR} />
         </Marker>
-        {route.length > 0 && <Polyline coordinates={route} strokeWidth={3} strokeColor="#4B2E83" />}
+        {route.length > 0 && (
+          <Polyline coordinates={route} strokeWidth={3} strokeColor={PRIMARY_COLOR} />
+        )}
       </MapView>
 
       {item.status === 'pending' && !item.driverId && (
@@ -112,7 +103,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     marginBottom: 20,
     padding: 12,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: CARD_BACKGROUND,
     borderRadius: 8,
     elevation: 2,
   },
@@ -123,7 +114,7 @@ const styles = StyleSheet.create({
     marginVertical: 8,
   },
   acceptButton: {
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 10,
     marginTop: 8,
@@ -131,7 +122,7 @@ const styles = StyleSheet.create({
   },
   acceptButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
   actionButton: {
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 10,
     marginTop: 8,

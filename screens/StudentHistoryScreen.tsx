@@ -5,7 +5,8 @@ import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { auth, db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import HeaderBar from '../components/HeaderBar';
 
 export default function StudentHistoryScreen() {
   const [rides, setRides] = useState<any[]>([]);
@@ -26,7 +27,7 @@ export default function StudentHistoryScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Your Ride History</Text>
+      <HeaderBar title="History" />
       <FlatList
         data={rides}
         keyExtractor={(item) => item.id}
@@ -49,17 +50,10 @@ export default function StudentHistoryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    margin: 20,
-    color: PRIMARY_COLOR,
-    textAlign: 'center'
+    backgroundColor: BACKGROUND_COLOR,
   },
   card: {
-    backgroundColor: '#f9f9f9',
+    backgroundColor: CARD_BACKGROUND,
     marginHorizontal: 20,
     marginBottom: 12,
     borderRadius: 12,

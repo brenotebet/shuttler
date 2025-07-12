@@ -24,9 +24,9 @@ export default function StackNavigator() {
       <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
       <Stack.Screen name="StudentHome" component={StudentTabs} options={{ headerShown: false }} />
       <Stack.Screen name="DriverHome" component={DriverTabs} options={{ headerShown: false }} />
-      <Stack.Screen name="AdminDriver" component={AdminDriverScreen} options={{ title: 'Requested Rides' }} />
-      <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} options={{ title: 'History' }} />
-      <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} options={{ title: 'History' }} />
+      <Stack.Screen name="AdminDriver" component={AdminDriverScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} options={{ headerShown: false }} />
     </Stack.Navigator>
   );
 }

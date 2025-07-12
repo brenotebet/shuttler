@@ -6,7 +6,7 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { useDriver } from '../drivercontext/DriverContext';
 import { useLocationSharing } from '../location/LocationContext';
 import MenuItem from '../components/MenuItem';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 
 export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -53,7 +53,7 @@ export default function DriverMenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: BACKGROUND_COLOR,
     paddingTop: 40,
     justifyContent: 'center',
     alignItems: 'center',
