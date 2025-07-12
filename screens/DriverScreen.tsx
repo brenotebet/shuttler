@@ -41,13 +41,11 @@ import {
 import { db } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
-import { GOOGLE_MAPS_API_KEY } from '../config';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import MapMarker from '../components/MapMarker';
 import { LOCATIONS } from './RequestRideScreen';
-
-const polyline = require('@mapbox/polyline');
+import { fetchDirections } from '../src/utils/directions';
 
 function computeBearing(
   lat1: number,
@@ -296,53 +294,40 @@ export default function DriverScreen() {
   // 2) Fetch route & ETA whenever “ride” or driver location updates
   // ───────────────────────────────────────────────────────────────────
   const fetchRoute = async () => {
-      if (!ride || !driverId) {
-        setRouteCoords([]);
-        setEta(null);
-        return;
-      }
+    if (!ride || !driverId) {
+      setRouteCoords([]);
+      setEta(null);
+      return;
+    }
 
-      const assigned = lastCoords.current[driverId];
-      if (!assigned) {
-        setRouteCoords([]);
-        setEta(null);
-        return;
-      }
+    const assigned = lastCoords.current[driverId];
+    if (!assigned) {
+      setRouteCoords([]);
+      setEta(null);
+      return;
+    }
 
-      const origin = `${assigned.latitude},${assigned.longitude}`;
-      let destination = '';
+    let destination: { latitude: number; longitude: number };
+    if (ride.status === 'accepted') {
+      destination = ride.pickup;
+    } else if (ride.status === 'in-transit') {
+      destination = ride.dropoff;
+    } else {
+      setRouteCoords([]);
+      setEta(null);
+      return;
+    }
 
-      if (ride.status === 'accepted') {
-        destination = `${ride.pickup.latitude},${ride.pickup.longitude}`;
-      } else if (ride.status === 'in-transit') {
-        destination = `${ride.dropoff.latitude},${ride.dropoff.longitude}`;
-      } else {
-        setRouteCoords([]);
-        setEta(null);
-        return;
-      }
-
-      try {
-        const res = await fetch(
-          `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`
-        );
-        const json = await res.json();
-        if (json.routes?.length) {
-          const route = json.routes[0];
-          const points = polyline.decode(route.overview_polyline.points);
-          const coords = points.map(([lat, lng]: [number, number]) => ({
-            latitude: lat,
-            longitude: lng,
-          }));
-          setRouteCoords(coords);
-          setEta(route.legs[0].duration.text);
-        }
-      } catch (err) {
-        console.error('DriverScreen fetchRoute error', err);
-        setRouteCoords([]);
-        setEta(null);
-      }
-    };
+    try {
+      const { coords, eta } = await fetchDirections(assigned, destination);
+      setRouteCoords(coords);
+      setEta(eta);
+    } catch (err) {
+      console.error('DriverScreen fetchRoute error', err);
+      setRouteCoords([]);
+      setEta(null);
+    }
+  };
 
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const driverOnline = activeBusIds.includes(driverId || '');
