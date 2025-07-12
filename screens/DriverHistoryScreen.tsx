@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, Dimensions } from 'react-native';
-import { PieChart, BarChart } from 'react-native-chart-kit';
+import { PieChart, BarChart, StackedBarChart } from 'react-native-chart-kit';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
@@ -118,7 +118,7 @@ export default function DriverHistoryScreen() {
 
           {destinationData.length > 0 && (
             <>
-              <Text style={styles.sectionTitle}>Rides by Destination</Text>
+              <Text style={styles.title}>Rides by Destination</Text>
               <PieChart
                 data={destinationData}
                 width={screenWidth - 32}
@@ -126,17 +126,16 @@ export default function DriverHistoryScreen() {
                 accessor="count"
                 chartConfig={chartConfig}
                 backgroundColor="transparent"
-                paddingLeft="15"
               />
             </>
           )}
 
           {hourlyCounts.some((v) => v > 0) && (
             <>
-              <Text style={styles.sectionTitle}>Rides by Hour (7am-6pm)</Text>
+              <Text style={styles.title}>Rides by Hour (7am-6pm)</Text>
               <BarChart
                 data={barData}
-                width={screenWidth - 32}
+                width={screenWidth - 64}
                 height={220}
                 fromZero
                 chartConfig={chartConfig}
@@ -146,7 +145,7 @@ export default function DriverHistoryScreen() {
             </>
           )}
 
-          <Text style={styles.sectionTitle}>Recent Rides</Text>
+          <Text style={styles.title}>Recent Rides</Text>
         </>
       }
       contentContainerStyle={rides.length === 0 && styles.emptyContainer}
@@ -161,7 +160,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 16,
-    marginTop: 60,
   },
   title: {
     fontSize: 22,
@@ -171,15 +169,36 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   card: {
-    backgroundColor: '#f0e6ff',
-    padding: 14,
+    backgroundColor: '#f9f9f9',
+    marginHorizontal: 20,
     marginBottom: 12,
-    borderRadius: 10,
-    elevation: 2,
+    borderRadius: 12,
+    padding: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    textAlign: 'center'
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    color: '#333',
+  },
+  cardDetail: {
+    fontSize: 14,
+    color: '#555',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#888',
   },
   cardStudent: {
     fontSize: 16,
@@ -198,12 +217,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#777',
     flexWrap: 'wrap',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#888',
-    textAlign: 'center',
-    marginTop: 40,
   },
   emptyContainer: {
     flexGrow: 1,
