@@ -489,9 +489,7 @@ export default function MapScreen() {
     const lonDelta = region
       ? Math.max(region.longitudeDelta / 1.5, MIN_LON_DELTA)
       : 0.008;
-
-    const lonOffset =
-      (lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
+    const lonOffset = (lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
 
     mapRef.current?.animateToRegion(
       {
