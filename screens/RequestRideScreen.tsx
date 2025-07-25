@@ -43,7 +43,7 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
   const handleRequest = async () => {
   const { status } = await Location.requestForegroundPermissionsAsync();
   if (status !== 'granted') {
-    showAlert('Permission denied for location');
+    showAlert('Location permission denied.');
     return;
   }
 

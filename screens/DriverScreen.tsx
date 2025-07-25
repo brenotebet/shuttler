@@ -678,7 +678,7 @@ export default function DriverScreen() {
                       setRideId(null);
                       setRouteCoords([]);
                       setEta(null);
-                      showAlert('Ride cancelled');
+                      showAlert('Ride canceled.');
                     }
                   }}
                 >
@@ -704,7 +704,7 @@ export default function DriverScreen() {
                       setRideId(null);
                       setRouteCoords([]);
                       setEta(null);
-                      showAlert('Ride cancelled');
+                      showAlert('Ride canceled.');
                     }
                   }}
                 >

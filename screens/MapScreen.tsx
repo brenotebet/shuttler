@@ -497,7 +497,7 @@ export default function MapScreen() {
     }
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      showAlert('Permission denied for location');
+      showAlert('Location permission denied.');
       return;
     }
     const location = await Location.getCurrentPositionAsync({});
@@ -749,7 +749,7 @@ export default function MapScreen() {
                   setRideId(null);
                   setRouteCoords([]);
                   setEta(null);
-                  showAlert('Ride request cancelled');
+                  showAlert('Ride request canceled.');
                 }
               }}
             >
