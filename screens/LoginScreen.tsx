@@ -52,7 +52,7 @@ export default function LoginScreen({ navigation }: Props) {
     }
 
     if (!email.endsWith('@mckendree.edu')) {
-      showAlert('Only McKendree emails allowed');
+      showAlert('Only McKendree emails are allowed.');
       return;
     }
 
