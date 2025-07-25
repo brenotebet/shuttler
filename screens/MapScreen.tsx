@@ -125,7 +125,9 @@ export default function MapScreen() {
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [busEta, setBusEta] = useState<string | null>(null);
   const [nextStop, setNextStop] = useState<string | null>(null);
-const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
+  const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
+
+  
 
   const mapRef = useRef<MapView | null>(null);
 
@@ -434,7 +436,7 @@ const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
   // Animate sidebar in/out when a bus is selected
   useEffect(() => {
     Animated.timing(sidebarAnim, {
-      toValue: selectedBusId ? 0 : SIDEBAR_WIDTH,
+      toValue: selectedBusId ? 0 : -SIDEBAR_WIDTH,
       duration: 300,
       useNativeDriver: true,
     }).start();
@@ -480,14 +482,15 @@ const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
     const nextIdx = (nearestIdx + 1) % LOCATIONS.length;
     setNextStop(LOCATIONS[nextIdx].name);
 
-    // Zoom in slightly on the tapped bus and offset so it's visible next to the sidebar
     const latDelta = region
       ? Math.max(region.latitudeDelta / 1.5, MIN_LAT_DELTA)
       : 0.008;
     const lonDelta = region
       ? Math.max(region.longitudeDelta / 1.5, MIN_LON_DELTA)
       : 0.008;
+
     const lonOffset = -(lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
+
     mapRef.current?.animateToRegion(
       {
         latitude: loc.latitude,
@@ -721,7 +724,7 @@ const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
         pointerEvents={selectedBusId ? 'auto' : 'none'}
         style={[
           styles.sidebar,
-          { transform: [{ translateX: sidebarAnim }] },
+          { transform: [{ translateX: sidebarAnim }], display: selectedBusId ? 'flex' : 'none' },
         ]}
       >
         <TouchableOpacity
@@ -920,10 +923,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: PRIMARY_COLOR,
     padding: 20,
-    borderTopLeftRadius: 20,
-    borderBottomLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomRightRadius: 20,
     shadowColor: '#000',
-    shadowOffset: { width: -2, height: 0 },
+    shadowOffset: { width: 2, height: 0 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 10,
