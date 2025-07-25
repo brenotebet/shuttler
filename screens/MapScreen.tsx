@@ -13,6 +13,7 @@ import {
   FlatList,
   TouchableWithoutFeedback,
   Platform,
+  Dimensions,
 } from 'react-native';
 import MapView, {
   PROVIDER_GOOGLE,
@@ -64,6 +65,9 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
 import { fetchDirections } from '../src/utils/directions';
+
+const SIDEBAR_WIDTH = 220;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -121,7 +125,7 @@ export default function MapScreen() {
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [busEta, setBusEta] = useState<string | null>(null);
   const [nextStop, setNextStop] = useState<string | null>(null);
-  const sidebarAnim = useRef(new Animated.Value(-260)).current;
+  const sidebarAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
 
   const mapRef = useRef<MapView | null>(null);
 
@@ -430,7 +434,7 @@ export default function MapScreen() {
   // Animate sidebar in/out when a bus is selected
   useEffect(() => {
     Animated.timing(sidebarAnim, {
-      toValue: selectedBusId ? 0 : -260,
+      toValue: selectedBusId ? 0 : -SIDEBAR_WIDTH,
       duration: 300,
       useNativeDriver: true,
     }).start();
@@ -476,17 +480,21 @@ export default function MapScreen() {
     const nextIdx = (nearestIdx + 1) % LOCATIONS.length;
     setNextStop(LOCATIONS[nextIdx].name);
 
-    // Zoom in slightly on the tapped bus
+
+    const latDelta = region
+      ? Math.max(region.latitudeDelta / 1.5, MIN_LAT_DELTA)
+      : 0.008;
+    const lonDelta = region
+      ? Math.max(region.longitudeDelta / 1.5, MIN_LON_DELTA)
+      : 0.008;
+    const lonOffset = (lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
     mapRef.current?.animateToRegion(
       {
         latitude: loc.latitude,
-        longitude: loc.longitude,
-        latitudeDelta: region
-          ? Math.max(region.latitudeDelta / 1.5, MIN_LAT_DELTA)
-          : 0.008,
-        longitudeDelta: region
-          ? Math.max(region.longitudeDelta / 1.5, MIN_LON_DELTA)
-          : 0.008,
+        longitude: loc.longitude + lonOffset,
+        latitudeDelta: latDelta,
+        longitudeDelta: lonDelta,
+    
       },
       500,
     );
@@ -908,15 +916,15 @@ const styles = StyleSheet.create({
   sidebar: {
     position: 'absolute',
     top: 100,
-    right: 0,
-    width: 220,
+    left: 0,
+    width: SIDEBAR_WIDTH,
     bottom: 0,
     backgroundColor: PRIMARY_COLOR,
     padding: 20,
-    borderTopLeftRadius: 20,
-    borderBottomLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomRightRadius: 20,
     shadowColor: '#000',
-    shadowOffset: { width: -2, height: 0 },
+    shadowOffset: { width: 2, height: 0 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 10,
@@ -929,13 +937,13 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   sidebarTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
     marginBottom: 12,
     color: '#fff',
   },
   sidebarText: {
-    fontSize: 14,
+    fontSize: 16,
     marginBottom: 8,
     color: '#fff',
   },
