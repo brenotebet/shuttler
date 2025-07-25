@@ -436,7 +436,7 @@ export default function MapScreen() {
   // Animate sidebar in/out when a bus is selected
   useEffect(() => {
     Animated.timing(sidebarAnim, {
-      toValue: selectedBusId ? 0 : -SIDEBAR_WIDTH,
+      toValue: selectedBusId ? 0 : SIDEBAR_WIDTH,
       duration: 300,
       useNativeDriver: true,
     }).start();
@@ -447,6 +447,7 @@ export default function MapScreen() {
     if (!loc) return;
 
     setSelectedBusId(id);
+    setShowLocationList(false);
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -560,21 +561,23 @@ export default function MapScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {/* Floating Search Bar */}
-      <TouchableOpacity
-        style={styles.searchContainer}   // <- no inline top override here
-        onPress={() => setShowLocationList((prev) => !prev)}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.searchText}>
-          {selectedDropoffIndex === null
-            ? 'Where to?'
-            : LOCATIONS[selectedDropoffIndex].name}
-        </Text>
-        <Icon name="keyboard-arrow-down" size={24} color="#888" />
-      </TouchableOpacity>
+      {!selectedBusId && (
+        <TouchableOpacity
+          style={styles.searchContainer}
+          onPress={() => setShowLocationList((prev) => !prev)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.searchText}>
+            {selectedDropoffIndex === null
+              ? 'Where to?'
+              : LOCATIONS[selectedDropoffIndex].name}
+          </Text>
+          <Icon name="keyboard-arrow-down" size={24} color="#888" />
+        </TouchableOpacity>
+      )}
 
       {/* Drop-off Options List */}
-      {showLocationList && (
+      {showLocationList && !selectedBusId && (
         <TouchableWithoutFeedback onPress={() => setShowLocationList(false)}>
           <View style={styles.overlay}>
             <View style={styles.locationListContainer}>
@@ -917,12 +920,13 @@ const styles = StyleSheet.create({
   },
   sidebar: {
     position: 'absolute',
-    top: 100,
+    top: 0,
     right: 0,
     width: SIDEBAR_WIDTH,
     bottom: 0,
     backgroundColor: PRIMARY_COLOR,
     padding: 20,
+    paddingTop: 50,
     borderTopRightRadius: 20,
     borderBottomRightRadius: 20,
     shadowColor: '#000',
@@ -942,6 +946,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     marginBottom: 12,
+    marginTop: 30,
     color: '#fff',
   },
   sidebarText: {
