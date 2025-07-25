@@ -125,7 +125,9 @@ export default function MapScreen() {
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [busEta, setBusEta] = useState<string | null>(null);
   const [nextStop, setNextStop] = useState<string | null>(null);
-  const sidebarAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
+  const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
+
+  
 
   const mapRef = useRef<MapView | null>(null);
 
@@ -480,21 +482,21 @@ export default function MapScreen() {
     const nextIdx = (nearestIdx + 1) % LOCATIONS.length;
     setNextStop(LOCATIONS[nextIdx].name);
 
-
     const latDelta = region
       ? Math.max(region.latitudeDelta / 1.5, MIN_LAT_DELTA)
       : 0.008;
     const lonDelta = region
       ? Math.max(region.longitudeDelta / 1.5, MIN_LON_DELTA)
       : 0.008;
-    const lonOffset = (lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
+
+    const lonOffset = -(lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
+
     mapRef.current?.animateToRegion(
       {
         latitude: loc.latitude,
         longitude: loc.longitude + lonOffset,
         latitudeDelta: latDelta,
         longitudeDelta: lonDelta,
-    
       },
       500,
     );
@@ -916,7 +918,7 @@ const styles = StyleSheet.create({
   sidebar: {
     position: 'absolute',
     top: 100,
-    left: 0,
+    right: 0,
     width: SIDEBAR_WIDTH,
     bottom: 0,
     backgroundColor: PRIMARY_COLOR,
@@ -933,7 +935,7 @@ const styles = StyleSheet.create({
   sidebarClose: {
     position: 'absolute',
     top: 10,
-    right: 10,
+    left: 10,
     padding: 4,
   },
   sidebarTitle: {
