@@ -33,7 +33,11 @@ import {
   MIN_LON_DELTA,
   MAX_LON_DELTA,
 } from '../src/constants/mapConfig';
-import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
+import {
+  PRIMARY_COLOR,
+  BACKGROUND_COLOR,
+  CARD_BACKGROUND,
+} from '../src/constants/theme';
 import * as Location from 'expo-location';
 import {
   BottomTabNavigationProp,
@@ -114,6 +118,11 @@ export default function MapScreen() {
 
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedDropoffIndex, setSelectedDropoffIndex] = useState<number | null>(null);
+
+  const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
+  const [busEta, setBusEta] = useState<string | null>(null);
+  const [nextStop, setNextStop] = useState<string | null>(null);
+  const sidebarAnim = useRef(new Animated.Value(-260)).current;
 
   const mapRef = useRef<MapView | null>(null);
 
@@ -419,6 +428,56 @@ export default function MapScreen() {
     }
   }, [ride]);
 
+  // Animate sidebar in/out when a bus is selected
+  useEffect(() => {
+    Animated.timing(sidebarAnim, {
+      toValue: selectedBusId ? 0 : -260,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [selectedBusId]);
+
+  const handleBusPress = async (id: string) => {
+    const loc = busLocations[id];
+    if (!loc) return;
+
+    setSelectedBusId(id);
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setBusEta(null);
+        return;
+      }
+      const userLoc = await Location.getCurrentPositionAsync({});
+      const { eta: e } = await fetchDirections(
+        { latitude: loc.latitude, longitude: loc.longitude },
+        { latitude: userLoc.coords.latitude, longitude: userLoc.coords.longitude }
+      );
+      setBusEta(e);
+    } catch (err) {
+      console.error('Failed to fetch ETA', err);
+      setBusEta(null);
+    }
+
+    let nearestIdx = 0;
+    let minDist = Number.MAX_VALUE;
+    LOCATIONS.forEach((stop, idx) => {
+      const d = getDistanceInMeters(
+        loc.latitude,
+        loc.longitude,
+        stop.latitude,
+        stop.longitude
+      );
+      if (d < minDist) {
+        minDist = d;
+        nearestIdx = idx;
+      }
+    });
+    const nextIdx = (nearestIdx + 1) % LOCATIONS.length;
+    setNextStop(LOCATIONS[nextIdx].name);
+  };
+
   // Handle "Request Ride"
   const handleRequest = async (index: number) => {
     if (!busOnline) {
@@ -591,6 +650,7 @@ export default function MapScreen() {
               flat
               rotation={loc.heading}
               anchor={{ x: 0.5, y: 0.5 }}
+              onPress={() => handleBusPress(id)}
             >
               <Image
                 source={busIcon}
@@ -634,6 +694,27 @@ export default function MapScreen() {
           />
         )}
       </MapView>
+
+      {/* Bus Info Sidebar */}
+      <Animated.View
+        pointerEvents={selectedBusId ? 'auto' : 'none'}
+        style={[
+          styles.sidebar,
+          { transform: [{ translateX: sidebarAnim }] },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.sidebarClose}
+          onPress={() => setSelectedBusId(null)}
+        >
+          <Icon name="close" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.sidebarTitle}>
+          {`Bogey Bus ${selectedBusId ?? ''}`.trim()}
+        </Text>
+        {busEta && <Text style={styles.sidebarText}>ETA to you: {busEta}</Text>}
+        {nextStop && <Text style={styles.sidebarText}>Next stop: {nextStop}</Text>}
+      </Animated.View>
 
       {/* Bottom Card / Ride Info */}
       <Animated.View
@@ -809,5 +890,39 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#888',
     textAlign: 'center',
+  },
+  sidebar: {
+    position: 'absolute',
+    top: 100,
+    right: 0,
+    width: 220,
+    bottom: 0,
+    backgroundColor: CARD_BACKGROUND,
+    padding: 20,
+    borderTopLeftRadius: 20,
+    borderBottomLeftRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: -2, height: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 10,
+    zIndex: 101,
+  },
+  sidebarClose: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    padding: 4,
+  },
+  sidebarTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 12,
+    color: '#333',
+  },
+  sidebarText: {
+    fontSize: 14,
+    marginBottom: 8,
+    color: '#555',
   },
 });
