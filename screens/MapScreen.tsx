@@ -489,8 +489,7 @@ export default function MapScreen() {
     const lonDelta = region
       ? Math.max(region.longitudeDelta / 1.5, MIN_LON_DELTA)
       : 0.008;
-
-    const lonOffset = -(lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH));
+    const lonOffset = (lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
 
     mapRef.current?.animateToRegion(
       {
@@ -724,7 +723,7 @@ export default function MapScreen() {
 
       {selectedBusId && (
         <TouchableWithoutFeedback onPress={() => setSelectedBusId(null)}>
-          <View style={styles.overlay} />
+          <View style={styles.transparentOverlay} />
         </TouchableWithoutFeedback>
       )}
 
@@ -843,6 +842,11 @@ const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.3)',
+    zIndex: 99,
+  },
+  transparentOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
     zIndex: 99,
   },
   locationListContainer: {
