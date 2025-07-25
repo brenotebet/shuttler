@@ -490,7 +490,7 @@ export default function MapScreen() {
       ? Math.max(region.longitudeDelta / 1.5, MIN_LON_DELTA)
       : 0.008;
 
-    const lonOffset = -(lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
+    const lonOffset = -(lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH));
 
     mapRef.current?.animateToRegion(
       {
@@ -722,6 +722,12 @@ export default function MapScreen() {
         )}
       </MapView>
 
+      {selectedBusId && (
+        <TouchableWithoutFeedback onPress={() => setSelectedBusId(null)}>
+          <View style={styles.overlay} />
+        </TouchableWithoutFeedback>
+      )}
+
       {/* Bus Info Sidebar */}
       <Animated.View
         pointerEvents={selectedBusId ? 'auto' : 'none'}
@@ -730,12 +736,6 @@ export default function MapScreen() {
           { transform: [{ translateX: sidebarAnim }], display: selectedBusId ? 'flex' : 'none' },
         ]}
       >
-        <TouchableOpacity
-          style={styles.sidebarClose}
-          onPress={() => setSelectedBusId(null)}
-        >
-          <Icon name="close" size={24} color="#fff" />
-        </TouchableOpacity>
         <Text style={styles.sidebarTitle}>
           {`Bogey Bus ${selectedBusId ?? ''}`.trim()}
         </Text>
@@ -935,12 +935,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 10,
     zIndex: 101,
-  },
-  sidebarClose: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    padding: 4,
   },
   sidebarTitle: {
     fontSize: 20,
