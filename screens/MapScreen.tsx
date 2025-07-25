@@ -480,7 +480,7 @@ export default function MapScreen() {
     const nextIdx = (nearestIdx + 1) % LOCATIONS.length;
     setNextStop(LOCATIONS[nextIdx].name);
 
-    // Zoom in slightly on the tapped bus and offset so it's visible next to the sidebar
+
     const latDelta = region
       ? Math.max(region.latitudeDelta / 1.5, MIN_LAT_DELTA)
       : 0.008;
@@ -494,6 +494,7 @@ export default function MapScreen() {
         longitude: loc.longitude + lonOffset,
         latitudeDelta: latDelta,
         longitudeDelta: lonDelta,
+    
       },
       500,
     );
@@ -721,7 +722,7 @@ export default function MapScreen() {
         pointerEvents={selectedBusId ? 'auto' : 'none'}
         style={[
           styles.sidebar,
-          { transform: [{ translateX: sidebarAnim }] },
+          { transform: [{ translateX: sidebarAnim }], display: selectedBusId ? 'flex' : 'none' },
         ]}
       >
         <TouchableOpacity
