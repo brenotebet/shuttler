@@ -55,7 +55,5 @@ export const grayscaleMapStyle: MapStyleElement[] = [
   { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
 ];
 
-export const MIN_LAT_DELTA = 0.005;
-export const MAX_LAT_DELTA = 0.1;
-export const MIN_LON_DELTA = 0.005;
-export const MAX_LON_DELTA = 0.02;
+export const MAX_LAT_DELTA = 0.021;
+export const MAX_LON_DELTA = 0.033;
