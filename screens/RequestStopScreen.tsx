@@ -1,8 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import * as Location from 'expo-location';
 import { Picker } from '@react-native-picker/picker';
-import { collection, addDoc, serverTimestamp, doc, onSnapshot, getDocs, query, where } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  onSnapshot,
+  getDocs,
+  query,
+  where,
+} from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR } from '../src/constants/theme';
@@ -15,7 +22,7 @@ export const LOCATIONS = [
   { id: 'stop5', name: 'McKendree West Clubhouse', latitude: 38.60573, longitude: -89.82468},
 ];
 
-export default function RequestRideScreen({ navigation }: { navigation: any }) {
+export default function RequestStopScreen({ navigation }: { navigation: any }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [busOnline, setBusOnline] = useState(false);
 
@@ -41,48 +48,39 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
   }, []);
 
   const handleRequest = async () => {
-  const { status } = await Location.requestForegroundPermissionsAsync();
-  if (status !== 'granted') {
-    showAlert('Location permission denied.');
-    return;
-  }
+    const existing = await getDocs(
+      query(
+        collection(db, 'stopRequests'),
+        where('studentEmail', '==', auth.currentUser?.email),
+        where('status', 'in', ['pending', 'accepted'])
+      )
+    );
 
-  const existing = await getDocs(query(
-    collection(db, 'rideRequests'),
-    where('studentEmail', '==', auth.currentUser?.email),
-    where('status', 'in', ['pending', 'accepted', 'in-transit'])
-  ));
+    if (!existing.empty) {
+      showAlert('You already have a stop in progress.');
+      return;
+    }
 
-  if (!existing.empty) {
-    showAlert('You already have a ride in progress.');
-    return;
-  }
+    const selectedStop = LOCATIONS[selectedIndex];
 
-  const location = await Location.getCurrentPositionAsync({});
-  const selectedDropoff = LOCATIONS[selectedIndex];
+    try {
+      await addDoc(collection(db, 'stopRequests'), {
+        studentEmail: auth.currentUser?.email,
+        stop: {
+          latitude: selectedStop.latitude,
+          longitude: selectedStop.longitude,
+          name: selectedStop.name,
+        },
+        status: 'pending',
+        timestamp: serverTimestamp(),
+      });
 
-  try {
-    await addDoc(collection(db, 'rideRequests'), {
-      studentEmail: auth.currentUser?.email,
-      pickup: {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      },
-      dropoff: {
-        latitude: selectedDropoff.latitude,
-        longitude: selectedDropoff.longitude,
-        name: selectedDropoff.name,
-      },
-      status: 'pending',
-      timestamp: serverTimestamp(),
-    });
-
-    showAlert('Ride requested successfully!');
-    navigation.goBack();
-  } catch (err: any) {
-    showAlert(err.message, 'Error requesting ride');
-  }
-};
+      showAlert('Stop requested successfully!');
+      navigation.goBack();
+    } catch (err: any) {
+      showAlert(err.message, 'Error requesting stop');
+    }
+  };
 
   if (!busOnline) {
     return (
@@ -96,7 +94,7 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={{ padding: 20 }}>
-      <Text>Select Drop-off Location</Text>
+      <Text>Select Stop Location</Text>
       <Picker
         selectedValue={selectedIndex}
         onValueChange={(itemValue) => setSelectedIndex(itemValue)}
@@ -107,7 +105,7 @@ export default function RequestRideScreen({ navigation }: { navigation: any }) {
         ))}
       </Picker>
       <TouchableOpacity style={styles.button} onPress={handleRequest}>
-        <Text style={styles.buttonText}>Request Ride</Text>
+        <Text style={styles.buttonText}>Request Stop</Text>
       </TouchableOpacity>
     </View>
   );

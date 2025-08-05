@@ -9,18 +9,18 @@ import { PRIMARY_COLOR, BACKGROUND_COLOR, CARD_BACKGROUND } from '../src/constan
 import HeaderBar from '../components/HeaderBar';
 
 export default function StudentHistoryScreen() {
-  const [rides, setRides] = useState<any[]>([]);
+  const [stops, setStops] = useState<any[]>([]);
 
   useEffect(() => {
     const q = query(
-      collection(db, 'rideRequests'),
+      collection(db, 'stopRequests'),
       where('studentEmail', '==', auth.currentUser?.email),
       where('status', '==', 'completed'),
-      orderBy('timestamp', 'desc')
+      orderBy('completedTimestamp', 'desc')
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setRides(data);
+      setStops(data);
     });
     return () => unsub();
   }, []);
@@ -29,19 +29,23 @@ export default function StudentHistoryScreen() {
     <View style={styles.container}>
       <HeaderBar title="History" />
       <FlatList
-        data={rides}
+        data={stops}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Icon name="place" size={20} color={PRIMARY_COLOR} style={{ marginRight: 6 }} />
-              <Text style={styles.cardTitle}>Drop-off: {item.dropoff?.name}</Text>
+              <Text style={styles.cardTitle}>Stop: {item.stop?.name}</Text>
             </View>
-            <Text style={styles.cardDetail}>Completed on: {item.timestamp?.toDate().toLocaleString()}</Text>
+            <Text style={styles.cardDetail}>
+              Completed on: {(
+                item.completedTimestamp?.toDate?.() || item.timestamp?.toDate?.()
+              )?.toLocaleString()}
+            </Text>
           </View>
         )}
-        ListEmptyComponent={<Text style={styles.emptyText}>No rides completed yet.</Text>}
-        contentContainerStyle={rides.length === 0 && { flex: 1, justifyContent: 'center', alignItems: 'center' }}
+        ListEmptyComponent={<Text style={styles.emptyText}>No stops completed yet.</Text>}
+        contentContainerStyle={stops.length === 0 && { flex: 1, justifyContent: 'center', alignItems: 'center' }}
       />
     </View>
   );
