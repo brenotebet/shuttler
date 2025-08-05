@@ -34,7 +34,6 @@ import {
   doc,
   deleteDoc,
   updateDoc,
-  serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
