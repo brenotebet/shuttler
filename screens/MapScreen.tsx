@@ -601,125 +601,131 @@ export default function MapScreen() {
       )}
 
       {/* Map */}
-      <MapView
-        ref={mapRef}
-        provider={PROVIDER_GOOGLE}
-        style={styles.map}
-        region={region}
-        showsUserLocation
-        showsMyLocationButton={false}
-        showsCompass={false}
-        showsScale={false}
-        rotateEnabled={false}
-        pitchEnabled={false}
-        customMapStyle={grayscaleMapStyle}
-        onRegionChangeComplete={(newRegion) => {
-          const latMin = 38.59678;
-          const latMax = 38.61775;
-          const lonMin = -89.82802;
-          const lonMax = -89.79585;
+      {region ? (
+        <MapView
+          ref={mapRef}
+          provider={PROVIDER_GOOGLE}
+          style={styles.map}
+          region={region}
+          showsUserLocation
+          showsMyLocationButton={false}
+          showsCompass={false}
+          showsScale={false}
+          rotateEnabled={false}
+          pitchEnabled={false}
+          customMapStyle={grayscaleMapStyle}
+          onRegionChangeComplete={(newRegion) => {
+            const latMin = 38.59678;
+            const latMax = 38.61775;
+            const lonMin = -89.82802;
+            const lonMax = -89.79585;
 
-          const clampedRegion = {
-            latitude: Math.min(Math.max(newRegion.latitude, latMin), latMax),
-            longitude: Math.min(Math.max(newRegion.longitude, lonMin), lonMax),
-            latitudeDelta: Math.min(
-              Math.max(newRegion.latitudeDelta, MIN_LAT_DELTA),
-              MAX_LAT_DELTA
-            ),
-            longitudeDelta: Math.min(
-              Math.max(newRegion.longitudeDelta, MIN_LON_DELTA),
-              MAX_LON_DELTA
-            ),
-          };
+            const clampedRegion = {
+              latitude: Math.min(Math.max(newRegion.latitude, latMin), latMax),
+              longitude: Math.min(Math.max(newRegion.longitude, lonMin), lonMax),
+              latitudeDelta: Math.min(
+                Math.max(newRegion.latitudeDelta, MIN_LAT_DELTA),
+                MAX_LAT_DELTA
+              ),
+              longitudeDelta: Math.min(
+                Math.max(newRegion.longitudeDelta, MIN_LON_DELTA),
+                MAX_LON_DELTA
+              ),
+            };
 
-          const needsAdjustment =
-            clampedRegion.latitude !== newRegion.latitude ||
-            clampedRegion.longitude !== newRegion.longitude ||
-            clampedRegion.latitudeDelta !== newRegion.latitudeDelta ||
-            clampedRegion.longitudeDelta !== newRegion.longitudeDelta;
+            const needsAdjustment =
+              clampedRegion.latitude !== newRegion.latitude ||
+              clampedRegion.longitude !== newRegion.longitude ||
+              clampedRegion.latitudeDelta !== newRegion.latitudeDelta ||
+              clampedRegion.longitudeDelta !== newRegion.longitudeDelta;
 
-          setRegion(clampedRegion);
+            setRegion(clampedRegion);
 
-          if (needsAdjustment) {
-            mapRef.current?.animateToRegion(clampedRegion, 300);
-          }
-        }}
-      >
-        {}
-        {/* Permanent Stop Markers */}
-        {LOCATIONS.filter(
-          (stop) =>
-            !(
-              ride?.dropoff &&
-              Math.abs(stop.latitude - ride.dropoff.latitude) < 0.0001 &&
-              Math.abs(stop.longitude - ride.dropoff.longitude) < 0.0001
-            )
-        ).map((stop) => (
-          <Marker
-            description={stop.name}
-            key={stop.id}
-            coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            <MapMarker icon="location-on" />
-          </Marker>
-        ))}
-
-        {/* Animated Bus Markers */}
-        {activeBusIds.map((id) => {
-          const loc = busLocations[id];
-          if (!loc) return null;
-          return (
-            <MarkerAnimated
-              key={id}
-              coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
-              flat
-              rotation={loc.heading}
-              anchor={{ x: 0.5, y: 0.5 }}
-              onPress={() => handleBusPress(id)}
+            if (needsAdjustment) {
+              mapRef.current?.animateToRegion(clampedRegion, 300);
+            }
+          }}
+        >
+          {}
+          {/* Permanent Stop Markers */}
+          {LOCATIONS.filter(
+            (stop) =>
+              !(
+                ride?.dropoff &&
+                Math.abs(stop.latitude - ride.dropoff.latitude) < 0.0001 &&
+                Math.abs(stop.longitude - ride.dropoff.longitude) < 0.0001
+              )
+          ).map((stop) => (
+            <Marker
+              description={stop.name}
+              key={stop.id}
+              coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+              anchor={{ x: 0.5, y: 1 }}
             >
-              <Image
-                source={busIcon}
-                style={{ width: 120, height: 120 }}
-                resizeMode="contain"
-              />
+              <MapMarker icon="location-on" />
+            </Marker>
+          ))}
+
+          {/* Animated Bus Markers */}
+          {activeBusIds.map((id) => {
+            const loc = busLocations[id];
+            if (!loc) return null;
+            return (
+              <MarkerAnimated
+                key={id}
+                coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
+                flat
+                rotation={loc.heading}
+                anchor={{ x: 0.5, y: 0.5 }}
+                onPress={() => handleBusPress(id)}
+              >
+                <Image
+                  source={busIcon}
+                  style={{ width: 120, height: 120 }}
+                  resizeMode="contain"
+                />
+              </MarkerAnimated>
+            );
+          })}
+
+          {/* Pickup / Drop-off Markers */}
+          {ride?.pickup && (
+            <MarkerAnimated
+              coordinate={{
+                latitude: ride.pickup.latitude,
+                longitude: ride.pickup.longitude,
+              }}
+              anchor={{ x: 0.5, y: 1 }}
+            >
+              <MapMarker icon="location-on" />
             </MarkerAnimated>
-          );
-        })}
+          )}
+          {ride?.dropoff && (
+            <MarkerAnimated
+              coordinate={{
+                latitude: ride.dropoff.latitude,
+                longitude: ride.dropoff.longitude,
+              }}
+              anchor={{ x: 0.5, y: 1 }}
+            >
+              <MapMarker icon="flag" />
+            </MarkerAnimated>
+          )}
 
-        {/* Pickup / Drop-off Markers */}
-        {ride?.pickup && (
-          <MarkerAnimated
-            coordinate={{
-              latitude: ride.pickup.latitude,
-              longitude: ride.pickup.longitude,
-            }}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            <MapMarker icon="location-on" />
-          </MarkerAnimated>
-        )}
-        {ride?.dropoff && (
-          <MarkerAnimated
-            coordinate={{
-              latitude: ride.dropoff.latitude,
-              longitude: ride.dropoff.longitude,
-            }}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            <MapMarker icon="flag" />
-          </MarkerAnimated>
-        )}
-
-        {/* Route Polyline */}
-        {routeCoords.length > 0 && (
-          <Polyline
-            coordinates={routeCoords}
-            strokeWidth={4}
-            strokeColor={PRIMARY_COLOR}
-          />
-        )}
-      </MapView>
+          {/* Route Polyline */}
+          {routeCoords.length > 0 && (
+            <Polyline
+              coordinates={routeCoords}
+              strokeWidth={4}
+              strokeColor={PRIMARY_COLOR}
+            />
+          )}
+        </MapView>
+      ) : (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+        </View>
+      )}
 
       {selectedBusId && (
         <TouchableWithoutFeedback onPress={() => setSelectedBusId(null)}>
@@ -810,6 +816,11 @@ function getDistanceInMeters(
 const styles = StyleSheet.create({
   map: {
     flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   center: {
     flex: 1,
