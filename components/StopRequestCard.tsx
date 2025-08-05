@@ -1,59 +1,37 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { campusCoords, outerRing, grayscaleMapStyle } from '../src/constants/mapConfig';
-import { fetchDirections } from '../src/utils/directions';
 import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
 
-type RideRequest = {
+type StopRequest = {
   id: string;
   studentEmail: string;
   driverId?: string;
   status: string;
-  pickup: { latitude: number; longitude: number };
-  dropoff: { latitude: number; longitude: number; name?: string };
+  stop: { latitude: number; longitude: number; name?: string };
 };
 
 type Props = {
-  item: RideRequest;
+  item: StopRequest;
   driverId: string | null;
   updateStatus: (id: string, status: string) => void;
 };
 
-export default function RideRequestCard({ item, driverId, updateStatus }: Props) {
-  const [route, setRoute] = useState<Array<{ latitude: number; longitude: number }>>([]);
-
-  useEffect(() => {
-    let isActive = true;
-    const loadRoute = async () => {
-      try {
-        const { coords } = await fetchDirections(item.pickup, item.dropoff);
-        if (isActive) {
-          setRoute(coords);
-        }
-      } catch (e) {
-        console.warn('AdminDriver: loadRoute error', e);
-      }
-    };
-    loadRoute();
-    return () => {
-      isActive = false;
-    };
-  }, [item]);
-
+export default function StopRequestCard({ item, driverId, updateStatus }: Props) {
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Student: {item.studentEmail}</Text>
-      <Text>Destination: {item.dropoff?.name || 'Unknown'}</Text>
+      <Text>Stop: {item.stop?.name || 'Unknown'}</Text>
       <MapView
         provider={PROVIDER_GOOGLE}
         style={styles.smallMap}
         initialRegion={{
-          latitude: (item.pickup.latitude + item.dropoff.latitude) / 2,
-          longitude: (item.pickup.longitude + item.dropoff.longitude) / 2,
-          latitudeDelta: Math.abs(item.pickup.latitude - item.dropoff.latitude) + 0.005,
-          longitudeDelta: Math.abs(item.pickup.longitude - item.dropoff.longitude) + 0.005,
+          latitude: item.stop.latitude,
+          longitude: item.stop.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
         }}
         scrollEnabled={false}
         zoomEnabled={false}
@@ -63,35 +41,20 @@ export default function RideRequestCard({ item, driverId, updateStatus }: Props)
       >
         <Polygon coordinates={outerRing} holes={[campusCoords]} fillColor="rgba(0,0,0,0.2)" strokeWidth={0} />
         <Polygon coordinates={campusCoords} strokeColor="black" strokeWidth={2} fillColor="transparent" />
-        <Marker coordinate={item.pickup} anchor={{ x: 0.5, y: 1 }}>
-          <Icon name="location-on" size={28} color={PRIMARY_COLOR} />
-        </Marker>
-        <Marker
-          coordinate={{ latitude: item.dropoff.latitude, longitude: item.dropoff.longitude }}
-          anchor={{ x: 0.5, y: 1 }}
-        >
+        <Marker coordinate={item.stop} anchor={{ x: 0.5, y: 1 }}>
           <Icon name="flag" size={26} color={PRIMARY_COLOR} />
         </Marker>
-        {route.length > 0 && (
-          <Polyline coordinates={route} strokeWidth={3} strokeColor={PRIMARY_COLOR} />
-        )}
       </MapView>
 
       {item.status === 'pending' && !item.driverId && (
         <TouchableOpacity style={styles.acceptButton} onPress={() => updateStatus(item.id, 'accepted')}>
-          <Text style={styles.acceptButtonText}>Accept Ride</Text>
+          <Text style={styles.acceptButtonText}>Accept Stop</Text>
         </TouchableOpacity>
       )}
 
       {item.status === 'accepted' && item.driverId === driverId && (
-        <TouchableOpacity style={styles.actionButton} onPress={() => updateStatus(item.id, 'in-transit')}>
-          <Text style={styles.actionButtonText}>Passenger Picked Up</Text>
-        </TouchableOpacity>
-      )}
-
-      {item.status === 'in-transit' && item.driverId === driverId && (
         <TouchableOpacity style={styles.actionButton} onPress={() => updateStatus(item.id, 'completed')}>
-          <Text style={styles.actionButtonText}>Passenger Dropped Off</Text>
+          <Text style={styles.actionButtonText}>Stop Completed</Text>
         </TouchableOpacity>
       )}
     </View>
