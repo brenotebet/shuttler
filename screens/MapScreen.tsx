@@ -559,7 +559,7 @@ export default function MapScreen() {
                   <TouchableOpacity
                     style={styles.locationItem}
                     onPress={() => {
-                      setSelectedDropoffIndex(index);
+                      setSelectedStopIndex(index);
                       handleRequest(index);
                     }}
                   >

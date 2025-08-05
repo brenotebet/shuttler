@@ -272,6 +272,9 @@ export default function DriverScreen() {
       if (newStatus === 'accepted' && driverId) {
         data.driverId = driverId;
       }
+      if (newStatus === 'completed') {
+        data.completedTimestamp = serverTimestamp();
+      }
       await updateDoc(doc(db, 'stopRequests', id), data);
     } catch (err: any) {
       showAlert(err.message, 'Error');

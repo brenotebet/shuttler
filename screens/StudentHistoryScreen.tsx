@@ -16,7 +16,7 @@ export default function StudentHistoryScreen() {
       collection(db, 'stopRequests'),
       where('studentEmail', '==', auth.currentUser?.email),
       where('status', '==', 'completed'),
-      orderBy('timestamp', 'desc')
+      orderBy('completedTimestamp', 'desc')
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -37,7 +37,11 @@ export default function StudentHistoryScreen() {
               <Icon name="place" size={20} color={PRIMARY_COLOR} style={{ marginRight: 6 }} />
               <Text style={styles.cardTitle}>Stop: {item.stop?.name}</Text>
             </View>
-            <Text style={styles.cardDetail}>Completed on: {item.timestamp?.toDate().toLocaleString()}</Text>
+            <Text style={styles.cardDetail}>
+              Completed on: {(
+                item.completedTimestamp?.toDate?.() || item.timestamp?.toDate?.()
+              )?.toLocaleString()}
+            </Text>
           </View>
         )}
         ListEmptyComponent={<Text style={styles.emptyText}>No stops completed yet.</Text>}

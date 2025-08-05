@@ -21,7 +21,7 @@ export default function DriverHistoryScreen() {
       collection(db, 'stopRequests'),
       where('driverId', '==', driverId),
       where('status', '==', 'completed'),
-      orderBy('timestamp', 'desc')
+      orderBy('completedTimestamp', 'desc')
     );
 
     const unsub = onSnapshot(
@@ -98,9 +98,9 @@ export default function DriverHistoryScreen() {
             <Text style={styles.cardStudent}>Student: {item.studentEmail}</Text>
             <Text style={styles.cardText}>Stop: {item.stop?.name}</Text>
             <Text style={styles.cardTimestamp}>
-              {item.timestamp?.toDate
-                ? item.timestamp.toDate().toLocaleString()
-                : 'No timestamp'}
+              {(
+                item.completedTimestamp?.toDate?.() || item.timestamp?.toDate?.()
+              )?.toLocaleString() || 'No timestamp'}
             </Text>
           </View>
         )}
@@ -109,7 +109,7 @@ export default function DriverHistoryScreen() {
         <>
           <Text style={styles.title}>Driver Dashboard</Text>
           <View style={styles.metrics}>
-            <Text style={styles.metricText}>Total Rides: {totalRides}</Text>
+            <Text style={styles.metricText}>Total Stops: {totalStops}</Text>
             <Text style={styles.metricText}>
               Total Distance: {totalDistance.toFixed(2)} km
             </Text>
@@ -117,7 +117,7 @@ export default function DriverHistoryScreen() {
 
           {destinationData.length > 0 && (
             <>
-              <Text style={styles.title}>Rides by Destination</Text>
+              <Text style={styles.title}>Stops by Destination</Text>
               <PieChart
                 data={destinationData}
                 width={screenWidth - 32}
@@ -125,13 +125,14 @@ export default function DriverHistoryScreen() {
                 accessor="count"
                 chartConfig={chartConfig}
                 backgroundColor="transparent"
+                paddingLeft="0"
               />
             </>
           )}
 
           {hourlyCounts.some((v) => v > 0) && (
             <>
-              <Text style={styles.title}>Rides by Hour (7am-6pm)</Text>
+              <Text style={styles.title}>Stops by Hour (7am-6pm)</Text>
               <BarChart
                 data={barData}
                 width={screenWidth - 64}
@@ -144,7 +145,7 @@ export default function DriverHistoryScreen() {
             </>
           )}
 
-          <Text style={styles.title}>Recent Rides</Text>
+          <Text style={styles.title}>Recent Stops</Text>
         </>
       }
         contentContainerStyle={stops.length === 0 && styles.emptyContainer}

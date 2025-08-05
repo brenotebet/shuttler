@@ -17,6 +17,7 @@ import {
   doc,
   query,
   where,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
 import StopRequestCard from '../components/StopRequestCard';
@@ -74,6 +75,10 @@ export default function AdminDriverScreen() {
       if (newStatus === 'accepted' && driverId) {
         updateData.driverId = driverId;
       }
+      if (newStatus === 'completed') {
+        updateData.completedTimestamp = serverTimestamp();
+      }
+
        await updateDoc(doc(db, 'stopRequests', id), updateData);
     } catch (err: any) {
       showAlert(err.message, 'Error');
