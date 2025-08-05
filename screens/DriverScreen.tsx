@@ -20,9 +20,7 @@ import MapView, {
 } from 'react-native-maps';
 import {
   grayscaleMapStyle,
-  MIN_LAT_DELTA,
   MAX_LAT_DELTA,
-  MIN_LON_DELTA,
   MAX_LON_DELTA,
 } from '../src/constants/mapConfig';
 import * as Location from 'expo-location';
@@ -528,14 +526,8 @@ export default function DriverScreen() {
           const clampedRegion = {
             latitude: Math.min(Math.max(newRegion.latitude, latMin), latMax),
             longitude: Math.min(Math.max(newRegion.longitude, lonMin), lonMax),
-            latitudeDelta: Math.min(
-              Math.max(newRegion.latitudeDelta, MIN_LAT_DELTA),
-              MAX_LAT_DELTA
-            ),
-            longitudeDelta: Math.min(
-              Math.max(newRegion.longitudeDelta, MIN_LON_DELTA),
-              MAX_LON_DELTA
-            ),
+            latitudeDelta: Math.min(newRegion.latitudeDelta, MAX_LAT_DELTA),
+            longitudeDelta: Math.min(newRegion.longitudeDelta, MAX_LON_DELTA),
           };
 
           const needsAdjustment =
