@@ -10,7 +10,7 @@ import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestor
 import { useDriver } from '../drivercontext/DriverContext';
 
 export default function DriverHistoryScreen() {
-  const [rides, setRides] = useState<any[]>([]);
+  const [stops, setStops] = useState<any[]>([]);
   const { driverId } = useDriver();
   const screenWidth = Dimensions.get('window').width;
 
@@ -18,7 +18,7 @@ export default function DriverHistoryScreen() {
     if (!driverId) return;
 
     const q = query(
-      collection(db, 'rideRequests'),
+      collection(db, 'stopRequests'),
       where('driverId', '==', driverId),
       where('status', '==', 'completed'),
       orderBy('timestamp', 'desc')
@@ -31,26 +31,23 @@ export default function DriverHistoryScreen() {
           id: doc.id,
           ...doc.data(),
         }));
-        setRides(data);
+        setStops(data);
       },
       (err) => {
-        console.error('Failed to fetch ride history', err);
+        console.error('Failed to fetch stop history', err);
       }
     );
 
     return () => unsub();
   }, [driverId]);
 
-  const totalRides = rides.length;
-  const totalDistance = rides.reduce(
-    (acc, r) => acc + (r.distance || 0),
-    0
-  );
+  const totalStops = stops.length;
+  const totalDistance = stops.reduce((acc, r) => acc + (r.distance || 0), 0);
 
   const destinationCounts: { [key: string]: number } = {};
   const hourlyCounts = Array(12).fill(0); // 7am - 6pm
-  rides.forEach((r) => {
-    const dest = r.dropoff?.name || 'Unknown';
+  stops.forEach((r) => {
+    const dest = r.stop?.name || 'Unknown';
     destinationCounts[dest] = (destinationCounts[dest] || 0) + 1;
     const ts = r.completedTimestamp?.toDate?.() || r.timestamp?.toDate?.();
     if (ts) {
@@ -94,12 +91,12 @@ export default function DriverHistoryScreen() {
     <View style={styles.container}>
       <HeaderBar title="History" />
       <FlatList
-        data={rides}
+        data={stops}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <View style={styles.card}>
             <Text style={styles.cardStudent}>Student: {item.studentEmail}</Text>
-            <Text style={styles.cardText}>Drop-off: {item.dropoff?.name}</Text>
+            <Text style={styles.cardText}>Stop: {item.stop?.name}</Text>
             <Text style={styles.cardTimestamp}>
               {item.timestamp?.toDate
                 ? item.timestamp.toDate().toLocaleString()
@@ -150,7 +147,7 @@ export default function DriverHistoryScreen() {
           <Text style={styles.title}>Recent Rides</Text>
         </>
       }
-        contentContainerStyle={rides.length === 0 && styles.emptyContainer}
+        contentContainerStyle={stops.length === 0 && styles.emptyContainer}
       />
     </View>
   );

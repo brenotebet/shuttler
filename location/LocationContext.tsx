@@ -124,11 +124,11 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     const onlineBuses = busesSnap.docs;
 
     if (onlineBuses.length === 0) {
-      const pendingRidesSnap = await getDocs(
-        query(collection(db, 'rideRequests'), where('status', '==', 'pending'))
+      const pendingStopsSnap = await getDocs(
+        query(collection(db, 'stopRequests'), where('status', '==', 'pending'))
       );
 
-      const deletions = pendingRidesSnap.docs.map(docSnap => deleteDoc(doc(db, 'rideRequests', docSnap.id)));
+      const deletions = pendingStopsSnap.docs.map(docSnap => deleteDoc(doc(db, 'stopRequests', docSnap.id)));
       await Promise.all(deletions);
     }
   } catch (err) {

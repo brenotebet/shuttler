@@ -107,8 +107,8 @@ export default function MapScreen() {
   >();
   const [region, setRegion] = useState<Region | null>(null);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
-  const [ride, setRide] = useState<any>(null);
-  const [rideId, setRideId] = useState<string | null>(null);
+  const [request, setRequest] = useState<any>(null);
+  const [requestId, setRequestId] = useState<string | null>(null);
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [eta, setEta] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
@@ -118,7 +118,7 @@ export default function MapScreen() {
   }>({});
 
   const [showLocationList, setShowLocationList] = useState(false);
-  const [selectedDropoffIndex, setSelectedDropoffIndex] = useState<number | null>(null);
+  const [selectedStopIndex, setSelectedStopIndex] = useState<number | null>(null);
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [busEta, setBusEta] = useState<string | null>(null);
@@ -253,23 +253,23 @@ export default function MapScreen() {
       setActiveBusIds(recentIds);
     });
 
-    // Subscribe to this student's rideRequests
+    // Subscribe to this student's stopRequests
     unsubRide = onSnapshot(
       query(
-        collection(db, 'rideRequests'),
+        collection(db, 'stopRequests'),
         where('studentEmail', '==', auth.currentUser?.email),
-        where('status', 'in', ['pending', 'accepted', 'in-transit'])
+        where('status', 'in', ['pending', 'accepted'])
       ),
       (snapshot) => {
         if (!snapshot.empty) {
           const docSnap = snapshot.docs[0];
-          const rideData = docSnap.data();
-          setRide(rideData);
-          setRideId(docSnap.id);
-          setDriverId(rideData.driverId || null);
+          const data = docSnap.data();
+          setRequest(data);
+          setRequestId(docSnap.id);
+          setDriverId(data.driverId || null);
         } else {
-          setRide(null);
-          setRideId(null);
+          setRequest(null);
+          setRequestId(null);
           setRouteCoords([]);
           setEta(null);
           setDriverId(null);
@@ -283,9 +283,9 @@ export default function MapScreen() {
     };
   }, []);
 
-  // 2) Fetch route + ETA whenever ride or bus updates
+  // 2) Fetch route + ETA whenever request or bus updates
   const fetchRoute = async () => {
-    if (!ride || !driverId) {
+    if (!request || !driverId) {
       setRouteCoords([]);
       setEta(null);
       return;
@@ -298,10 +298,8 @@ export default function MapScreen() {
     }
 
     let destination: { latitude: number; longitude: number };
-    if (ride.status === 'accepted') {
-      destination = ride.pickup;
-    } else if (ride.status === 'in-transit') {
-      destination = ride.dropoff;
+    if (request.status === 'accepted') {
+      destination = request.stop;
     } else {
       setRouteCoords([]);
       setEta(null);
@@ -328,7 +326,7 @@ export default function MapScreen() {
     return () => {
       if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
     };
-  }, [driverId, ride?.status, driverOnline, busLocations[driverId ?? '']]);
+  }, [driverId, request?.status, driverOnline, busLocations[driverId ?? '']]);
 
   // Shorten the displayed route as the driver progresses along it
   useEffect(() => {
@@ -353,41 +351,33 @@ export default function MapScreen() {
     }
   }, [busLocations[driverId ?? ''], routeCoords, driverId]);
 
-  // 3) Schedule notifications on ride status change
+  // 3) Schedule notifications on stop request status change
   useEffect(() => {
-    if (ride?.status === 'accepted') {
+    if (request?.status === 'accepted') {
       Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Your ride has been accepted! 🎉',
-          body: 'A bus is on the way to pick you up.',
+          title: 'Your stop has been accepted! 🎉',
+          body: 'A bus is on the way to you.',
         },
         trigger: null,
       });
-    } else if (ride?.status === 'in-transit') {
+    } else if (request?.status === 'completed') {
       Notifications.scheduleNotificationAsync({
         content: {
-          title: 'You are now in transit 🚌',
-          body: 'Sit tight! You’re on your way.',
-        },
-        trigger: null,
-      });
-    } else if (ride?.status === 'completed') {
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'You have arrived!',
-          body: 'Your ride has been completed.',
+          title: 'Bus has arrived!',
+          body: 'Your stop request has been completed.',
         },
         trigger: null,
       });
     }
-  }, [ride?.status]);
+  }, [request?.status]);
 
   // 4) Alert when bus is near pickup
   useEffect(() => {
     if (
-      ride?.status === 'accepted' &&
+      request?.status === 'accepted' &&
       driverId &&
-      ride.pickup &&
+      request.stop &&
       lastCoords.current[driverId] &&
       !notifiedRef.current
     ) {
@@ -395,28 +385,26 @@ export default function MapScreen() {
       const dist = getDistanceInMeters(
         driverLoc.latitude,
         driverLoc.longitude,
-        ride.pickup.latitude,
-        ride.pickup.longitude
+        request.stop.latitude,
+        request.stop.longitude
       );
       if (dist < 50) {
         showAlert('The bus is arriving at your pickup location!', 'Heads up!');
         notifiedRef.current = true;
       }
     }
-  }, [ride, driverId, activeBusIds]);
+  }, [request, driverId, activeBusIds]);
 
-  // 5) Auto‐switch tabs when ride status changes
+  // 5) Auto‐switch tabs when request status changes
   useEffect(() => {
-    if (ride?.status === 'accepted') {
-      navigation.navigate('Map');
-    } else if (ride?.status === 'completed') {
+    if (request?.status === 'completed') {
       navigation.navigate('StudentHistory');
     }
-  }, [ride?.status, navigation]);
+  }, [request?.status, navigation]);
 
   // 6) Animate bottom card in/out
   useEffect(() => {
-    if (ride) {
+    if (request) {
       Animated.timing(slideAnim, {
         toValue: 1,
         duration: 300,
@@ -429,7 +417,7 @@ export default function MapScreen() {
         useNativeDriver: true,
       }).start();
     }
-  }, [ride]);
+  }, [request]);
 
   // Animate sidebar in/out when a bus is selected
   useEffect(() => {
@@ -496,7 +484,7 @@ export default function MapScreen() {
     );
   };
 
-  // Handle "Request Ride"
+  // Handle "Request Stop"
   const handleRequest = async (index: number) => {
     if (!busOnline) {
       showAlert('No buses are currently online. Please try again later.');
@@ -504,42 +492,32 @@ export default function MapScreen() {
     }
     const existing = await getDocs(
       query(
-        collection(db, 'rideRequests'),
+        collection(db, 'stopRequests'),
         where('studentEmail', '==', auth.currentUser?.email),
-        where('status', 'in', ['pending', 'accepted', 'in-transit'])
+        where('status', 'in', ['pending', 'accepted'])
       )
     );
     if (!existing.empty) {
-      showAlert('You already have a ride in progress.');
+      showAlert('You already have a stop in progress.');
       return;
     }
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      showAlert('Location permission denied.');
-      return;
-    }
-    const location = await Location.getCurrentPositionAsync({});
-    const selectedDropoff = LOCATIONS[index];
+    const selectedStop = LOCATIONS[index];
     try {
-      await addDoc(collection(db, 'rideRequests'), {
+      await addDoc(collection(db, 'stopRequests'), {
         studentEmail: auth.currentUser?.email,
-        pickup: {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-        },
-        dropoff: {
-          latitude: selectedDropoff.latitude,
-          longitude: selectedDropoff.longitude,
-          name: selectedDropoff.name,
+        stop: {
+          latitude: selectedStop.latitude,
+          longitude: selectedStop.longitude,
+          name: selectedStop.name,
         },
         status: 'pending',
         timestamp: serverTimestamp(),
       });
-      showAlert('Ride requested successfully!');
+      showAlert('Stop requested successfully!');
       setShowLocationList(false);
-      setSelectedDropoffIndex(null);
+      setSelectedStopIndex(null);
     } catch (err: any) {
-      showAlert(err.message, 'Error requesting ride');
+      showAlert(err.message, 'Error requesting stop');
     }
   };
 
@@ -561,9 +539,9 @@ export default function MapScreen() {
           activeOpacity={0.8}
         >
           <Text style={styles.searchText}>
-            {selectedDropoffIndex === null
+            {selectedStopIndex === null
               ? 'Where to?'
-              : LOCATIONS[selectedDropoffIndex].name}
+              : LOCATIONS[selectedStopIndex].name}
           </Text>
           <Icon name="keyboard-arrow-down" size={24} color="#888" />
         </TouchableOpacity>
@@ -636,14 +614,7 @@ export default function MapScreen() {
         >
           {}
           {/* Permanent Stop Markers */}
-          {LOCATIONS.filter(
-            (stop) =>
-              !(
-                ride?.dropoff &&
-                Math.abs(stop.latitude - ride.dropoff.latitude) < 0.0001 &&
-                Math.abs(stop.longitude - ride.dropoff.longitude) < 0.0001
-              )
-          ).map((stop) => (
+          {LOCATIONS.map((stop) => (
             <Marker
               description={stop.name}
               key={stop.id}
@@ -676,27 +647,16 @@ export default function MapScreen() {
             );
           })}
 
-          {/* Pickup / Drop-off Markers */}
-          {ride?.pickup && (
+          {/* Requested Stop Marker */}
+          {request?.stop && (
             <MarkerAnimated
               coordinate={{
-                latitude: ride.pickup.latitude,
-                longitude: ride.pickup.longitude,
+                latitude: request.stop.latitude,
+                longitude: request.stop.longitude,
               }}
               anchor={{ x: 0.5, y: 1 }}
             >
               <MapMarker icon="location-on" />
-            </MarkerAnimated>
-          )}
-          {ride?.dropoff && (
-            <MarkerAnimated
-              coordinate={{
-                latitude: ride.dropoff.latitude,
-                longitude: ride.dropoff.longitude,
-              }}
-              anchor={{ x: 0.5, y: 1 }}
-            >
-              <MapMarker icon="flag" />
             </MarkerAnimated>
           )}
 
@@ -753,31 +713,31 @@ export default function MapScreen() {
           },
         ]}
       >
-        {ride ? (
+        {request ? (
           <>
-            <Text style={styles.cardTitle}>Ride Status: {ride.status}</Text>
+            <Text style={styles.cardTitle}>Stop Status: {request.status}</Text>
             <Text style={styles.cardSubtitle}>
-              {ride.status === 'accepted' ? 'Bus is on the way' : 'In transit'}
+              {request.status === 'accepted' ? 'Bus is on the way' : 'Waiting'}
             </Text>
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={async () => {
-                if (rideId) {
-                  await deleteDoc(doc(db, 'rideRequests', rideId));
-                  setRide(null);
-                  setRideId(null);
+                if (requestId) {
+                  await deleteDoc(doc(db, 'stopRequests', requestId));
+                  setRequest(null);
+                  setRequestId(null);
                   setRouteCoords([]);
                   setEta(null);
-                  showAlert('Ride request canceled.');
+                  showAlert('Stop request canceled.');
                 }
               }}
             >
-              <Text style={styles.cancelButtonText}>Cancel Ride</Text>
+              <Text style={styles.cancelButtonText}>Cancel Request</Text>
             </TouchableOpacity>
           </>
         ) : (
-          <Text style={styles.noRideText}>No active ride</Text>
+          <Text style={styles.noRideText}>No active stop</Text>
         )}
       </Animated.View>
     </SafeAreaView>
