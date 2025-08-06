@@ -78,7 +78,6 @@ export default function AdminDriverScreen() {
       if (newStatus === 'completed') {
         updateData.completedTimestamp = serverTimestamp();
       }
-
        await updateDoc(doc(db, 'stopRequests', id), updateData);
     } catch (err: any) {
       showAlert(err.message, 'Error');
