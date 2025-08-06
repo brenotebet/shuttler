@@ -42,7 +42,7 @@ import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import MapMarker from '../components/MapMarker';
-import { LOCATIONS } from './RequestRideScreen';
+import { LOCATIONS } from './RequestStopScreen';
 import { fetchDirections } from '../src/utils/directions';
 
 function computeBearing(
@@ -74,9 +74,10 @@ export default function DriverScreen() {
   // 1) Map region
   const [region, setRegion] = useState<Region | null>(null);
 
-  // 2) Current ride assigned to this driver
-  const [ride, setRide] = useState<any>(null);
-  const [rideId, setRideId] = useState<string | null>(null);
+  // 2) Current stop request assigned to this driver
+  const [request, setRequest] = useState<any>(null);
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const [requests, setRequests] = useState<any[]>([]);
 
   // 3) Route polyline coordinates & ETA string
   const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>(
@@ -92,7 +93,7 @@ export default function DriverScreen() {
     [id: string]: { latitude: number; longitude: number; heading: number };
   }>({});
 
-  // 5) Slide-up bottom card when a ride is active
+  // 5) Slide-up bottom card when a request is active
   const slideAnim = useRef(new Animated.Value(0)).current;
 
   // 6) “Bus online” flag (true if we see a fresh bus doc <10s old)
@@ -113,7 +114,7 @@ export default function DriverScreen() {
   const busIcon = require('../assets/bus-icon.png');
 
   // ───────────────────────────────────────────────────────────────────
-  // 1) On mount: request location & subscribe to “buses” + “rideRequests”
+  // 1) On mount: request location & subscribe to “buses” + “stopRequests”
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     let unsubBus: () => void;
@@ -226,16 +227,17 @@ export default function DriverScreen() {
       setActiveBusIds(recentIds);
     });
 
-    // (c) Subscribe to ride requests (pending or assigned to this driver)
+    // (c) Subscribe to stop requests (pending or assigned to this driver)
     unsubRide = onSnapshot(
-      query(collection(db, 'rideRequests'), where('status', 'in', ['pending', 'accepted', 'in-transit'])),
+      query(collection(db, 'stopRequests'), where('status', 'in', ['pending', 'accepted'])),
       (snapshot) => {
         const list: any[] = [];
         snapshot.forEach((docSnap) => {
           list.push({ id: docSnap.id, ...(docSnap.data() as any) });
         });
+        setRequests(list);
 
-        // Ride already assigned to this driver takes priority
+        // Request already assigned to this driver takes priority
         const current = list.find(
           (r) => r.driverId === driverId && r.status !== 'completed'
         );
@@ -246,11 +248,11 @@ export default function DriverScreen() {
         const selected = current || pending || null;
 
         if (selected) {
-          setRide(selected);
-          setRideId(selected.id);
+          setRequest(selected);
+          setRequestId(selected.id);
         } else {
-          setRide(null);
-          setRideId(null);
+          setRequest(null);
+          setRequestId(null);
           setRouteCoords([]);
           setEta(null);
           notifiedRef.current = false;
@@ -264,35 +266,27 @@ export default function DriverScreen() {
     };
   }, [driverId]);
 
-  // Update ride status helper
+  // Update stop request status helper
   const updateStatus = async (id: string, newStatus: string) => {
     try {
       const data: any = { status: newStatus };
       if (newStatus === 'accepted' && driverId) {
         data.driverId = driverId;
       }
-      if (newStatus === 'completed' && ride) {
-        const distance =
-          getDistanceInMeters(
-            ride.pickup.latitude,
-            ride.pickup.longitude,
-            ride.dropoff.latitude,
-            ride.dropoff.longitude
-          ) / 1000;
-        data.distance = distance;
+      if (newStatus === 'completed') {
         data.completedTimestamp = serverTimestamp();
       }
-      await updateDoc(doc(db, 'rideRequests', id), data);
+      await updateDoc(doc(db, 'stopRequests', id), data);
     } catch (err: any) {
       showAlert(err.message, 'Error');
     }
   };
 
   // ───────────────────────────────────────────────────────────────────
-  // 2) Fetch route & ETA whenever “ride” or driver location updates
+  // 2) Fetch route & ETA whenever request or driver location updates
   // ───────────────────────────────────────────────────────────────────
   const fetchRoute = async () => {
-    if (!ride || !driverId) {
+    if (!request || !driverId) {
       setRouteCoords([]);
       setEta(null);
       return;
@@ -306,10 +300,8 @@ export default function DriverScreen() {
     }
 
     let destination: { latitude: number; longitude: number };
-    if (ride.status === 'accepted') {
-      destination = ride.pickup;
-    } else if (ride.status === 'in-transit') {
-      destination = ride.dropoff;
+    if (request.status === 'accepted') {
+      destination = request.stop;
     } else {
       setRouteCoords([]);
       setEta(null);
@@ -336,7 +328,7 @@ export default function DriverScreen() {
     return () => {
       if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
     };
-  }, [driverId, ride?.status, driverOnline, busLocations[driverId ?? '']]);
+  }, [driverId, request?.status, driverOnline, busLocations[driverId ?? '']]);
 
   // Gradually remove visited points from the route polyline
   useEffect(() => {
@@ -362,44 +354,36 @@ export default function DriverScreen() {
   }, [busLocations[driverId ?? ''], routeCoords, driverId]);
 
   // ───────────────────────────────────────────────────────────────────
-  // 3) Schedule local notifications for accepted/in-transit/completed
+  // 3) Schedule local notifications for accepted/completed
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (ride?.status === 'accepted') {
+    if (request?.status === 'accepted') {
       Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Assigned a Pickup 🚌',
-          body: 'Navigate to student’s pickup location.',
+          title: 'Stop Accepted 🚌',
+          body: 'Navigate to the requested stop.',
         },
         trigger: null,
       });
-    } else if (ride?.status === 'in-transit') {
+    } else if (request?.status === 'completed') {
       Notifications.scheduleNotificationAsync({
         content: {
-          title: 'En Route to Drop-Off 🎉',
-          body: 'Drive the student to their destination.',
-        },
-        trigger: null,
-      });
-    } else if (ride?.status === 'completed') {
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Ride Completed ✅',
-          body: 'You have completed the trip.',
+          title: 'Stop Completed ✅',
+          body: 'You have serviced the stop.',
         },
         trigger: null,
       });
     }
-  }, [ride?.status]);
+  }, [request?.status]);
 
   // ───────────────────────────────────────────────────────────────────
-  // 4) Alert driver when within ~50m of pickup
+  // 4) Alert driver when within ~50m of stop
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (
-      ride?.status === 'accepted' &&
+      request?.status === 'accepted' &&
       driverId &&
-      ride.pickup &&
+      request.stop &&
       lastCoords.current[driverId] &&
       !notifiedRef.current
     ) {
@@ -407,21 +391,21 @@ export default function DriverScreen() {
       const dist = getDistanceInMeters(
         driverLoc.latitude,
         driverLoc.longitude,
-        ride.pickup.latitude,
-        ride.pickup.longitude
+        request.stop.latitude,
+        request.stop.longitude
       );
       if (dist < 50) {
-        showAlert('You are within 50 meters of pickup.', 'Almost There!');
+        showAlert('You are within 50 meters of the stop.', 'Almost There!');
         notifiedRef.current = true;
       }
     }
-  }, [ride, driverId, activeBusIds]);
+  }, [request, driverId, activeBusIds]);
 
   // ───────────────────────────────────────────────────────────────────
   // 5) Animate bottom status card in/out
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (ride) {
+    if (request) {
       Animated.timing(slideAnim, {
         toValue: 1,
         duration: 300,
@@ -434,7 +418,7 @@ export default function DriverScreen() {
         useNativeDriver: true,
       }).start();
     }
-  }, [ride]);
+  }, [request]);
 
   // ───────────────────────────────────────────────────────────────────
   // Center-map loading state
@@ -451,7 +435,7 @@ export default function DriverScreen() {
     <SafeAreaView style={{ flex: 1 }}>
       {/* ───── Bottom-Right “Start/Stop Sharing” Button ───── */}
 
-      {(ride?.status !== 'accepted' && ride?.status !== 'in-transit') && (
+      {(request?.status !== 'accepted') && (
 
         <Animated.View
           style={[
@@ -559,49 +543,31 @@ export default function DriverScreen() {
           );
         })}
 
-        {LOCATIONS.filter(
-          (stop) =>
-            !(
-              ride?.dropoff &&
-              Math.abs(stop.latitude - ride.dropoff.latitude) < 0.0001 &&
-              Math.abs(stop.longitude - ride.dropoff.longitude) < 0.0001
-            )
-        ).map((stop) => (
+        {/* Permanent Stop Markers */}
+        {LOCATIONS.map((stop) => (
           <Marker
             description={stop.name}
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
           >
-          <MapMarker icon="location-on" />
+            <MapMarker icon="location-on" />
           </Marker>
         ))}
 
-        {/* Pickup marker */}
-        {ride?.pickup && (
+        {/* Requested Stop Markers */}
+        {requests.map((req) => (
           <Marker
+            key={req.id}
             coordinate={{
-              latitude: ride.pickup.latitude,
-              longitude: ride.pickup.longitude,
-            }}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            <MapMarker icon="location-on" />
-          </Marker>
-        )}
-
-        {/* Drop-off marker */}
-        {ride?.dropoff && (
-          <Marker
-            coordinate={{
-              latitude: ride.dropoff.latitude,
-              longitude: ride.dropoff.longitude,
+              latitude: req.stop.latitude,
+              longitude: req.stop.longitude,
             }}
             anchor={{ x: 0.5, y: 1 }}
           >
             <MapMarker icon="flag" />
           </Marker>
-        )}
+        ))}
 
         {/* Route polyline */}
         {routeCoords.length > 0 && (
@@ -630,77 +596,49 @@ export default function DriverScreen() {
           },
         ]}
       >
-        {ride ? (
+        {request ? (
           <>
-            <Text style={styles.cardTitle}>Ride Status: {ride.status}</Text>
+            <Text style={styles.cardTitle}>Request Status: {request.status}</Text>
             <Text style={styles.cardSubtitle}>
-              {ride.status === 'accepted'
-                ? 'Navigate to Pickup'
-                : ride.status === 'in-transit'
-                ? 'Dropping Off'
+              {request.status === 'accepted'
+                ? 'Navigate to Stop'
                 : 'Awaiting Acceptance'}
             </Text>
-            {eta && ride.status !== 'pending' && (
+            {eta && request.status !== 'pending' && (
               <Text style={styles.etaText}>ETA: {eta}</Text>
             )}
 
-            {ride.status === 'pending' && !ride.driverId && (
+            {request.status === 'pending' && !request.driverId && (
               <TouchableOpacity
                 style={styles.cancelButton}
-                onPress={() => rideId && updateStatus(rideId, 'accepted')}
+                onPress={() => requestId && updateStatus(requestId, 'accepted')}
               >
-                <Text style={styles.cancelButtonText}>Accept Ride</Text>
+                <Text style={styles.cancelButtonText}>Accept Stop</Text>
               </TouchableOpacity>
             )}
 
-            {ride.status === 'accepted' && ride.driverId === driverId && (
+            {request.status === 'accepted' && request.driverId === driverId && (
               <>
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => rideId && updateStatus(rideId, 'in-transit')}
+                  onPress={() => requestId && updateStatus(requestId, 'completed')}
                 >
-                  <Text style={styles.actionButtonText}>Passenger Picked Up</Text>
+                  <Text style={styles.actionButtonText}>Stop Completed</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.cancelButton}
                   onPress={async () => {
-                    if (rideId) {
-                      await deleteDoc(doc(db, 'rideRequests', rideId));
-                      setRide(null);
-                      setRideId(null);
+                    if (requestId) {
+                      await deleteDoc(doc(db, 'stopRequests', requestId));
+                      setRequest(null);
+                      setRequestId(null);
                       setRouteCoords([]);
                       setEta(null);
-                      showAlert('Ride canceled.');
+                      showAlert('Stop canceled.');
                     }
                   }}
                 >
-                  <Text style={styles.cancelButtonText}>Cancel Ride</Text>
-                </TouchableOpacity>
-              </>
-            )}
-
-            {ride.status === 'in-transit' && ride.driverId === driverId && (
-              <>
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => rideId && updateStatus(rideId, 'completed')}
-                >
-                  <Text style={styles.actionButtonText}>Passenger Dropped Off</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={async () => {
-                    if (rideId) {
-                      await deleteDoc(doc(db, 'rideRequests', rideId));
-                      setRide(null);
-                      setRideId(null);
-                      setRouteCoords([]);
-                      setEta(null);
-                      showAlert('Ride canceled.');
-                    }
-                  }}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel Ride</Text>
+                  <Text style={styles.cancelButtonText}>Cancel Stop</Text>
                 </TouchableOpacity>
               </>
             )}

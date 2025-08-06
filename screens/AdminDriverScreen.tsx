@@ -17,9 +17,10 @@ import {
   doc,
   query,
   where,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
-import RideRequestCard from '../components/RideRequestCard';
+import StopRequestCard from '../components/StopRequestCard';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
@@ -38,10 +39,10 @@ export default function AdminDriverScreen() {
       return;
     }
 
-    // Fetch all “pending” & “accepted” & “in-transit” rides
+    // Fetch all “pending” & “accepted” stop requests
     const q = query(
-      collection(db, 'rideRequests'),
-      where('status', 'in', ['pending', 'accepted', 'in-transit'])
+      collection(db, 'stopRequests'),
+      where('status', 'in', ['pending', 'accepted'])
     );
 
     const unsub = onSnapshot(q, (snapshot) => {
@@ -54,7 +55,7 @@ export default function AdminDriverScreen() {
         });
       });
 
-      // Filter: show rides that belong to this driver OR are pending
+      // Filter: show requests that belong to this driver OR are pending
       const myList = arr.filter(
         (r) =>
           r.driverId === driverId ||
@@ -67,21 +68,24 @@ export default function AdminDriverScreen() {
     return () => unsub();
   }, [driverId]);
 
-  // Accept / Picked Up / Dropped Off logic
+  // Accept / Complete logic
   const updateStatus = async (id: string, newStatus: string) => {
     try {
       const updateData: any = { status: newStatus };
       if (newStatus === 'accepted' && driverId) {
         updateData.driverId = driverId;
       }
-      await updateDoc(doc(db, 'rideRequests', id), updateData);
+      if (newStatus === 'completed') {
+        updateData.completedTimestamp = serverTimestamp();
+      }
+       await updateDoc(doc(db, 'stopRequests', id), updateData);
     } catch (err: any) {
       showAlert(err.message, 'Error');
     }
   };
 
   const renderItem = ({ item }: { item: any }) => (
-    <RideRequestCard item={item} driverId={driverId} updateStatus={updateStatus} />
+    <StopRequestCard item={item} driverId={driverId} updateStatus={updateStatus} />
   );
 
   if (loading) {
@@ -94,7 +98,7 @@ export default function AdminDriverScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
-      <HeaderBar title="Ride Requests" />
+      <HeaderBar title="Stop Requests" />
       <FlatList
         data={requests}
         keyExtractor={(item) => item.id}
