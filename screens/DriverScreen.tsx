@@ -95,6 +95,7 @@ export default function DriverScreen() {
 
   // 5) Slide-up bottom card when a request is active
   const slideAnim = useRef(new Animated.Value(0)).current;
+  const [cardHeight, setCardHeight] = useState(300);
 
   // 6) “Bus online” flag (true if we see a fresh bus doc <10s old)
   const [busOnline, setBusOnline] = useState(false);
@@ -445,7 +446,7 @@ export default function DriverScreen() {
                 {
                   translateY: slideAnim.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [0, -300],
+                    outputRange: [0, -cardHeight + 8],
                   }),
                 },
               ],
@@ -581,6 +582,7 @@ export default function DriverScreen() {
 
       {/* ───── Bottom Card: Ride Info + Cancel ───── */}
       <Animated.View
+        onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
         style={[
           styles.bottomCard,
           {
@@ -588,7 +590,7 @@ export default function DriverScreen() {
               {
                 translateY: slideAnim.interpolate({
                   inputRange: [0, 1],
-                  outputRange: [300, 0],
+                  outputRange: [cardHeight, 0],
                 }),
               },
             ],
