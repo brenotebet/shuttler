@@ -1,5 +1,5 @@
 import React from 'react';
-import { SafeAreaView, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { SafeAreaView, StyleSheet } from 'react-native';
 import {
   BottomTabNavigationProp,
 } from '@react-navigation/bottom-tabs';
@@ -12,7 +12,7 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { StudentTabParamList } from '../tabs/StudentTabs';
 import { auth } from '../firebase/firebaseconfig';
 import MenuItem from '../components/MenuItem';
-import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
+import { BACKGROUND_COLOR } from '../src/constants/theme';
 
 export default function StudentMenuScreen() {
   const navigation = useNavigation<
@@ -54,21 +54,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BACKGROUND_COLOR,
     paddingTop: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  button: {
-    backgroundColor: PRIMARY_COLOR,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    marginVertical: 8,
-    minWidth: 200,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
+    paddingHorizontal: 16,
   },
 });

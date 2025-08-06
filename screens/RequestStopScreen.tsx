@@ -12,7 +12,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 import { showAlert } from '../src/utils/alerts';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -93,12 +93,12 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
   }
 
   return (
-    <View style={{ padding: 20 }}>
-      <Text>Select Stop Location</Text>
+    <View style={styles.container}>
+      <Text style={styles.heading}>Select Stop Location</Text>
       <Picker
         selectedValue={selectedIndex}
         onValueChange={(itemValue) => setSelectedIndex(itemValue)}
-        style={{ marginBottom: 20 }}
+        style={styles.picker}
       >
         {LOCATIONS.map((loc, index) => (
           <Picker.Item label={loc.name} value={index} key={loc.name} />
@@ -112,8 +112,25 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: BACKGROUND_COLOR,
+  },
   warningText: { fontSize: 16, color: 'red', textAlign: 'center' },
+  container: {
+    flex: 1,
+    backgroundColor: BACKGROUND_COLOR,
+    padding: 20,
+  },
+  heading: {
+    fontSize: 16,
+    marginBottom: 10,
+    color: '#333',
+  },
+  picker: { marginBottom: 20 },
   button: {
     backgroundColor: PRIMARY_COLOR,
     paddingVertical: 14,
