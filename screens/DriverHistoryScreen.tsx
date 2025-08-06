@@ -125,7 +125,6 @@ export default function DriverHistoryScreen() {
                 accessor="count"
                 chartConfig={chartConfig}
                 backgroundColor="transparent"
-                paddingLeft="0"
               />
             </>
           )}
@@ -158,9 +157,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: BACKGROUND_COLOR,
-    paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 16,
+    justifyContent: "space-between",
+    flexDirection: "column"
+
   },
   title: {
     fontSize: 22,
