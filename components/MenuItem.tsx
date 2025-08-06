@@ -30,7 +30,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: '#ccc',
-    backgroundColor: '#fff'
+    backgroundColor: '#fff',
   },
   icon: {
     marginRight: 16,

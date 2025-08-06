@@ -72,12 +72,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 6,
-    textAlign: 'center'
   },
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    textAlign: 'center',
     color: '#333',
   },
   cardDetail: {
