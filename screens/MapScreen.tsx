@@ -147,6 +147,7 @@ export default function MapScreen() {
   useEffect(() => {
     let unsubBus: () => void;
     let unsubRide: () => void;
+    let locationSub: Location.LocationSubscription | null = null;
 
     // Center map on user
     (async () => {
@@ -162,6 +163,13 @@ export default function MapScreen() {
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
       });
+
+      // Keep listening for location updates so the user's
+      // location marker remains visible on Android
+      locationSub = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.BestForNavigation },
+        () => {},
+      );
     })();
 
     // Subscribe to live buses
@@ -280,6 +288,7 @@ export default function MapScreen() {
     return () => {
       if (unsubBus) unsubBus();
       if (unsubRide) unsubRide();
+      if (locationSub) locationSub.remove();
     };
   }, []);
 
