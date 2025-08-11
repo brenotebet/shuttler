@@ -1,6 +1,6 @@
 // drivercontext/DriverContext.tsx
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type DriverContextType = {
@@ -30,19 +30,19 @@ export const DriverProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     })();
   }, []);
 
-  const setDriverId = (id: string | null) => {
+  const setDriverId = useCallback((id: string | null) => {
     setDriverIdState(id);
     if (id) {
       AsyncStorage.setItem('driverId', id);
     } else {
       AsyncStorage.removeItem('driverId');
     }
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setDriverIdState(null);
     AsyncStorage.removeItem('driverId');
-  };
+  }, []);
 
   return (
     <DriverContext.Provider value={{ driverId, setDriverId, logout }}>

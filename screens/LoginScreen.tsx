@@ -1,6 +1,6 @@
 // src/screens/LoginScreen.tsx
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   SafeAreaView,
   KeyboardAvoidingView,
@@ -40,10 +40,13 @@ export default function LoginScreen({ navigation }: Props) {
   const [isDriver, setIsDriver] = useState(false);
   const { setDriverId } = useDriver();
 
-  const handleLogin = async () => {
+  const handleLogin = useCallback(async () => {
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
     if (isDriver) {
-      if (adminAccounts[email] === password) {
-        setDriverId(email);
+      if (adminAccounts[trimmedEmail] === trimmedPassword) {
+        setDriverId(trimmedEmail);
         navigation.replace('DriverHome');
       } else {
         showAlert('Invalid driver credentials');
@@ -51,18 +54,18 @@ export default function LoginScreen({ navigation }: Props) {
       return;
     }
 
-    if (!email.endsWith('@mckendree.edu')) {
+    if (!trimmedEmail.endsWith('@mckendree.edu')) {
       showAlert('Only McKendree emails are allowed.');
       return;
     }
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
       navigation.replace('StudentHome');
     } catch (err: any) {
       if (err.code === 'auth/user-not-found') {
         try {
-          await createUserWithEmailAndPassword(auth, email, password);
+          await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
           navigation.replace('StudentHome');
         } catch (e: any) {
           showAlert(e.message, 'Error creating account');
@@ -71,16 +74,16 @@ export default function LoginScreen({ navigation }: Props) {
         showAlert(err.message, 'Login Error');
       }
     }
-  };
+  }, [email, password, isDriver, navigation, setDriverId]);
 
-  const handleQuickLaunch = async () => {
+  const handleQuickLaunch = useCallback(async () => {
     try {
       await signInWithQuickLaunch();
       navigation.replace('StudentHome');
     } catch (e: any) {
       showAlert(e.message, 'SSO Error');
     }
-  };
+  }, [navigation]);
 
   return (
     <SafeAreaView style={styles.safe}>

@@ -10,7 +10,7 @@ export type MenuItemProps = {
   onPress: () => void;
 };
 
-export default function MenuItem({ icon, title, description, onPress }: MenuItemProps) {
+function MenuItem({ icon, title, description, onPress }: MenuItemProps) {
   return (
     <TouchableOpacity style={styles.item} onPress={onPress}>
       <Icon name={icon} size={28} color={PRIMARY_COLOR} style={styles.icon} />
@@ -21,6 +21,8 @@ export default function MenuItem({ icon, title, description, onPress }: MenuItem
     </TouchableOpacity>
   );
 }
+
+export default React.memo(MenuItem);
 
 const styles = StyleSheet.create({
   item: {
