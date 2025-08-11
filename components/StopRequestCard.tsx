@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -19,7 +19,10 @@ type Props = {
   updateStatus: (id: string, status: string) => void;
 };
 
-export default function StopRequestCard({ item, driverId, updateStatus }: Props) {
+function StopRequestCard({ item, driverId, updateStatus }: Props) {
+  const handleAccept = useCallback(() => updateStatus(item.id, 'accepted'), [item.id, updateStatus]);
+  const handleComplete = useCallback(() => updateStatus(item.id, 'completed'), [item.id, updateStatus]);
+
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Student: {item.studentEmail}</Text>
@@ -47,19 +50,21 @@ export default function StopRequestCard({ item, driverId, updateStatus }: Props)
       </MapView>
 
       {item.status === 'pending' && !item.driverId && (
-        <TouchableOpacity style={styles.acceptButton} onPress={() => updateStatus(item.id, 'accepted')}>
+        <TouchableOpacity style={styles.acceptButton} onPress={handleAccept}>
           <Text style={styles.acceptButtonText}>Accept Stop</Text>
         </TouchableOpacity>
       )}
 
       {item.status === 'accepted' && item.driverId === driverId && (
-        <TouchableOpacity style={styles.actionButton} onPress={() => updateStatus(item.id, 'completed')}>
+        <TouchableOpacity style={styles.actionButton} onPress={handleComplete}>
           <Text style={styles.actionButtonText}>Stop Completed</Text>
         </TouchableOpacity>
       )}
     </View>
   );
 }
+
+export default React.memo(StopRequestCard);
 
 const styles = StyleSheet.create({
   card: {

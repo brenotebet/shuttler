@@ -8,7 +8,7 @@ type Props = {
   label?: string;
 };
 
-export default function MapMarker({ icon, label }: Props) {
+function MapMarker({ icon, label }: Props) {
   return (
     <View style={styles.container}>
       <Icon name={icon} size={20} color="#fff" />
@@ -16,6 +16,8 @@ export default function MapMarker({ icon, label }: Props) {
     </View>
   );
 }
+
+export default React.memo(MapMarker);
 
 const styles = StyleSheet.create({
   container: {

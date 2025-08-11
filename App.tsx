@@ -18,7 +18,6 @@ Notifications.setNotificationHandler({
 export default function App() {
   useEffect(() => {
     registerForPushNotificationsAsync();
-    Notifications.requestPermissionsAsync();
   }, []);
 
   return (

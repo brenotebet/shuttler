@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -10,13 +10,13 @@ export type HeaderBarProps = {
   onBack?: () => void;
 };
 
-export default function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
+function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
   const navigation = useNavigation();
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     if (onBack) onBack();
     else (navigation as any).goBack();
-  };
+  }, [onBack, navigation]);
 
   return (
     <View style={styles.container}>
@@ -32,6 +32,8 @@ export default function HeaderBar({ title, showBack = true, onBack }: HeaderBarP
     </View>
   );
 }
+
+export default React.memo(HeaderBar);
 
 const styles = StyleSheet.create({
   container: {
