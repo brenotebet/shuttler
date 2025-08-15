@@ -549,7 +549,7 @@ export default function MapScreen() {
         >
           <Text style={styles.searchText}>
             {selectedStopIndex === null
-              ? 'Where to?'
+              ? 'Request a stop'
               : LOCATIONS[selectedStopIndex].name}
           </Text>
           <Icon name="keyboard-arrow-down" size={24} color="#888" />
@@ -900,7 +900,6 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 50,
     borderTopRightRadius: 20,
-    borderBottomRightRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 2, height: 0 },
     shadowOpacity: 0.1,

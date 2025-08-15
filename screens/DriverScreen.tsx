@@ -537,7 +537,7 @@ export default function DriverScreen() {
               coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
               flat
               rotation={loc.heading}
-              anchor={{ x: 0.5, y: 1.0 }}
+              anchor={{ x: 0.5, y: .5 }}
             >
               <Image source={busIcon} style={{ width: 120, height: 120 }} resizeMode="contain" />
             </MarkerAnimated>
