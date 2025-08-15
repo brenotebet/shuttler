@@ -34,7 +34,8 @@ import {
   doc,
   deleteDoc,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  addDoc
 } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -96,6 +97,13 @@ export default function DriverScreen() {
   // 5) Slide-up bottom card when a request is active
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [cardHeight, setCardHeight] = useState(300);
+
+  // Boarding count card state
+  const [boardingCount, setBoardingCount] = useState(0);
+  const [showBoardingCard, setShowBoardingCard] = useState(false);
+  const boardingSlideAnim = useRef(new Animated.Value(0)).current;
+  const [boardingCardHeight, setBoardingCardHeight] = useState(200);
+  const [completeAfterSave, setCompleteAfterSave] = useState(false);
 
   // 6) “Bus online” flag (true if we see a fresh bus doc <10s old)
   const [busOnline, setBusOnline] = useState(false);
@@ -283,6 +291,41 @@ export default function DriverScreen() {
     }
   };
 
+  // Save boarding count to database
+  const saveBoardingCount = async () => {
+    if (!driverId) return;
+    const loc = lastCoords.current[driverId];
+    if (!loc) {
+      showAlert('Driver location unavailable');
+      return;
+    }
+    const nearest = getNearestStop(loc.latitude, loc.longitude);
+    try {
+      await addDoc(collection(db, 'boardingCounts'), {
+        driverId,
+        count: boardingCount,
+        stop: {
+          id: nearest.id,
+          name: nearest.name,
+          latitude: nearest.latitude,
+          longitude: nearest.longitude,
+        },
+        requestId: requestId || null,
+        studentEmail: request?.studentEmail || null,
+        timestamp: serverTimestamp(),
+      });
+      if (completeAfterSave && request && requestId && request.status === 'accepted') {
+        await updateStatus(requestId, 'completed');
+      }
+      showAlert('Boarding saved');
+    } catch (err: any) {
+      showAlert(err.message, 'Error saving boarding');
+    }
+    setBoardingCount(0);
+    setShowBoardingCard(false);
+    setCompleteAfterSave(false);
+  };
+
   // ───────────────────────────────────────────────────────────────────
   // 2) Fetch route & ETA whenever request or driver location updates
   // ───────────────────────────────────────────────────────────────────
@@ -421,6 +464,23 @@ export default function DriverScreen() {
     }
   }, [request]);
 
+  // Animate boarding count card
+  useEffect(() => {
+    if (showBoardingCard) {
+      Animated.timing(boardingSlideAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(boardingSlideAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [showBoardingCard]);
+
   // ───────────────────────────────────────────────────────────────────
   // Center-map loading state
   // ───────────────────────────────────────────────────────────────────
@@ -479,6 +539,34 @@ export default function DriverScreen() {
           </TouchableOpacity>
         </Animated.View>
       )}
+
+      {/* ───── Bottom-Left “Add Students” Button ───── */}
+      <Animated.View
+        style={[
+          styles.bottomLeftButtonContainer,
+          {
+            transform: [
+              {
+                translateY: slideAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, -cardHeight + 8],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.shareButton}
+          onPress={() => {
+            setCompleteAfterSave(false);
+            setShowBoardingCard(true);
+          }}
+        >
+          <Icon name="group-add" size={24} color="#fff" />
+          <Text style={styles.shareButtonText}>Add Students</Text>
+        </TouchableOpacity>
+      </Animated.View>
 
       {/* ───── Banner if no fresh driver location ───── */}
       {!driverOnline && (
@@ -623,7 +711,10 @@ export default function DriverScreen() {
               <>
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => requestId && updateStatus(requestId, 'completed')}
+                  onPress={() => {
+                    setCompleteAfterSave(true);
+                    setShowBoardingCard(true);
+                  }}
                 >
                   <Text style={styles.actionButtonText}>Stop Completed</Text>
                 </TouchableOpacity>
@@ -649,8 +740,72 @@ export default function DriverScreen() {
           <Text style={styles.noRideText}>No active requests</Text>
         )}
       </Animated.View>
+
+      {/* ───── Boarding Count Card ───── */}
+      {showBoardingCard && (
+        <Animated.View
+          onLayout={(e) => setBoardingCardHeight(e.nativeEvent.layout.height)}
+          style={[
+            styles.bottomCard,
+            {
+              transform: [
+                {
+                  translateY: boardingSlideAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [boardingCardHeight, 0],
+                  }),
+                },
+              ],
+              opacity: boardingSlideAnim,
+            },
+          ]}
+        >
+          <Text style={styles.cardTitle}>Students Boarding</Text>
+          <View style={styles.counterRow}>
+            <TouchableOpacity
+              style={styles.counterButton}
+              onPress={() => setBoardingCount(Math.max(0, boardingCount - 1))}
+            >
+              <Text style={styles.counterButtonText}>-</Text>
+            </TouchableOpacity>
+            <Text style={styles.countText}>{boardingCount}</Text>
+            <TouchableOpacity
+              style={styles.counterButton}
+              onPress={() => setBoardingCount(boardingCount + 1)}
+            >
+              <Text style={styles.counterButtonText}>+</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity style={styles.actionButton} onPress={saveBoardingCount}>
+            <Text style={styles.actionButtonText}>Save</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={() => {
+              setShowBoardingCard(false);
+              setBoardingCount(0);
+            }}
+          >
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
     </SafeAreaView>
   );
+}
+
+// Find nearest predefined stop
+function getNearestStop(lat: number, lon: number) {
+  let nearest = LOCATIONS[0];
+  let minDist = Infinity;
+  LOCATIONS.forEach((stop) => {
+    const dist = getDistanceInMeters(lat, lon, stop.latitude, stop.longitude);
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = stop;
+    }
+  });
+  return nearest;
 }
 
 // Haversine distance (meters)
@@ -702,6 +857,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: 6,
     fontWeight: '500',
+  },
+
+  bottomLeftButtonContainer: {
+    position: 'absolute',
+    bottom: 20,
+    left: 10,
+    zIndex: 500,
   },
 
   // Banner if offline
@@ -781,5 +943,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#888',
     textAlign: 'center',
+  },
+
+  counterRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: 12,
+  },
+  counterButton: {
+    backgroundColor: PRIMARY_COLOR,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  counterButtonText: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '600',
+  },
+  countText: {
+    fontSize: 24,
+    marginHorizontal: 20,
+    fontWeight: '500',
   },
 });
