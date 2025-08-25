@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ActivityIndicator,
   TouchableOpacity,
   Animated,
   Image,
@@ -68,12 +67,20 @@ function quantizeBearing(bearing: number) {
   return (Math.round(bearing / 90) * 90) % 360;
 }
 
+const DEFAULT_REGION: Region = {
+  latitude: 38.6073,
+  longitude: -89.8119,
+  latitudeDelta: 0.01,
+  longitudeDelta: 0.01,
+};
+
 export default function DriverScreen() {
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
   const { driverId } = useDriver();
 
   // 1) Map region
-  const [region, setRegion] = useState<Region | null>(null);
+  const [region, setRegion] = useState<Region>(DEFAULT_REGION);
+  const [hasLocationPermission, setHasLocationPermission] = useState(true);
 
   // 2) Current stop request assigned to this driver
   const [request, setRequest] = useState<any>(null);
@@ -133,9 +140,11 @@ export default function DriverScreen() {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        showAlert('Permission denied');
+        setHasLocationPermission(false);
+        setRegion(DEFAULT_REGION);
         return;
       }
+      setHasLocationPermission(true);
       const loc = await Location.getCurrentPositionAsync({});
       setRegion({
         latitude: loc.coords.latitude,
@@ -481,17 +490,6 @@ export default function DriverScreen() {
     }
   }, [showBoardingCard]);
 
-  // ───────────────────────────────────────────────────────────────────
-  // Center-map loading state
-  // ───────────────────────────────────────────────────────────────────
-  if (!region) {
-    return (
-      <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-      </SafeAreaView>
-    );
-  }
-
   const shareTranslateY = Animated.add(
     slideAnim.interpolate({
       inputRange: [0, 1],
@@ -575,10 +573,19 @@ export default function DriverScreen() {
       )}
 
       {/* ───── Banner if no fresh driver location ───── */}
-      {!driverOnline && (
+      {!driverOnline && hasLocationPermission && (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>
             Not sharing location. Tap “Start Sharing” to go online.
+          </Text>
+        </View>
+      )}
+
+      {/* ───── Banner if location permission denied ───── */}
+      {!hasLocationPermission && (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText}>
+            Location permission denied. Enable location to share your position.
           </Text>
         </View>
       )}
@@ -835,11 +842,6 @@ function getDistanceInMeters(
 const styles = StyleSheet.create({
   map: {
     flex: 1,
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 
   // Bottom-right share button
