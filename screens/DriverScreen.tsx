@@ -492,6 +492,17 @@ export default function DriverScreen() {
     );
   }
 
+  const shareTranslateY = Animated.add(
+    slideAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, -cardHeight + 8],
+    }),
+    boardingSlideAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, -boardingCardHeight + 8],
+    })
+  );
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       {/* ───── Bottom-Right “Start/Stop Sharing” Button ───── */}
@@ -502,14 +513,7 @@ export default function DriverScreen() {
           style={[
             styles.bottomRightButtonContainer,
             {
-              transform: [
-                {
-                  translateY: slideAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0, -cardHeight + 8],
-                  }),
-                },
-              ],
+              transform: [{ translateY: shareTranslateY }],
             },
           ]}
         >
@@ -541,32 +545,34 @@ export default function DriverScreen() {
       )}
 
       {/* ───── Bottom-Left “Add Students” Button ───── */}
-      <Animated.View
-        style={[
-          styles.bottomLeftButtonContainer,
-          {
-            transform: [
-              {
-                translateY: slideAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, -cardHeight + 8],
-                }),
-              },
-            ],
-          },
-        ]}
-      >
-        <TouchableOpacity
-          style={styles.shareButton}
-          onPress={() => {
-            setCompleteAfterSave(false);
-            setShowBoardingCard(true);
-          }}
+      {isSharing && !showBoardingCard && (
+        <Animated.View
+          style={[
+            styles.bottomLeftButtonContainer,
+            {
+              transform: [
+                {
+                  translateY: slideAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, -cardHeight + 8],
+                  }),
+                },
+              ],
+            },
+          ]}
         >
-          <Icon name="group-add" size={24} color="#fff" />
-          <Text style={styles.shareButtonText}>Add Students</Text>
-        </TouchableOpacity>
-      </Animated.View>
+          <TouchableOpacity
+            style={styles.shareButton}
+            onPress={() => {
+              setCompleteAfterSave(false);
+              setShowBoardingCard(true);
+            }}
+          >
+            <Icon name="group-add" size={24} color="#fff" />
+            <Text style={styles.shareButtonText}>Add Students</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
 
       {/* ───── Banner if no fresh driver location ───── */}
       {!driverOnline && (
