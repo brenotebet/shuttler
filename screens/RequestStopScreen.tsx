@@ -48,16 +48,26 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
   }, []);
 
   const handleRequest = async () => {
-    const existing = await getDocs(
-      query(
-        collection(db, 'stopRequests'),
-        where('studentEmail', '==', auth.currentUser?.email),
-        where('status', 'in', ['pending', 'accepted'])
-      )
-    );
+    const [existing, accepted] = await Promise.all([
+      getDocs(
+        query(
+          collection(db, 'stopRequests'),
+          where('studentEmail', '==', auth.currentUser?.email),
+          where('status', 'in', ['pending', 'accepted'])
+        )
+      ),
+      getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'accepted'))),
+    ]);
 
     if (!existing.empty) {
       showAlert('You already have a stop in progress.');
+      navigation.goBack();
+      return;
+    }
+
+    if (!accepted.empty) {
+      showAlert('A stop has already been requested.');
+      navigation.goBack();
       return;
     }
 
