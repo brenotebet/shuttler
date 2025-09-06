@@ -107,8 +107,14 @@ export default function MapScreen() {
   >();
   const [region, setRegion] = useState<Region | null>(null);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
+  // Active stop request to display in the bottom card. This might be the
+  // current user's request or another student's accepted request.
   const [request, setRequest] = useState<any>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
+  // Separate state to track the current user's request and any globally
+  // accepted request. The "request" above will be derived from these.
+  const [ownRequest, setOwnRequest] = useState<any>(null);
+  const [acceptedRequest, setAcceptedRequest] = useState<any>(null);
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [eta, setEta] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
@@ -146,7 +152,8 @@ export default function MapScreen() {
   // 1) Initialize map & subscribe to Firestore
   useEffect(() => {
     let unsubBus: () => void;
-    let unsubRide: () => void;
+    let unsubOwn: () => void;
+    let unsubAccepted: () => void;
     let locationSub: Location.LocationSubscription | null = null;
 
     // Center map on user
@@ -262,7 +269,7 @@ export default function MapScreen() {
     });
 
     // Subscribe to this student's stopRequests
-    unsubRide = onSnapshot(
+    unsubOwn = onSnapshot(
       query(
         collection(db, 'stopRequests'),
         where('studentEmail', '==', auth.currentUser?.email),
@@ -271,26 +278,57 @@ export default function MapScreen() {
       (snapshot) => {
         if (!snapshot.empty) {
           const docSnap = snapshot.docs[0];
-          const data = docSnap.data();
-          setRequest(data);
-          setRequestId(docSnap.id);
-          setDriverId(data.driverId || null);
+          setOwnRequest({ id: docSnap.id, ...(docSnap.data() as any) });
         } else {
-          setRequest(null);
-          setRequestId(null);
-          setRouteCoords([]);
-          setEta(null);
-          setDriverId(null);
+          setOwnRequest(null);
+        }
+      }
+    );
+
+    // Also subscribe to any globally accepted stop request
+    unsubAccepted = onSnapshot(
+      query(collection(db, 'stopRequests'), where('status', '==', 'accepted')),
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          setAcceptedRequest({ id: docSnap.id, ...(docSnap.data() as any) });
+        } else {
+          setAcceptedRequest(null);
         }
       }
     );
 
     return () => {
       if (unsubBus) unsubBus();
-      if (unsubRide) unsubRide();
+      if (unsubOwn) unsubOwn();
+      if (unsubAccepted) unsubAccepted();
       if (locationSub) locationSub.remove();
     };
   }, []);
+
+  // Consolidate own request and globally accepted request into a single
+  // "request" state used throughout the component. Preference is given to
+  // the current user's request if it exists.
+  useEffect(() => {
+    if (ownRequest) {
+      setRequest(ownRequest);
+      setRequestId(ownRequest.id);
+      setDriverId(ownRequest.driverId || null);
+    } else if (
+      acceptedRequest &&
+      acceptedRequest.studentEmail !== auth.currentUser?.email
+    ) {
+      setRequest(acceptedRequest);
+      setRequestId(acceptedRequest.id);
+      setDriverId(acceptedRequest.driverId || null);
+    } else {
+      setRequest(null);
+      setRequestId(null);
+      setRouteCoords([]);
+      setEta(null);
+      setDriverId(null);
+    }
+  }, [ownRequest, acceptedRequest]);
 
   // 2) Fetch route + ETA whenever request or bus updates
   const fetchRoute = async () => {
@@ -499,15 +537,28 @@ export default function MapScreen() {
       showAlert('No buses are currently online. Please try again later.');
       return;
     }
-    const existing = await getDocs(
-      query(
-        collection(db, 'stopRequests'),
-        where('studentEmail', '==', auth.currentUser?.email),
-        where('status', 'in', ['pending', 'accepted'])
-      )
-    );
+    const [existing, accepted] = await Promise.all([
+      getDocs(
+        query(
+          collection(db, 'stopRequests'),
+          where('studentEmail', '==', auth.currentUser?.email),
+          where('status', 'in', ['pending', 'accepted'])
+        )
+      ),
+      getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'accepted'))),
+    ]);
+
     if (!existing.empty) {
       showAlert('You already have a stop in progress.');
+      setShowLocationList(false);
+      setSelectedStopIndex(null);
+      return;
+    }
+
+    if (!accepted.empty) {
+      showAlert('A stop has already been requested.');
+      setShowLocationList(false);
+      setSelectedStopIndex(null);
       return;
     }
     const selectedStop = LOCATIONS[index];
@@ -729,21 +780,23 @@ export default function MapScreen() {
               {request.status === 'accepted' ? 'Bus is on the way' : 'Waiting'}
             </Text>
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={async () => {
-                if (requestId) {
-                  await deleteDoc(doc(db, 'stopRequests', requestId));
-                  setRequest(null);
-                  setRequestId(null);
-                  setRouteCoords([]);
-                  setEta(null);
-                  showAlert('Stop request canceled.');
-                }
-              }}
-            >
-              <Text style={styles.cancelButtonText}>Cancel Request</Text>
-            </TouchableOpacity>
+            {request.studentEmail === auth.currentUser?.email && (
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={async () => {
+                  if (requestId) {
+                    await deleteDoc(doc(db, 'stopRequests', requestId));
+                    setRequest(null);
+                    setRequestId(null);
+                    setRouteCoords([]);
+                    setEta(null);
+                    showAlert('Stop request canceled.');
+                  }
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel Request</Text>
+              </TouchableOpacity>
+            )}
           </>
         ) : (
           <Text style={styles.noRideText}>No active stop</Text>
