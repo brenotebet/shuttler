@@ -364,7 +364,7 @@ export default function MapScreen() {
     }
   };
 
-    const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const driverOnline = activeBusIds.includes(driverId || '');
   useEffect(() => {
     if (!driverId) return;

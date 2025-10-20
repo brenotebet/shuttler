@@ -1,23 +1,49 @@
 import polyline from '@mapbox/polyline';
 import { GOOGLE_MAPS_API_KEY } from '../../config';
 
-const polyline = require('@mapbox/polyline');
+// Metro still prefers CommonJS for this dependency, so we use the TS "import =" syntax
+// to keep the statement at the top level while preserving compatibility.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+import polyline = require('@mapbox/polyline');
 
 export type LatLng = { latitude: number; longitude: number };
 
-type DirectionsResult = { coords: LatLng[]; eta: string | null };
+export type DirectionsResult = { coords: LatLng[]; eta: string | null };
 
 const GOOGLE_DIRECTIONS_URL = 'https://maps.googleapis.com/maps/api/directions/json';
 const OSRM_DIRECTIONS_URL = 'https://router.project-osrm.org/route/v1/driving';
 
-const formatEtaFromSeconds = (seconds: number | undefined): string | null => {
+const toCoordinateArray = (points: [number, number][]): LatLng[] =>
+  points.map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
+
+const decodeGoogleRoute = (route: any): DirectionsResult | null => {
+  const overview = route?.overview_polyline?.points;
+  if (!overview) {
+    console.warn('Google Directions response did not include an overview polyline.');
+    return null;
+  }
+
+  const coords = toCoordinateArray(polyline.decode(overview));
+  if (!coords.length) {
+    console.warn('Google Directions polyline decoded to 0 coordinates.');
+    return null;
+  }
+
+  return { coords, eta: route.legs?.[0]?.duration?.text ?? null };
+};
+
+const formatEtaFromSeconds = (seconds: unknown): string | null => {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
     return null;
   }
 
   const minutes = Math.round(seconds / 60);
-  if (minutes <= 0) return '< 1 min';
-  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'}`;
+  if (minutes <= 0) {
+    return '< 1 min';
+  }
+  if (minutes < 60) {
+    return `${minutes} min${minutes === 1 ? '' : 's'}`;
+  }
 
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
@@ -27,25 +53,10 @@ const formatEtaFromSeconds = (seconds: number | undefined): string | null => {
   return `${hours} hr ${remainingMinutes} min${remainingMinutes === 1 ? '' : 's'}`;
 };
 
-const decodeGoogleRoute = (route: any): DirectionsResult | null => {
-  const overview = route?.overview_polyline?.points;
-  if (!overview) {
-    console.warn('Google Directions response did not include an overview polyline.');
-    return null;
-  }
-
-  const points = polyline.decode(overview);
-  const coords = points.map(([lat, lng]: [number, number]) => ({ latitude: lat, longitude: lng }));
-  if (!coords.length) {
-    console.warn('Google Directions polyline decoded to 0 coordinates.');
-    return null;
-  }
-
-  const eta = route.legs?.[0]?.duration?.text ?? null;
-  return { coords, eta };
-};
-
-const fetchGoogleRoute = async (origin: LatLng, destination: LatLng): Promise<DirectionsResult | null> => {
+const fetchGoogleRoute = async (
+  origin: LatLng,
+  destination: LatLng
+): Promise<DirectionsResult | null> => {
   const url =
     `${GOOGLE_DIRECTIONS_URL}?origin=${origin.latitude},${origin.longitude}` +
     `&destination=${destination.latitude},${destination.longitude}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
@@ -58,7 +69,6 @@ const fetchGoogleRoute = async (origin: LatLng, destination: LatLng): Promise<Di
     }
 
     const json = await res.json();
-
     if (json.status !== 'OK') {
       console.warn(
         `Google Directions responded with status ${json.status}${json.error_message ? `: ${json.error_message}` : ''}`
@@ -78,7 +88,10 @@ const fetchGoogleRoute = async (origin: LatLng, destination: LatLng): Promise<Di
   }
 };
 
-const fetchOsrmRoute = async (origin: LatLng, destination: LatLng): Promise<DirectionsResult | null> => {
+const fetchOsrmRoute = async (
+  origin: LatLng,
+  destination: LatLng
+): Promise<DirectionsResult | null> => {
   const url =
     `${OSRM_DIRECTIONS_URL}/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}` +
     '?overview=full&geometries=geojson';
@@ -107,18 +120,17 @@ const fetchOsrmRoute = async (origin: LatLng, destination: LatLng): Promise<Dire
       return null;
     }
 
-    const eta = formatEtaFromSeconds(json.routes[0]?.duration);
-    return { coords, eta };
+    return { coords, eta: formatEtaFromSeconds(json.routes[0]?.duration) };
   } catch (error) {
     console.error('OSRM directions request failed.', error);
     return null;
   }
 };
 
-export const fetchDirections = async (
+export async function fetchDirections(
   origin: LatLng,
   destination: LatLng
-): Promise<DirectionsResult> => {
+): Promise<DirectionsResult> {
   const googleRoute = await fetchGoogleRoute(origin, destination);
   if (googleRoute) {
     return googleRoute;
@@ -129,5 +141,5 @@ export const fetchDirections = async (
     return osrmRoute;
   }
 
-  throw new Error('Unable to build directions from Google or OSRM.');
-};
+  return { coords: [], eta: null };
+}
