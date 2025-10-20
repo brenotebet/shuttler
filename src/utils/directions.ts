@@ -1,3 +1,4 @@
+import polyline from '@mapbox/polyline';
 import { GOOGLE_MAPS_API_KEY } from '../../config';
 
 // Metro still prefers CommonJS for this dependency, so we use the TS "import =" syntax

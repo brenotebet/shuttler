@@ -1,8 +1,9 @@
 import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import Icon from 'react-native-vector-icons/MaterialIcons';
 import { PRIMARY_COLOR } from '../src/constants/theme';
+import { MaterialIcons } from '@expo/vector-icons';
+
 
 export type HeaderBarProps = {
   title: string;
@@ -22,7 +23,7 @@ function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
     <View style={styles.container}>
       {showBack ? (
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <Icon name="arrow-back" size={24} color="#fff" />
+          <MaterialIcons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
       ) : (
         <View style={styles.placeholder} />
