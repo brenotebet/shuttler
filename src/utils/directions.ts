@@ -1,5 +1,5 @@
+import polyline from '@mapbox/polyline';
 import { GOOGLE_MAPS_API_KEY } from '../../config';
-const polyline = require('@mapbox/polyline');
 
 export type LatLng = { latitude: number; longitude: number };
 
