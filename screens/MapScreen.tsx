@@ -364,7 +364,7 @@ export default function MapScreen() {
     }
   };
 
-    const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const driverOnline = activeBusIds.includes(driverId || '');
   useEffect(() => {
     if (!driverId) return;
@@ -379,24 +379,51 @@ export default function MapScreen() {
   useEffect(() => {
     if (!driverId) return;
     const loc = busLocations[driverId];
-    if (!loc || routeCoords.length === 0) return;
+    if (!loc) return;
 
-    let idx = 0;
-    while (
-      idx < routeCoords.length &&
-      getDistanceInMeters(
-        loc.latitude,
-        loc.longitude,
-        routeCoords[idx].latitude,
-        routeCoords[idx].longitude
-      ) < 30
-    ) {
-      idx++;
-    }
-    if (idx > 0) {
-      setRouteCoords(routeCoords.slice(idx));
-    }
-  }, [busLocations[driverId ?? ''], routeCoords, driverId]);
+    setRouteCoords((current) => {
+      if (current.length === 0) {
+        return current;
+      }
+
+      let furthestIdx = -1;
+      for (let idx = 0; idx < current.length; idx++) {
+        const distance = getDistanceInMeters(
+          loc.latitude,
+          loc.longitude,
+          current[idx].latitude,
+          current[idx].longitude
+        );
+
+        if (distance <= 40) {
+          furthestIdx = idx;
+        } else if (furthestIdx >= 0) {
+          break;
+        }
+      }
+
+      if (furthestIdx < 0) {
+        return current;
+      }
+
+      const remaining = current.slice(furthestIdx);
+      const lastPoint = remaining[remaining.length - 1];
+
+      if (
+        remaining.length <= 1 &&
+        lastPoint &&
+        getDistanceInMeters(loc.latitude, loc.longitude, lastPoint.latitude, lastPoint.longitude) <= 40
+      ) {
+        return [];
+      }
+
+      if (remaining.length === current.length) {
+        return current;
+      }
+
+      return remaining;
+    });
+  }, [busLocations[driverId ?? ''], driverId]);
 
   // 3) Schedule notifications on stop request status change
   useEffect(() => {
