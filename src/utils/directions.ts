@@ -1,10 +1,6 @@
-import polyline from '@mapbox/polyline';
 import { GOOGLE_MAPS_API_KEY } from '../../config';
 
-// Metro still prefers CommonJS for this dependency, so we use the TS "import =" syntax
-// to keep the statement at the top level while preserving compatibility.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-import polyline = require('@mapbox/polyline');
+import * as polyline from '@mapbox/polyline';
 
 export type LatLng = { latitude: number; longitude: number };
 
