@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import {
   collection,
@@ -13,6 +13,9 @@ import {
 import { auth, db } from '../firebase/firebaseconfig';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
+import ScreenContainer from '../components/ScreenContainer';
+import AppButton from '../components/AppButton';
+import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -94,62 +97,100 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 
   if (!busOnline) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.warningText}>
-          No buses are currently online. Please try again later.
-        </Text>
-      </View>
+      <ScreenContainer>
+        <View style={styles.centerContent}>
+          <Text style={styles.warningTitle}>No buses online</Text>
+          <Text style={styles.warningText}>
+            Please try again in a few moments once a driver is available.
+          </Text>
+        </View>
+      </ScreenContainer>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>Select Stop Location</Text>
-      <Picker
-        selectedValue={selectedIndex}
-        onValueChange={(itemValue) => setSelectedIndex(itemValue)}
-        style={styles.picker}
-      >
-        {LOCATIONS.map((loc, index) => (
-          <Picker.Item label={loc.name} value={index} key={loc.name} />
-        ))}
-      </Picker>
-      <TouchableOpacity style={styles.button} onPress={handleRequest}>
-        <Text style={styles.buttonText}>Request Stop</Text>
-      </TouchableOpacity>
-    </View>
+    <ScreenContainer>
+      <View style={styles.hero}>
+        <Text style={styles.title}>Request a Stop</Text>
+        <Text style={styles.description}>
+          Choose your pickup location and we’ll notify the driver instantly.
+        </Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.heading}>Pickup location</Text>
+        <View style={styles.pickerWrapper}>
+          <Picker
+            selectedValue={selectedIndex}
+            onValueChange={(itemValue) => setSelectedIndex(itemValue)}
+            style={styles.picker}
+            dropdownIconColor={PRIMARY_COLOR}
+          >
+            {LOCATIONS.map((loc, index) => (
+              <Picker.Item label={loc.name} value={index} key={loc.name} />
+            ))}
+          </Picker>
+        </View>
+
+        <AppButton label="Request Stop" onPress={handleRequest} />
+      </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  center: {
+  centerContent: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: BACKGROUND_COLOR,
+    paddingHorizontal: spacing.section,
   },
-  warningText: { fontSize: 16, color: 'red', textAlign: 'center' },
-  container: {
-    flex: 1,
-    backgroundColor: BACKGROUND_COLOR,
-    padding: 20,
+  warningTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: PRIMARY_COLOR,
+    marginBottom: 8,
+  },
+  warningText: {
+    fontSize: 16,
+    color: '#4b5563',
+    textAlign: 'center',
+  },
+  hero: {
+    marginBottom: spacing.section * 1.5,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: PRIMARY_COLOR,
+    marginBottom: 6,
+  },
+  description: {
+    fontSize: 15,
+    color: '#4b5563',
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.xl,
+    padding: spacing.section * 1.5,
+    ...cardShadow,
   },
   heading: {
     fontSize: 16,
-    marginBottom: 10,
-    color: '#333',
+    fontWeight: '600',
+    color: '#1f2933',
+    marginBottom: spacing.section,
   },
-  picker: { marginBottom: 20 },
-  button: {
-    backgroundColor: PRIMARY_COLOR,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
+  pickerWrapper: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: borderRadius.lg,
+    overflow: 'hidden',
+    backgroundColor: BACKGROUND_COLOR,
+    marginBottom: spacing.section,
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
+  picker: {
+    height: 52,
+    width: '100%',
   },
 });

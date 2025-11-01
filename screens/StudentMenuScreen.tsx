@@ -1,5 +1,5 @@
 import React from 'react';
-import { SafeAreaView, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import {
   BottomTabNavigationProp,
 } from '@react-navigation/bottom-tabs';
@@ -12,7 +12,9 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { StudentTabParamList } from '../tabs/StudentTabs';
 import { auth } from '../firebase/firebaseconfig';
 import MenuItem from '../components/MenuItem';
-import { BACKGROUND_COLOR } from '../src/constants/theme';
+import ScreenContainer from '../components/ScreenContainer';
+import { PRIMARY_COLOR } from '../src/constants/theme';
+import { spacing } from '../src/styles/common';
 
 export default function StudentMenuScreen() {
   const navigation = useNavigation<
@@ -32,28 +34,42 @@ export default function StudentMenuScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <MenuItem
-        icon="history"
-        title="History"
-        description="Take a look at your past completed rides"
-        onPress={() => navigation.navigate('StudentHistory')}
-      />
-      <MenuItem
-        icon="logout"
-        title="Logout"
-        description="Sign out of your account"
-        onPress={handleLogout}
-      />
-    </SafeAreaView>
+    <ScreenContainer>
+      <View style={styles.hero}>
+        <Text style={styles.title}>Student Center</Text>
+        <Text style={styles.subtitle}>Manage your rides and profile</Text>
+      </View>
+
+      <View>
+        <MenuItem
+          icon="history"
+          title="History"
+          description="Take a look at your past completed rides"
+          onPress={() => navigation.navigate('StudentHistory')}
+        />
+        <MenuItem
+          icon="logout"
+          title="Logout"
+          description="Sign out of your account"
+          onPress={handleLogout}
+        />
+      </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BACKGROUND_COLOR,
-    paddingTop: 40,
-    paddingHorizontal: 16,
+  hero: {
+    marginBottom: spacing.section * 1.5,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: PRIMARY_COLOR,
+    marginBottom: 6,
+  },
+  subtitle: {
+    fontSize: 15,
+    color: '#4b5563',
   },
 });

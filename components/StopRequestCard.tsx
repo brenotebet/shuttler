@@ -4,6 +4,7 @@ import MapView, { Marker, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { campusCoords, outerRing, grayscaleMapStyle } from '../src/constants/mapConfig';
 import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 type StopRequest = {
   id: string;
@@ -26,7 +27,7 @@ function StopRequestCard({ item, driverId, updateStatus }: Props) {
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Student: {item.studentEmail}</Text>
-      <Text>Stop: {item.stop?.name || 'Unknown'}</Text>
+      <Text style={styles.detail}>Stop: {item.stop?.name || 'Unknown'}</Text>
       <MapView
         provider={PROVIDER_GOOGLE}
         style={styles.smallMap}
@@ -50,14 +51,14 @@ function StopRequestCard({ item, driverId, updateStatus }: Props) {
       </MapView>
 
       {item.status === 'pending' && !item.driverId && (
-        <TouchableOpacity style={styles.acceptButton} onPress={handleAccept}>
-          <Text style={styles.acceptButtonText}>Accept Stop</Text>
+        <TouchableOpacity style={styles.button} onPress={handleAccept} activeOpacity={0.85}>
+          <Text style={styles.buttonText}>Accept Stop</Text>
         </TouchableOpacity>
       )}
 
       {item.status === 'accepted' && item.driverId === driverId && (
-        <TouchableOpacity style={styles.actionButton} onPress={handleComplete}>
-          <Text style={styles.actionButtonText}>Stop Completed</Text>
+        <TouchableOpacity style={styles.button} onPress={handleComplete} activeOpacity={0.85}>
+          <Text style={styles.buttonText}>Stop Completed</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -68,34 +69,31 @@ export default React.memo(StopRequestCard);
 
 const styles = StyleSheet.create({
   card: {
-    marginHorizontal: 12,
-    marginBottom: 20,
-    padding: 12,
+    marginHorizontal: 0,
+    marginBottom: spacing.section,
+    padding: spacing.section,
     backgroundColor: CARD_BACKGROUND,
-    borderRadius: 8,
-    elevation: 2,
+    borderRadius: borderRadius.lg,
+    ...cardShadow,
   },
-  title: { fontWeight: 'bold', marginBottom: 4 },
+  title: { fontWeight: 'bold', marginBottom: 4, color: '#111827' },
+  detail: {
+    fontSize: 14,
+    color: '#374151',
+  },
   smallMap: {
     height: 150,
     width: '100%',
     marginVertical: 8,
   },
-  acceptButton: {
+  button: {
     backgroundColor: PRIMARY_COLOR,
-    borderRadius: 8,
-    paddingVertical: 10,
-    marginTop: 8,
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    marginTop: spacing.item,
     alignItems: 'center',
+    ...cardShadow,
   },
-  acceptButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
-  actionButton: {
-    backgroundColor: PRIMARY_COLOR,
-    borderRadius: 8,
-    paddingVertical: 10,
-    marginTop: 8,
-    alignItems: 'center',
-  },
-  actionButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });
 
