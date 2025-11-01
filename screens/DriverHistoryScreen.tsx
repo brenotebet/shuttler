@@ -2,17 +2,20 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, Dimensions } from 'react-native';
-import { PieChart, BarChart, StackedBarChart } from 'react-native-chart-kit';
-import { PRIMARY_COLOR, BACKGROUND_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import { PieChart, BarChart } from 'react-native-chart-kit';
+import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
 import { db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
+import ScreenContainer from '../components/ScreenContainer';
+import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 export default function DriverHistoryScreen() {
   const [stops, setStops] = useState<any[]>([]);
   const { driverId } = useDriver();
   const screenWidth = Dimensions.get('window').width;
+  const chartWidth = screenWidth - spacing.screenPadding * 2;
 
   useEffect(() => {
     if (!driverId) return;
@@ -58,13 +61,7 @@ export default function DriverHistoryScreen() {
     }
   });
 
-  const colors = [
-    '#4B2E83',
-    '#7E57C2',
-    '#9575CD',
-    '#B39DDB',
-    '#D1C4E9',
-  ];
+  const colors = ['#4B2E83', '#7E57C2', '#9575CD', '#B39DDB', '#D1C4E9'];
 
   const destinationData = Object.keys(destinationCounts).map((dest, i) => ({
     name: dest,
@@ -85,10 +82,11 @@ export default function DriverHistoryScreen() {
     decimalPlaces: 0,
     color: (opacity = 1) => `rgba(75,46,131, ${opacity})`,
     labelColor: (opacity = 1) => `rgba(0,0,0, ${opacity})`,
+    propsForLabels: { fontSize: 12 },
   };
 
   return (
-    <View style={styles.container}>
+    <ScreenContainer padded={false}>
       <HeaderBar title="History" />
       <FlatList
         data={stops}
@@ -106,101 +104,130 @@ export default function DriverHistoryScreen() {
         )}
         ListEmptyComponent={<Text style={styles.emptyText}>No completed rides yet.</Text>}
         ListHeaderComponent={
-        <>
-          <Text style={styles.title}>Driver Dashboard</Text>
-          <View style={styles.metrics}>
-            <Text style={styles.metricText}>Total Stops: {totalStops}</Text>
-            <Text style={styles.metricText}>
-              Total Distance: {totalDistance.toFixed(2)} km
-            </Text>
+          <View style={styles.headerContent}>
+            <Text style={styles.heading}>Driver Dashboard</Text>
+            <View style={styles.metricsCard}>
+              <View style={[styles.metricItem, styles.metricItemLeft]}>
+                <Text style={styles.metricLabel}>Total Stops</Text>
+                <Text style={styles.metricValue}>{totalStops}</Text>
+              </View>
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Total Distance</Text>
+                <Text style={styles.metricValue}>{totalDistance.toFixed(2)} km</Text>
+              </View>
+            </View>
+
+            {destinationData.length > 0 && (
+              <View style={styles.chartCard}>
+                <Text style={styles.chartTitle}>Stops by Destination</Text>
+                <PieChart
+                  data={destinationData}
+                  width={chartWidth}
+                  height={220}
+                  accessor="count"
+                  chartConfig={chartConfig}
+                  backgroundColor="transparent"
+                />
+              </View>
+            )}
+
+            {hourlyCounts.some((v) => v > 0) && (
+              <View style={styles.chartCard}>
+                <Text style={styles.chartTitle}>Stops by Hour (7am-6pm)</Text>
+                <BarChart
+                  data={barData}
+                  width={chartWidth}
+                  height={220}
+                  fromZero
+                  chartConfig={chartConfig}
+                  yAxisLabel=""
+                  yAxisSuffix=""
+                  style={styles.barChart}
+                />
+              </View>
+            )}
+
+            <Text style={[styles.heading, styles.sectionHeading]}>Recent Stops</Text>
           </View>
-
-          {destinationData.length > 0 && (
-            <>
-              <Text style={styles.title}>Stops by Destination</Text>
-              <PieChart
-                data={destinationData}
-                width={screenWidth - 32}
-                height={220}
-                accessor="count"
-                chartConfig={chartConfig}
-                backgroundColor="transparent"
-              />
-            </>
-          )}
-
-          {hourlyCounts.some((v) => v > 0) && (
-            <>
-              <Text style={styles.title}>Stops by Hour (7am-6pm)</Text>
-              <BarChart
-                data={barData}
-                width={screenWidth - 64}
-                height={220}
-                fromZero
-                chartConfig={chartConfig}
-                yAxisLabel=""
-                yAxisSuffix=""
-              />
-            </>
-          )}
-
-          <Text style={styles.title}>Recent Stops</Text>
-        </>
-      }
-        contentContainerStyle={stops.length === 0 && styles.emptyContainer}
+        }
+        contentContainerStyle={[
+          styles.listContent,
+          stops.length === 0 && styles.emptyContainer,
+        ]}
       />
-    </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BACKGROUND_COLOR,
-    paddingTop: 16,
-    paddingBottom: 16,
-    justifyContent: "space-between",
-    flexDirection: "column"
-
+  listContent: {
+    paddingHorizontal: spacing.screenPadding,
+    paddingVertical: spacing.section,
+    flexGrow: 1,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: '600',
+  headerContent: {
+    marginBottom: spacing.section,
+  },
+  heading: {
+    fontSize: 26,
+    fontWeight: '700',
     color: PRIMARY_COLOR,
-    marginBottom: 12,
     textAlign: 'center',
+    marginBottom: spacing.section,
+  },
+  sectionHeading: {
+    marginTop: spacing.section,
+  },
+  metricsCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.xl,
+    padding: spacing.section,
+    marginBottom: spacing.section,
+    ...cardShadow,
+  },
+  metricItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: spacing.item,
+  },
+  metricItemLeft: {
+    marginRight: spacing.item,
+  },
+  metricLabel: {
+    fontSize: 14,
+    color: '#4b5563',
+    marginBottom: 4,
+  },
+  metricValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  chartCard: {
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.xl,
+    paddingVertical: spacing.section,
+    paddingHorizontal: spacing.section,
+    marginBottom: spacing.section,
+    ...cardShadow,
+  },
+  chartTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: spacing.item,
+    textAlign: 'center',
+  },
+  barChart: {
+    marginTop: spacing.item,
   },
   card: {
     backgroundColor: CARD_BACKGROUND,
-    marginHorizontal: 20,
-    marginBottom: 12,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-    textAlign: 'center'
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-    color: '#333',
-  },
-  cardDetail: {
-    fontSize: 14,
-    color: '#555',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#888',
+    borderRadius: borderRadius.lg,
+    padding: spacing.section,
+    marginBottom: spacing.section,
+    ...cardShadow,
   },
   cardStudent: {
     fontSize: 16,
@@ -220,24 +247,14 @@ const styles = StyleSheet.create({
     color: '#777',
     flexWrap: 'wrap',
   },
+  emptyText: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
   emptyContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-  },
-  metrics: {
-    marginBottom: 16,
-  },
-  metricText: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 4,
-    color: '#333',
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: PRIMARY_COLOR,
-    marginVertical: 12,
-    textAlign: 'center',
+    alignItems: 'center',
   },
 });

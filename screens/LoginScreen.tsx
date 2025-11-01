@@ -2,12 +2,9 @@
 
 import React, { useState, useCallback } from 'react';
 import {
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
   View,
-  TextInput,
-  TouchableOpacity,
   Text,
   Switch,
   StyleSheet,
@@ -23,6 +20,10 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { useDriver } from '../drivercontext/DriverContext';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR } from '../src/constants/theme';
+import ScreenContainer from '../components/ScreenContainer';
+import AppButton from '../components/AppButton';
+import FormField from '../components/FormField';
+import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 const adminAccounts: { [key: string]: string } = {
   driver1: 'bus123',
@@ -86,113 +87,107 @@ export default function LoginScreen({ navigation }: Props) {
   }, [navigation]);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ScreenContainer>
       <KeyboardAvoidingView
-        style={styles.container}
+        style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Text style={styles.header}>Welcome to BogeyBus</Text>
+        <View style={styles.content}>
+          <View style={styles.hero}>
+            <Text style={styles.brand}>BogeyBus</Text>
+            <Text style={styles.subtitle}>
+              Seamless rides for students and drivers alike.
+            </Text>
+          </View>
 
-        <View style={styles.field}>
-          <Text style={styles.label}>
-            {isDriver ? 'Driver ID' : 'Student Email'}
-          </Text>
-          <TextInput
-            style={styles.input}
-            placeholder={isDriver ? 'driver1' : 'you@mckendree.edu'}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
+          <View style={styles.card}>
+            <FormField
+              label={isDriver ? 'Driver ID' : 'Student Email'}
+              placeholder={isDriver ? 'driver1' : 'you@mckendree.edu'}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+
+            <FormField
+              label="Password"
+              placeholder="••••••••"
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>Login as Driver</Text>
+              <Switch
+                trackColor={{ false: '#d1d5db', true: PRIMARY_COLOR }}
+                thumbColor="#fff"
+                onValueChange={setIsDriver}
+                value={isDriver}
+              />
+            </View>
+
+            <AppButton
+              label="Login / Sign Up"
+              onPress={handleLogin}
+              style={styles.primaryButton}
+            />
+
+            <AppButton
+              label="Login with QuickLaunch"
+              onPress={handleQuickLaunch}
+              variant="secondary"
+              style={styles.secondaryButton}
+            />
+          </View>
         </View>
-
-        <View style={styles.field}>
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="••••••••"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
-        </View>
-
-        <View style={styles.switchRow}>
-          <Text style={styles.switchLabel}>Login as Driver</Text>
-          <Switch
-            trackColor={{ false: '#ccc', true: PRIMARY_COLOR }}
-            thumbColor="#fff"
-            onValueChange={setIsDriver}
-            value={isDriver}
-          />
-        </View>
-
-        <TouchableOpacity style={styles.button} onPress={handleLogin}>
-          <Text style={styles.buttonText}>Login / Sign Up</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.button, { marginTop: 12 }]}
-          onPress={handleQuickLaunch}
-        >
-          <Text style={styles.buttonText}>Login with QuickLaunch</Text>
-        </TouchableOpacity>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
-  container: {
+  flex: { flex: 1 },
+  content: {
     flex: 1,
-    paddingHorizontal: 24,
     justifyContent: 'center',
   },
-  header: {
-    fontSize: 28,
-    fontWeight: '600',
+  hero: {
+    alignItems: 'center',
+    marginBottom: spacing.section * 1.5,
+  },
+  brand: {
+    fontSize: 32,
+    fontWeight: '700',
     color: PRIMARY_COLOR,
-    textAlign: 'center',
-    marginBottom: 32,
   },
-  field: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    color: '#444',
-    marginBottom: 6,
-    fontWeight: '500',
-  },
-  input: {
-    height: 48,
-    borderBottomWidth: 1,
-    borderBottomColor: '#ccc',
+  subtitle: {
+    marginTop: 8,
     fontSize: 16,
-    paddingHorizontal: 4,
+    textAlign: 'center',
+    color: '#4b5563',
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.xl,
+    padding: spacing.section * 1.5,
+    ...cardShadow,
   },
   switchRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 32,
+    marginBottom: spacing.section,
   },
   switchLabel: {
     fontSize: 16,
     color: '#333',
   },
-  button: {
-    backgroundColor: PRIMARY_COLOR,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    elevation: 2,
+  primaryButton: {
+    marginBottom: spacing.item,
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
+  secondaryButton: {
+    marginTop: spacing.item / 2,
   },
 });
