@@ -2,12 +2,14 @@
 
 import React, { useState, useCallback } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   View,
   Text,
   Switch,
   StyleSheet,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import {
   signInWithEmailAndPassword,
@@ -88,61 +90,63 @@ export default function LoginScreen({ navigation }: Props) {
 
   return (
     <ScreenContainer>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.content}>
-          <View style={styles.hero}>
-            <Text style={styles.brand}>BogeyBus</Text>
-            <Text style={styles.subtitle}>
-              Seamless rides for students and drivers alike.
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <FormField
-              label={isDriver ? 'Driver ID' : 'Student Email'}
-              placeholder={isDriver ? 'driver1' : 'you@mckendree.edu'}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-            />
-
-            <FormField
-              label="Password"
-              placeholder="••••••••"
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-            />
-
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>Login as Driver</Text>
-              <Switch
-                trackColor={{ false: '#d1d5db', true: PRIMARY_COLOR }}
-                thumbColor="#fff"
-                onValueChange={setIsDriver}
-                value={isDriver}
-              />
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.content}>
+            <View style={styles.hero}>
+              <Text style={styles.brand}>BogeyBus</Text>
+              <Text style={styles.subtitle}>
+                Seamless rides for students and drivers alike.
+              </Text>
             </View>
 
-            <AppButton
-              label="Login / Sign Up"
-              onPress={handleLogin}
-              style={styles.primaryButton}
-            />
+            <View style={styles.card}>
+              <FormField
+                label={isDriver ? 'Driver ID' : 'Student Email'}
+                placeholder={isDriver ? 'driver1' : 'you@mckendree.edu'}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+              />
 
-            <AppButton
-              label="Login with QuickLaunch"
-              onPress={handleQuickLaunch}
-              variant="secondary"
-              style={styles.secondaryButton}
-            />
+              <FormField
+                label="Password"
+                placeholder="••••••••"
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+              />
+
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Login as Driver</Text>
+                <Switch
+                  trackColor={{ false: '#d1d5db', true: PRIMARY_COLOR }}
+                  thumbColor="#fff"
+                  onValueChange={setIsDriver}
+                  value={isDriver}
+                />
+              </View>
+
+              <AppButton
+                label="Login / Sign Up"
+                onPress={handleLogin}
+                style={styles.primaryButton}
+              />
+
+              <AppButton
+                label="Login with QuickLaunch"
+                onPress={handleQuickLaunch}
+                variant="secondary"
+                style={styles.secondaryButton}
+              />
+            </View>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
     </ScreenContainer>
   );
 }
