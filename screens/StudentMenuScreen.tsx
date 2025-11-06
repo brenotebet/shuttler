@@ -34,13 +34,13 @@ export default function StudentMenuScreen() {
   };
 
   return (
-    <ScreenContainer>
+    <ScreenContainer style={styles.container}>
       <View style={styles.hero}>
         <Text style={styles.title}>Student Center</Text>
         <Text style={styles.subtitle}>Manage your rides and profile</Text>
       </View>
 
-      <View>
+      <View style={styles.menuSection}>
         <MenuItem
           icon="history"
           title="History"
@@ -59,6 +59,10 @@ export default function StudentMenuScreen() {
 }
 
 const styles = StyleSheet.create({
+  container: {
+    paddingTop: spacing.section * 2,
+    paddingBottom: spacing.section * 2,
+  },
   hero: {
     marginBottom: spacing.section * 1.5,
   },
@@ -71,5 +75,8 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 15,
     color: '#4b5563',
+  },
+  menuSection: {
+    marginTop: spacing.section,
   },
 });
