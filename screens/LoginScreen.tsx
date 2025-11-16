@@ -1,6 +1,6 @@
 // src/screens/LoginScreen.tsx
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -26,6 +26,11 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import FormField from '../components/FormField';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
+import {
+  persistSamlHandoffFromUrl,
+  trySamlHandoffLogin,
+} from '../src/auth/samlAuth';
+import * as Linking from 'expo-linking';
 
 const adminAccounts: { [key: string]: string } = {
   driver1: 'bus123',
@@ -42,6 +47,7 @@ export default function LoginScreen({ navigation }: Props) {
   const [password, setPassword] = useState('');
   const [isDriver, setIsDriver] = useState(false);
   const { setDriverId } = useDriver();
+  const [isCheckingSaml, setIsCheckingSaml] = useState(true);
 
   const handleLogin = useCallback(async () => {
     const trimmedEmail = email.trim();
@@ -86,6 +92,60 @@ export default function LoginScreen({ navigation }: Props) {
     } catch (e: any) {
       showAlert(e.message, 'SSO Error');
     }
+  }, [navigation]);
+
+  const handleSchoolSso = useCallback(async () => {
+    try {
+      const signedIn = await trySamlHandoffLogin();
+      if (signedIn) {
+        navigation.replace('StudentHome');
+      } else {
+        showAlert(
+          'Open the shuttle app from the school app to reuse your SSO session.',
+          'Waiting for school SSO',
+        );
+      }
+    } catch (e: any) {
+      showAlert(e.message, 'School SSO Error');
+    }
+  }, [navigation]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const attemptSamlLogin = async () => {
+      try {
+        const signedIn = await trySamlHandoffLogin();
+        if (signedIn && isMounted) {
+          navigation.replace('StudentHome');
+        }
+      } catch (e: any) {
+        showAlert(e.message, 'School SSO Error');
+      } finally {
+        if (isMounted) {
+          setIsCheckingSaml(false);
+        }
+      }
+    };
+
+    attemptSamlLogin();
+
+    const subscription = Linking.addEventListener('url', async ({ url }) => {
+      await persistSamlHandoffFromUrl(url);
+      try {
+        const signedIn = await trySamlHandoffLogin(url);
+        if (signedIn && isMounted) {
+          navigation.replace('StudentHome');
+        }
+      } catch (e: any) {
+        showAlert(e.message, 'School SSO Error');
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
   }, [navigation]);
 
   return (
@@ -135,6 +195,14 @@ export default function LoginScreen({ navigation }: Props) {
                 label="Login / Sign Up"
                 onPress={handleLogin}
                 style={styles.primaryButton}
+              />
+
+              <AppButton
+                label="Use School SSO (SAML)"
+                onPress={handleSchoolSso}
+                variant="secondary"
+                style={styles.secondaryButton}
+                disabled={isCheckingSaml}
               />
 
               <AppButton
