@@ -84,7 +84,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     }
 
     watchSub.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 0 },
+      { accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 0 },
       async (loc) => {
         try {
           if (currentDriverId.current) {
