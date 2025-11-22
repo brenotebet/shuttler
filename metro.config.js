@@ -1,4 +1,5 @@
 // Learn more https://docs.expo.io/guides/customizing-metro
+require('@expo/env').load(__dirname);
 const { getDefaultConfig } = require('expo/metro-config');
 
 
