@@ -63,6 +63,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
 import { fetchDirections } from '../src/utils/directions';
+import InfoBanner from '../components/InfoBanner';
 
 const SIDEBAR_WIDTH = 220;
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -634,6 +635,16 @@ export default function MapScreen() {
         </TouchableOpacity>
       )}
 
+      {!showLocationList && !selectedBusId && (
+        <View style={styles.tipContainer}>
+          <InfoBanner
+            icon="lightbulb-outline"
+            title="Quick pointers"
+            description="Tap “Request a stop” to pick your pickup or tap a bus to see its ETA and next stop."
+          />
+        </View>
+      )}
+
       {/* Drop-off Options List */}
       {showLocationList && !selectedBusId && (
         <TouchableWithoutFeedback onPress={() => setShowLocationList(false)}>
@@ -866,7 +877,7 @@ const styles = StyleSheet.create({
   },
   searchContainer: {
     position: 'absolute',
-    top: 80,         
+    top: 80,
     left: 20,
     right: 20,
     height: 50,
@@ -881,6 +892,13 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
     zIndex: 100,
+  },
+  tipContainer: {
+    position: 'absolute',
+    top: 140,
+    left: 20,
+    right: 20,
+    zIndex: 90,
   },
   searchText: {
     flex: 1,

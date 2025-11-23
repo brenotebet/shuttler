@@ -16,6 +16,7 @@ import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
+import InfoBanner from '../components/InfoBanner';
 
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -117,6 +118,13 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
         </Text>
       </View>
 
+      <InfoBanner
+        icon="notifications-active"
+        title="Keep your ride moving"
+        description="You can only have one active pickup at a time. We’ll alert you as soon as a driver accepts."
+        style={styles.helperBanner}
+      />
+
       <View style={styles.card}>
         <Text style={styles.heading}>Pickup location</Text>
         <View style={styles.pickerWrapper}>
@@ -168,6 +176,9 @@ const styles = StyleSheet.create({
   description: {
     fontSize: 15,
     color: '#4b5563',
+  },
+  helperBanner: {
+    marginBottom: spacing.section,
   },
   card: {
     backgroundColor: '#fff',

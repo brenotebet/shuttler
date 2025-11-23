@@ -31,6 +31,7 @@ import {
   trySamlHandoffLogin,
 } from '../src/auth/samlAuth';
 import * as Linking from 'expo-linking';
+import InfoBanner from '../components/InfoBanner';
 
 const adminAccounts: { [key: string]: string } = {
   driver1: 'bus123',
@@ -163,6 +164,13 @@ export default function LoginScreen({ navigation }: Props) {
               </Text>
             </View>
 
+            <InfoBanner
+              icon="lightbulb-outline"
+              title="Need a quick refresher?"
+              description="Use your @mckendree.edu email to sign in. Toggle Driver mode for bus staff, or tap Quick Launch / School SSO to reuse your campus login."
+              style={styles.helperBanner}
+            />
+
             <View style={styles.card}>
               <FormField
                 label={isDriver ? 'Driver ID' : 'Student Email'}
@@ -239,6 +247,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     color: '#4b5563',
+  },
+  helperBanner: {
+    marginBottom: spacing.section,
   },
   card: {
     backgroundColor: '#fff',
