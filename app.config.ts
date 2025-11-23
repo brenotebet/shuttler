@@ -1,5 +1,7 @@
-import '@expo/env/load';
 import { ConfigContext, ExpoConfig } from 'expo/config';
+import { load } from '@expo/env';
+
+load(process.cwd());
 
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
 
