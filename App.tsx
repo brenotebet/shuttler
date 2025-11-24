@@ -4,6 +4,7 @@ import StackNavigator from './navigation/StackNavigator';
 import { LocationProvider } from './location/LocationContext';
 import * as Notifications from 'expo-notifications';
 import { DriverProvider } from './drivercontext/DriverContext';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -21,13 +22,15 @@ export default function App() {
   }, []);
 
   return (
-    <DriverProvider>
-      <LocationProvider>
-        <NavigationContainer>
-          <StackNavigator />
-        </NavigationContainer>
-      </LocationProvider>
-    </DriverProvider>
+    <SafeAreaProvider>
+      <DriverProvider>
+        <LocationProvider>
+          <NavigationContainer>
+            <StackNavigator />
+          </NavigationContainer>
+        </LocationProvider>
+      </DriverProvider>
+    </SafeAreaProvider>
   );
 }
 
