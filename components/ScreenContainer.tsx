@@ -1,5 +1,6 @@
 import React from 'react';
-import { SafeAreaView, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { BACKGROUND_COLOR } from '../src/constants/theme';
 import { spacing } from '../src/styles/common';
 
@@ -16,6 +17,7 @@ export default function ScreenContainer({
 }: ScreenContainerProps) {
   return (
     <SafeAreaView
+      edges={['top', 'bottom']}
       style={[styles.safe, padded ? styles.padded : null, style]}
     >
       {children}
