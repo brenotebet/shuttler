@@ -565,7 +565,9 @@ export default function MapScreen() {
       showAlert('No buses are currently online. Please try again later.');
       return;
     }
-    const [existing, accepted] = await Promise.all([
+
+    const selectedStop = LOCATIONS[index];
+    const [existing, acceptedForStop] = await Promise.all([
       getDocs(
         query(
           collection(db, 'stopRequests'),
@@ -573,7 +575,13 @@ export default function MapScreen() {
           where('status', 'in', ['pending', 'accepted'])
         )
       ),
-      getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'accepted'))),
+      getDocs(
+        query(
+          collection(db, 'stopRequests'),
+          where('status', '==', 'accepted'),
+          where('stop.name', '==', selectedStop.name)
+        )
+      ),
     ]);
 
     if (!existing.empty) {
@@ -583,13 +591,16 @@ export default function MapScreen() {
       return;
     }
 
-    if (!accepted.empty) {
-      showAlert('A stop has already been requested.');
+    if (!acceptedForStop.empty) {
+      const docSnap = acceptedForStop.docs[0];
+      const data = { id: docSnap.id, ...(docSnap.data() as any) };
+      setAcceptedRequest(data);
+      showAlert('A bus is already headed to this stop. We will show you the current ride.');
       setShowLocationList(false);
-      setSelectedStopIndex(null);
+      setSelectedStopIndex(index);
       return;
     }
-    const selectedStop = LOCATIONS[index];
+
     try {
       await addDoc(collection(db, 'stopRequests'), {
         studentEmail: auth.currentUser?.email,
@@ -817,6 +828,9 @@ export default function MapScreen() {
             <Text style={styles.cardSubtitle}>
               {request.status === 'accepted' ? 'Bus is on the way' : 'Waiting'}
             </Text>
+            {request.stop?.name && (
+              <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>
+            )}
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
             {request.studentEmail === auth.currentUser?.email && (
               <TouchableOpacity

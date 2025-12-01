@@ -734,6 +734,9 @@ export default function DriverScreen() {
                 ? 'Navigate to Stop'
                 : 'Awaiting Acceptance'}
             </Text>
+            {request.stop?.name && (
+              <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>
+            )}
             {eta && request.status !== 'pending' && (
               <Text style={styles.etaText}>ETA: {eta}</Text>
             )}
