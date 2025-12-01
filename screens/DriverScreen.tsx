@@ -73,6 +73,8 @@ const DEFAULT_REGION: Region = {
   latitudeDelta: 0.01,
   longitudeDelta: 0.01,
 };
+const FRESHNESS_WINDOW_SECONDS = 30;
+const STALE_WINDOW_SECONDS = 90;
 
 export default function DriverScreen() {
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
@@ -98,7 +100,14 @@ export default function DriverScreen() {
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
   const headings = useRef<{ [id: string]: number }>({});
   const [busLocations, setBusLocations] = useState<{
-    [id: string]: { latitude: number; longitude: number; heading: number };
+    [id: string]: {
+      latitude: number;
+      longitude: number;
+      heading: number;
+      lastUpdated: Date;
+      isFresh: boolean;
+      secondsAgo: number;
+    };
   }>({});
 
   // 5) Slide-up bottom card when a request is active
@@ -159,7 +168,7 @@ export default function DriverScreen() {
       if (snapshot.metadata.hasPendingWrites) {
         return;
       }
-      const recent = snapshot.docs
+      const buses = snapshot.docs
         .map((docSnap) => {
           const data = docSnap.data();
           const ts = data.timestamp?.toDate?.() || new Date(data.timestamp);
@@ -170,19 +179,29 @@ export default function DriverScreen() {
             timestamp: ts,
           };
         })
-        .filter((bus) => {
+        .map((bus) => {
           const secondsAgo = (Date.now() - bus.timestamp.getTime()) / 1000;
-          return secondsAgo < 10;
+          return { ...bus, secondsAgo };
         });
 
-      setBusOnline(recent.length > 0);
+      const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
+      const visibleBuses = buses.filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS);
+
+      setBusOnline(freshBuses.length > 0);
 
       const newLocations: {
-        [id: string]: { latitude: number; longitude: number; heading: number };
+        [id: string]: {
+          latitude: number;
+          longitude: number;
+          heading: number;
+          lastUpdated: Date;
+          isFresh: boolean;
+          secondsAgo: number;
+        };
       } = {};
 
-      recent.forEach((bus) => {
-        const { id, latitude, longitude } = bus;
+      visibleBuses.forEach((bus) => {
+        const { id, latitude, longitude, secondsAgo, timestamp } = bus;
 
         const prev = lastCoords.current[id];
         if (prev) {
@@ -202,6 +221,9 @@ export default function DriverScreen() {
           latitude,
           longitude,
           heading: headings.current[id],
+          lastUpdated: timestamp,
+          isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
+          secondsAgo,
         };
 
         if (!busRegions.current[id]) {
@@ -231,7 +253,7 @@ export default function DriverScreen() {
 
       setBusLocations(newLocations);
 
-      const recentIds = recent.map((b) => b.id);
+      const recentIds = visibleBuses.map((b) => b.id);
       Object.keys(busRegions.current).forEach((key) => {
         if (!recentIds.includes(key)) delete busRegions.current[key];
       });

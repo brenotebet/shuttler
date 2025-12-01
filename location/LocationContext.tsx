@@ -32,6 +32,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const [isSharing, setIsSharing] = useState(false);
   const watchSub = useRef<Location.LocationSubscription | null>(null);
   const currentDriverId = useRef<string | null>(null);
+  const lastLocation = useRef<Location.LocationObjectCoords | null>(null);
+  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
 
   // Remind the driver if location is still being shared when the app
   // goes to the background or is closed.
@@ -74,6 +76,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     // see the bus without waiting for the first watchPosition update.
     try {
       const loc = await Location.getCurrentPositionAsync({});
+      lastLocation.current = loc.coords;
       await setDoc(doc(db, 'buses', driverId), {
         latitude: loc.coords.latitude,
         longitude: loc.coords.longitude,
@@ -87,6 +90,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       { accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 0 },
       async (loc) => {
         try {
+          lastLocation.current = loc.coords;
           if (currentDriverId.current) {
             await setDoc(doc(db, 'buses', currentDriverId.current), {
               latitude: loc.coords.latitude,
@@ -101,6 +105,23 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     );
 
 
+    // Heartbeat: keep the driver's bus doc fresh even if the OS pauses
+    // watchPosition callbacks (e.g., background throttling).
+    heartbeatRef.current = setInterval(async () => {
+      try {
+        if (currentDriverId.current && lastLocation.current) {
+          await setDoc(doc(db, 'buses', currentDriverId.current), {
+            latitude: lastLocation.current.latitude,
+            longitude: lastLocation.current.longitude,
+            timestamp: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        console.error('Heartbeat write failed:', err);
+      }
+    }, 5000);
+
+
     setIsSharing(true);
   };
 
@@ -109,6 +130,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
     watchSub.current.remove();
     watchSub.current = null;
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
 
     setIsSharing(false);
 

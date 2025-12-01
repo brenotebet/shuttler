@@ -66,6 +66,8 @@ import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 
 const SIDEBAR_WIDTH = 220;
+const FRESHNESS_WINDOW_SECONDS = 30;
+const STALE_WINDOW_SECONDS = 90;
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const LOCATIONS = [
@@ -121,7 +123,14 @@ export default function MapScreen() {
   const [driverId, setDriverId] = useState<string | null>(null);
   const [busOnline, setBusOnline] = useState<boolean>(false);
   const [busLocations, setBusLocations] = useState<{
-    [id: string]: { latitude: number; longitude: number; heading: number };
+    [id: string]: {
+      latitude: number;
+      longitude: number;
+      heading: number;
+      lastUpdated: Date;
+      isFresh: boolean;
+      secondsAgo: number;
+    };
   }>({});
 
   const [showLocationList, setShowLocationList] = useState(false);
@@ -149,6 +158,12 @@ export default function MapScreen() {
 
   // Bus icon
   const busIcon = require('../assets/bus-icon.png');
+
+  const formatLastSeen = (seconds: number) => {
+    if (seconds < 60) return `${Math.max(1, Math.round(seconds))}s ago`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+    return `${Math.round(seconds / 3600)}h ago`;
+  };
 
   // 1) Initialize map & subscribe to Firestore
   useEffect(() => {
@@ -185,7 +200,7 @@ export default function MapScreen() {
       if (snapshot.metadata.hasPendingWrites) {
         return;
       }
-      const recentBuses = snapshot.docs
+      const buses = snapshot.docs
         .map((docSnap) => {
           const data = docSnap.data();
           const timestamp = data.timestamp?.toDate?.() || new Date(data.timestamp);
@@ -196,19 +211,29 @@ export default function MapScreen() {
             timestamp,
           };
         })
-        .filter((bus) => {
+        .map((bus) => {
           const secondsAgo = (Date.now() - bus.timestamp.getTime()) / 1000;
-          return secondsAgo < 10;
+          return { ...bus, secondsAgo };
         });
 
-      setBusOnline(recentBuses.length > 0);
+      const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
+      const visibleBuses = buses.filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS);
+
+      setBusOnline(freshBuses.length > 0);
 
       const newLocations: {
-        [id: string]: { latitude: number; longitude: number; heading: number };
+        [id: string]: {
+          latitude: number;
+          longitude: number;
+          heading: number;
+          lastUpdated: Date;
+          isFresh: boolean;
+          secondsAgo: number;
+        };
       } = {};
 
-      recentBuses.forEach((bus) => {
-        const { id, latitude, longitude } = bus;
+      visibleBuses.forEach((bus) => {
+        const { id, latitude, longitude, secondsAgo, timestamp } = bus;
 
         const prev = lastCoords.current[id];
         if (prev) {
@@ -228,6 +253,9 @@ export default function MapScreen() {
           latitude,
           longitude,
           heading: headings.current[id],
+          lastUpdated: timestamp,
+          isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
+          secondsAgo,
         };
 
         if (!busRegions.current[id]) {
@@ -255,7 +283,7 @@ export default function MapScreen() {
 
       setBusLocations(newLocations);
 
-      const recentIds = recentBuses.map((b) => b.id);
+      const recentIds = visibleBuses.map((b) => b.id);
       Object.keys(busRegions.current).forEach((key) => {
         if (!recentIds.includes(key)) delete busRegions.current[key];
       });
@@ -367,6 +395,7 @@ export default function MapScreen() {
 
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const driverOnline = activeBusIds.includes(driverId || '');
+  const selectedBus = selectedBusId ? busLocations[selectedBusId] : null;
   useEffect(() => {
     if (!driverId) return;
     if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
@@ -749,7 +778,7 @@ export default function MapScreen() {
               >
                 <Image
                   source={busIcon}
-                  style={{ width: 120, height: 120 }}
+                  style={{ width: 120, height: 120, opacity: loc.isFresh ? 1 : 0.55 }}
                   resizeMode="contain"
                 />
               </MarkerAnimated>
@@ -802,6 +831,11 @@ export default function MapScreen() {
           {`Bogey Bus ${selectedBusId ?? ''}`.trim()}
         </Text>
         {busEta && <Text style={styles.sidebarText}>ETA to you: {busEta}</Text>}
+        {selectedBus && (
+          <Text style={styles.sidebarText}>
+            Last seen: {formatLastSeen(selectedBus.secondsAgo)}
+          </Text>
+        )}
         {nextStop && <Text style={styles.sidebarText}>Next stop: {nextStop}</Text>}
       </Animated.View>
 
