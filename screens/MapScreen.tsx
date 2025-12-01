@@ -283,7 +283,7 @@ export default function MapScreen() {
 
       setBusLocations(newLocations);
 
-      const recentIds = recentBuses.map((b) => b.id);
+      const recentIds = visibleBuses.map((b) => b.id);
       Object.keys(busRegions.current).forEach((key) => {
         if (!recentIds.includes(key)) delete busRegions.current[key];
       });
