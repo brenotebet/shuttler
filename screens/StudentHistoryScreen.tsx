@@ -14,11 +14,13 @@ export default function StudentHistoryScreen() {
   const [stops, setStops] = useState<any[]>([]);
 
   useEffect(() => {
+    const studentUid = auth.currentUser?.uid;
+    if (!studentUid) return;
     const q = query(
       collection(db, 'stopRequests'),
-      where('studentEmail', '==', auth.currentUser?.email),
+      where('studentUid', '==', studentUid),
       where('status', '==', 'completed'),
-      orderBy('completedTimestamp', 'desc')
+      orderBy('completedAt', 'desc')
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -42,7 +44,9 @@ export default function StudentHistoryScreen() {
             <Text style={styles.cardDetail}>
               Completed on:{' '}
               {(
-                item.completedTimestamp?.toDate?.() || item.timestamp?.toDate?.()
+                item.completedAt?.toDate?.() ||
+                item.completedTimestamp?.toDate?.() ||
+                item.timestamp?.toDate?.()
               )?.toLocaleString()}
             </Text>
           </View>

@@ -9,6 +9,7 @@ import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 type StopRequest = {
   id: string;
   studentEmail: string;
+  driverUid?: string;
   driverId?: string;
   status: string;
   stop: { latitude: number; longitude: number; name?: string };
@@ -50,13 +51,13 @@ function StopRequestCard({ item, driverId, updateStatus }: Props) {
         </Marker>
       </MapView>
 
-      {item.status === 'pending' && !item.driverId && (
+      {item.status === 'pending' && !item.driverUid && !item.driverId && (
         <TouchableOpacity style={styles.button} onPress={handleAccept} activeOpacity={0.85}>
           <Text style={styles.buttonText}>Accept Stop</Text>
         </TouchableOpacity>
       )}
 
-      {item.status === 'accepted' && item.driverId === driverId && (
+      {item.status === 'accepted' && (item.driverUid || item.driverId) === driverId && (
         <TouchableOpacity style={styles.button} onPress={handleComplete} activeOpacity={0.85}>
           <Text style={styles.buttonText}>Stop Completed</Text>
         </TouchableOpacity>
@@ -96,4 +97,3 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });
-

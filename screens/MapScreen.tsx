@@ -52,11 +52,11 @@ import {
   query,
   where,
   onSnapshot,
-  deleteDoc,
   addDoc,
   serverTimestamp,
   getDocs,
   doc,
+  updateDoc,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -205,12 +205,17 @@ export default function MapScreen() {
       const buses = snapshot.docs
         .map((docSnap) => {
           const data = docSnap.data();
-          const timestamp = data.timestamp?.toDate?.() || new Date(data.timestamp);
+          const timestamp =
+            data?.updatedAt?.toDate?.() ||
+            data?.lastSeen?.toDate?.() ||
+            (typeof data?.updatedAt === 'string' ? new Date(data.updatedAt) : null) ||
+            (typeof data?.lastSeen === 'string' ? new Date(data.lastSeen) : null) ||
+            new Date();
           return {
             id: docSnap.id,
             latitude: data.latitude as number,
             longitude: data.longitude as number,
-            timestamp,
+            timestamp: timestamp as Date,
           };
         })
         .map((bus) => {
@@ -346,14 +351,14 @@ export default function MapScreen() {
     if (ownRequest) {
       setRequest(ownRequest);
       setRequestId(ownRequest.id);
-      setDriverId(ownRequest.driverId || null);
+      setDriverId(ownRequest.driverUid || ownRequest.driverId || null);
     } else if (
       acceptedRequest &&
       acceptedRequest.studentUid !== studentUid
     ) {
       setRequest(acceptedRequest);
       setRequestId(acceptedRequest.id);
-      setDriverId(acceptedRequest.driverId || null);
+      setDriverId(acceptedRequest.driverUid || acceptedRequest.driverId || null);
     } else {
       setRequest(null);
       setRequestId(null);
@@ -604,7 +609,7 @@ export default function MapScreen() {
       getDocs(
         query(
           collection(db, 'stopRequests'),
-          where('studentEmail', '==', auth.currentUser?.email),
+          where('studentUid', '==', studentUid),
           where('status', 'in', ['pending', 'accepted'])
         )
       ),
@@ -635,10 +640,10 @@ export default function MapScreen() {
     }
 
     try {
-      if (!studentUid) {
-  showAlert('You must be logged in to request a stop.');
-  return;
-}
+    if (!studentUid) {
+      showAlert('You must be logged in to request a stop.');
+      return;
+    }
 
     await addDoc(collection(db, 'stopRequests'), {
         studentUid,
@@ -880,21 +885,25 @@ export default function MapScreen() {
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
             {request.studentUid === studentUid && (
 
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={async () => {
-                  if (requestId) {
-                    await deleteDoc(doc(db, 'stopRequests', requestId));
-                    setRequest(null);
-                    setRequestId(null);
-                    setRouteCoords([]);
-                    setEta(null);
-                    showAlert('Stop request canceled.');
-                  }
-                }}
-              >
-                <Text style={styles.cancelButtonText}>Cancel Request</Text>
-              </TouchableOpacity>
+              {request.status === 'pending' && (
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={async () => {
+                    if (requestId) {
+                      await updateDoc(doc(db, 'stopRequests', requestId), {
+                        status: 'cancelled',
+                      });
+                      setRequest(null);
+                      setRequestId(null);
+                      setRouteCoords([]);
+                      setEta(null);
+                      showAlert('Stop request canceled.');
+                    }
+                  }}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel Request</Text>
+                </TouchableOpacity>
+              )}
             )}
           </>
         ) : (

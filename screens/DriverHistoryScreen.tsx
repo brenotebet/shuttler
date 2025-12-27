@@ -22,9 +22,9 @@ export default function DriverHistoryScreen() {
 
     const q = query(
       collection(db, 'stopRequests'),
-      where('driverId', '==', driverId),
+      where('driverUid', '==', driverId),
       where('status', '==', 'completed'),
-      orderBy('completedTimestamp', 'desc')
+      orderBy('completedAt', 'desc')
     );
 
     const unsub = onSnapshot(
@@ -52,7 +52,10 @@ export default function DriverHistoryScreen() {
   stops.forEach((r) => {
     const dest = r.stop?.name || 'Unknown';
     destinationCounts[dest] = (destinationCounts[dest] || 0) + 1;
-    const ts = r.completedTimestamp?.toDate?.() || r.timestamp?.toDate?.();
+    const ts =
+      r.completedAt?.toDate?.() ||
+      r.completedTimestamp?.toDate?.() ||
+      r.timestamp?.toDate?.();
     if (ts) {
       const hr = ts.getHours();
       if (hr >= 7 && hr <= 18) {
@@ -97,7 +100,9 @@ export default function DriverHistoryScreen() {
             <Text style={styles.cardText}>Stop: {item.stop?.name}</Text>
             <Text style={styles.cardTimestamp}>
               {(
-                item.completedTimestamp?.toDate?.() || item.timestamp?.toDate?.()
+                item.completedAt?.toDate?.() ||
+                item.completedTimestamp?.toDate?.() ||
+                item.timestamp?.toDate?.()
               )?.toLocaleString() || 'No timestamp'}
             </Text>
           </View>
