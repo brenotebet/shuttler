@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import {
   SafeAreaView,
@@ -31,12 +30,11 @@ import {
   where,
   onSnapshot,
   doc,
-  deleteDoc,
   updateDoc,
   serverTimestamp,
-  addDoc
+  addDoc,
 } from 'firebase/firestore';
-import { db } from '../firebase/firebaseconfig';
+import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
@@ -45,12 +43,8 @@ import MapMarker from '../components/MapMarker';
 import { LOCATIONS } from './RequestStopScreen';
 import { fetchDirections } from '../src/utils/directions';
 
-function computeBearing(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-) {
+
+function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
   const toDeg = (r: number) => (r * 180) / Math.PI;
   const φ1 = toRad(lat1),
@@ -73,12 +67,17 @@ const DEFAULT_REGION: Region = {
   latitudeDelta: 0.01,
   longitudeDelta: 0.01,
 };
+
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
 
+type StopRequestStatus = 'pending' | 'accepted' | 'completed' | 'cancelled';
+
 export default function DriverScreen() {
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
-  const { driverId } = useDriver();
+  const { driverId, loading } = useDriver();
+  if (loading) return null;
+  if (!driverId) return null; // This MUST be auth.uid
 
   // 1) Map region
   const [region, setRegion] = useState<Region>(DEFAULT_REGION);
@@ -95,7 +94,7 @@ export default function DriverScreen() {
   );
   const [eta, setEta] = useState<string | null>(null);
 
-  // 4) AnimatedRegion for each bus-ID (should be only this driver)
+  // 4) AnimatedRegion for each bus-ID
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
   const headings = useRef<{ [id: string]: number }>({});
@@ -121,31 +120,109 @@ export default function DriverScreen() {
   const [boardingCardHeight, setBoardingCardHeight] = useState(200);
   const [completeAfterSave, setCompleteAfterSave] = useState(false);
 
-  // 6) “Bus online” flag (true if we see a fresh bus doc <10s old)
+  // 6) “Bus online” flag
   const [busOnline, setBusOnline] = useState(false);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
 
   const mapRef = useRef<MapView | null>(null);
 
-
   // 7) “Heads-up” flag so we only alert once when near pickup
   const notifiedRef = useRef(false);
 
-
-
-
-
-  // Bus icon (reuse the same 50×50 PNG you used on student side)
   const busIcon = require('../assets/bus-icon.png');
+
+  // ───────────────────────────────────────────────────────────────────
+  // Helper: update stop request status (MUST write driverUid for driver updates)
+  // ───────────────────────────────────────────────────────────────────
+  const updateStatus = async (id: string, newStatus: StopRequestStatus) => {
+    try {
+      if (!driverId) throw new Error('Driver ID missing');
+
+      const data: any = { status: newStatus };
+
+      if (newStatus === 'accepted') {
+        data.driverUid = driverId; // ✅ REQUIRED by rules
+        data.acceptedAt = serverTimestamp();
+      }
+
+      if (newStatus === 'completed') {
+        data.driverUid = driverId; // ✅ keep consistent
+        data.completedAt = serverTimestamp();
+      }
+
+      if (newStatus === 'cancelled') {
+        data.driverUid = driverId; // ✅ keep consistent
+        data.cancelledAt = serverTimestamp();
+      }
+
+      await updateDoc(doc(db, 'stopRequests', id), data);
+    } catch (err: any) {
+      showAlert(err.message ?? 'Error updating status', 'Error');
+    }
+  };
+
+  // ───────────────────────────────────────────────────────────────────
+  // Save boarding count to database (driver-only write)
+  // ───────────────────────────────────────────────────────────────────
+  const saveBoardingCount = async () => {
+    if (!driverId) return;
+
+    const loc = lastCoords.current[driverId];
+    if (!loc) {
+      showAlert('Driver location unavailable');
+      return;
+    }
+    const nearest = getNearestStop(loc.latitude, loc.longitude);
+
+    try {
+      await addDoc(collection(db, 'boardingCounts'), {
+        driverUid: driverId, // ✅ align to UID naming
+        count: boardingCount,
+        stop: {
+          id: nearest.id,
+          name: nearest.name,
+          latitude: nearest.latitude,
+          longitude: nearest.longitude,
+        },
+        requestId: requestId || null,
+        studentUid: request?.studentUid || null, // ✅ UID, not email
+        createdAt: serverTimestamp(),
+      });
+
+      if (completeAfterSave && request && requestId && request.status === 'accepted') {
+        await updateStatus(requestId, 'completed');
+      }
+
+      showAlert('Boarding saved');
+    } catch (err: any) {
+      showAlert(err.message ?? 'Error saving boarding', 'Error saving boarding');
+    }
+
+    setBoardingCount(0);
+    setShowBoardingCard(false);
+    setCompleteAfterSave(false);
+  };
 
   // ───────────────────────────────────────────────────────────────────
   // 1) On mount: request location & subscribe to “buses” + “stopRequests”
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
-    let unsubBus: () => void;
-    let unsubRide: () => void;
+    const uid = auth.currentUser?.uid;
+      if (!uid) {
+        console.warn('DriverScreen: auth.currentUser is null - skipping subscriptions');
+        return;
+      }
+      if (!driverId) {
+        console.warn('DriverScreen: driverId missing - skipping subscriptions');
+        return;
+      }
+      if (driverId !== uid) {
+        console.warn('DriverScreen: driverId != auth.uid - skipping subscriptions', { driverId, uid });
+        return;
+      } 
+    let unsubBus: (() => void) | undefined;
+    let unsubRide: (() => void) | undefined;
 
-    // (a) Center map on driver’s current position
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
@@ -154,6 +231,7 @@ export default function DriverScreen() {
         return;
       }
       setHasLocationPermission(true);
+
       const loc = await Location.getCurrentPositionAsync({});
       setRegion({
         latitude: loc.coords.latitude,
@@ -163,111 +241,124 @@ export default function DriverScreen() {
       });
     })();
 
-    // (b) Subscribe to “buses” collection for live driver location
-    unsubBus = onSnapshot(collection(db, 'buses'), (snapshot) => {
-      if (snapshot.metadata.hasPendingWrites) {
-        return;
-      }
-      const buses = snapshot.docs
-        .map((docSnap) => {
-          const data = docSnap.data();
-          const ts = data.timestamp?.toDate?.() || new Date(data.timestamp);
-          return {
-            id: docSnap.id,
-            latitude: data.latitude as number,
-            longitude: data.longitude as number,
-            timestamp: ts,
+    // (b) Subscribe to “buses”
+    unsubBus = onSnapshot(
+      collection(db, 'buses'),
+      (snapshot) => {
+        if (snapshot.metadata.hasPendingWrites) return;
+
+        const buses = snapshot.docs
+          .map((docSnap) => {
+            const data: any = docSnap.data();
+
+            // ✅ Your buses write updatedAt/lastSeen (not "timestamp")
+            const ts =
+              data?.updatedAt?.toDate?.() ||
+              data?.lastSeen?.toDate?.() ||
+              (typeof data?.updatedAt === 'string' ? new Date(data.updatedAt) : null) ||
+              (typeof data?.lastSeen === 'string' ? new Date(data.lastSeen) : null) ||
+              new Date();
+
+            return {
+              id: docSnap.id,
+              latitude: data.latitude as number,
+              longitude: data.longitude as number,
+              timestamp: ts as Date,
+            };
+          })
+          .map((bus) => {
+            const secondsAgo = (Date.now() - bus.timestamp.getTime()) / 1000;
+            return { ...bus, secondsAgo };
+          });
+
+        const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
+        const visibleBuses = buses.filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS);
+
+        setBusOnline(freshBuses.length > 0);
+
+        const newLocations: {
+          [id: string]: {
+            latitude: number;
+            longitude: number;
+            heading: number;
+            lastUpdated: Date;
+            isFresh: boolean;
+            secondsAgo: number;
           };
-        })
-        .map((bus) => {
-          const secondsAgo = (Date.now() - bus.timestamp.getTime()) / 1000;
-          return { ...bus, secondsAgo };
-        });
+        } = {};
 
-      const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
-      const visibleBuses = buses.filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS);
+        visibleBuses.forEach((bus) => {
+          const { id, latitude, longitude, secondsAgo, timestamp } = bus;
 
-      setBusOnline(freshBuses.length > 0);
+          const prev = lastCoords.current[id];
+          if (prev) {
+            const raw = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
+            headings.current[id] = quantizeBearing(raw);
+          } else {
+            headings.current[id] = 0;
+          }
 
-      const newLocations: {
-        [id: string]: {
-          latitude: number;
-          longitude: number;
-          heading: number;
-          lastUpdated: Date;
-          isFresh: boolean;
-          secondsAgo: number;
-        };
-      } = {};
-
-      visibleBuses.forEach((bus) => {
-        const { id, latitude, longitude, secondsAgo, timestamp } = bus;
-
-        const prev = lastCoords.current[id];
-        if (prev) {
-          const raw = computeBearing(
-            prev.latitude,
-            prev.longitude,
-            latitude,
-            longitude
-          );
-          headings.current[id] = quantizeBearing(raw);
-        } else {
-          headings.current[id] = 0;
-        }
-
-        lastCoords.current[id] = { latitude, longitude };
-        newLocations[id] = {
-          latitude,
-          longitude,
-          heading: headings.current[id],
-          lastUpdated: timestamp,
-          isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
-          secondsAgo,
-        };
-
-        if (!busRegions.current[id]) {
-          busRegions.current[id] = new AnimatedRegion({
+          lastCoords.current[id] = { latitude, longitude };
+          newLocations[id] = {
             latitude,
             longitude,
-            latitudeDelta: 0,
-            longitudeDelta: 0,
-          });
-        } else {
-          busRegions.current[id]
-            .timing(
-              {
-                toValue: {
-                  latitude,
-                  longitude,
-                  latitudeDelta: 0,
-                  longitudeDelta: 0,
-                } as any,
-                duration: 2900,
-                useNativeDriver: false,
-              } as any
-            )
-            .start();
-        }
-      });
+            heading: headings.current[id],
+            lastUpdated: timestamp,
+            isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
+            secondsAgo,
+          };
 
-      setBusLocations(newLocations);
+          if (!busRegions.current[id]) {
+            busRegions.current[id] = new AnimatedRegion({
+              latitude,
+              longitude,
+              latitudeDelta: 0,
+              longitudeDelta: 0,
+            });
+          } else {
+            busRegions.current[id]
+              .timing(
+                {
+                  toValue: {
+                    latitude,
+                    longitude,
+                    latitudeDelta: 0,
+                    longitudeDelta: 0,
+                  } as any,
+                  duration: 2900,
+                  useNativeDriver: false,
+                } as any
+              )
+              .start();
+          }
+        });
 
-      const recentIds = visibleBuses.map((b) => b.id);
-      Object.keys(busRegions.current).forEach((key) => {
-        if (!recentIds.includes(key)) delete busRegions.current[key];
-      });
-      Object.keys(lastCoords.current).forEach((key) => {
-        if (!recentIds.includes(key)) delete lastCoords.current[key];
-      });
-      Object.keys(headings.current).forEach((key) => {
-        if (!recentIds.includes(key)) delete headings.current[key];
-      });
+        setBusLocations(newLocations);
 
-      setActiveBusIds(recentIds);
-    });
+        const recentIds = visibleBuses.map((b) => b.id);
+        Object.keys(busRegions.current).forEach((key) => {
+          if (!recentIds.includes(key)) delete busRegions.current[key];
+        });
+        Object.keys(lastCoords.current).forEach((key) => {
+          if (!recentIds.includes(key)) delete lastCoords.current[key];
+        });
+        Object.keys(headings.current).forEach((key) => {
+          if (!recentIds.includes(key)) delete headings.current[key];
+        });
 
-    // (c) Subscribe to stop requests (pending or assigned to this driver)
+        setActiveBusIds(recentIds);
+      },
+      (err) => {
+        console.error('buses snapshot error', {
+          code: (err as any)?.code,
+          message: (err as any)?.message,
+        });
+
+      }
+    );
+
+    // (c) Subscribe to stop requests (pending or accepted)
+    // Driver can read all stopRequests if isDriver() resolves true.
     unsubRide = onSnapshot(
       query(collection(db, 'stopRequests'), where('status', 'in', ['pending', 'accepted'])),
       (snapshot) => {
@@ -277,13 +368,9 @@ export default function DriverScreen() {
         });
         setRequests(list);
 
-        // Request already assigned to this driver takes priority
-        const current = list.find(
-          (r) => r.driverId === driverId && r.status !== 'completed'
-        );
-        const pending = list.find(
-          (r) => r.status === 'pending' && !r.driverId
-        );
+        // ✅ Use driverUid (not driverId)
+        const current = list.find((r) => r.driverUid === driverId && r.status !== 'completed');
+        const pending = list.find((r) => r.status === 'pending' && !r.driverUid);
 
         const selected = current || pending || null;
 
@@ -297,6 +384,12 @@ export default function DriverScreen() {
           setEta(null);
           notifiedRef.current = false;
         }
+      },
+      (err) => {
+        console.error('❌ onSnapshot(stopRequests status in [pending, accepted]) permission error', {
+          code: (err as any)?.code,
+          message: (err as any)?.message,
+        });
       }
     );
 
@@ -305,57 +398,6 @@ export default function DriverScreen() {
       if (unsubRide) unsubRide();
     };
   }, [driverId]);
-
-  // Update stop request status helper
-  const updateStatus = async (id: string, newStatus: string) => {
-    try {
-      const data: any = { status: newStatus };
-      if (newStatus === 'accepted' && driverId) {
-        data.driverId = driverId;
-      }
-      if (newStatus === 'completed') {
-        data.completedTimestamp = serverTimestamp();
-      }
-      await updateDoc(doc(db, 'stopRequests', id), data);
-    } catch (err: any) {
-      showAlert(err.message, 'Error');
-    }
-  };
-
-  // Save boarding count to database
-  const saveBoardingCount = async () => {
-    if (!driverId) return;
-    const loc = lastCoords.current[driverId];
-    if (!loc) {
-      showAlert('Driver location unavailable');
-      return;
-    }
-    const nearest = getNearestStop(loc.latitude, loc.longitude);
-    try {
-      await addDoc(collection(db, 'boardingCounts'), {
-        driverId,
-        count: boardingCount,
-        stop: {
-          id: nearest.id,
-          name: nearest.name,
-          latitude: nearest.latitude,
-          longitude: nearest.longitude,
-        },
-        requestId: requestId || null,
-        studentEmail: request?.studentEmail || null,
-        timestamp: serverTimestamp(),
-      });
-      if (completeAfterSave && request && requestId && request.status === 'accepted') {
-        await updateStatus(requestId, 'completed');
-      }
-      showAlert('Boarding saved');
-    } catch (err: any) {
-      showAlert(err.message, 'Error saving boarding');
-    }
-    setBoardingCount(0);
-    setShowBoardingCard(false);
-    setCompleteAfterSave(false);
-  };
 
   // ───────────────────────────────────────────────────────────────────
   // 2) Fetch route & ETA whenever request or driver location updates
@@ -412,9 +454,7 @@ export default function DriverScreen() {
     if (!loc) return;
 
     setRouteCoords((current) => {
-      if (current.length === 0) {
-        return current;
-      }
+      if (current.length === 0) return current;
 
       let furthestIdx = -1;
       for (let idx = 0; idx < current.length; idx++) {
@@ -424,7 +464,6 @@ export default function DriverScreen() {
           current[idx].latitude,
           current[idx].longitude
         );
-
         if (distance <= 40) {
           furthestIdx = idx;
         } else if (furthestIdx >= 0) {
@@ -432,9 +471,7 @@ export default function DriverScreen() {
         }
       }
 
-      if (furthestIdx < 0) {
-        return current;
-      }
+      if (furthestIdx < 0) return current;
 
       const remaining = current.slice(furthestIdx);
       const lastPoint = remaining[remaining.length - 1];
@@ -447,10 +484,7 @@ export default function DriverScreen() {
         return [];
       }
 
-      if (remaining.length === current.length) {
-        return current;
-      }
-
+      if (remaining.length === current.length) return current;
       return remaining;
     });
   }, [busLocations[driverId ?? ''], driverId]);
@@ -461,18 +495,12 @@ export default function DriverScreen() {
   useEffect(() => {
     if (request?.status === 'accepted') {
       Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Stop Accepted 🚌',
-          body: 'Navigate to the requested stop.',
-        },
+        content: { title: 'Stop Accepted 🚌', body: 'Navigate to the requested stop.' },
         trigger: null,
       });
     } else if (request?.status === 'completed') {
       Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Stop Completed ✅',
-          body: 'You have serviced the stop.',
-        },
+        content: { title: 'Stop Completed ✅', body: 'You have serviced the stop.' },
         trigger: null,
       });
     }
@@ -508,60 +536,33 @@ export default function DriverScreen() {
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (request) {
-      Animated.timing(slideAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
+      Animated.timing(slideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
     } else {
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
+      Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     }
   }, [request]);
 
-  // Animate boarding count card
   useEffect(() => {
     if (showBoardingCard) {
-      Animated.timing(boardingSlideAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
+      Animated.timing(boardingSlideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
     } else {
-      Animated.timing(boardingSlideAnim, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
+      Animated.timing(boardingSlideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     }
   }, [showBoardingCard]);
 
   const shareTranslateY = Animated.add(
-    slideAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, -cardHeight + 8],
-    }),
-    boardingSlideAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, -boardingCardHeight + 8],
-    })
+    slideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -cardHeight + 8] }),
+    boardingSlideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -boardingCardHeight + 8] })
   );
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      {/* ───── Bottom-Right “Start/Stop Sharing” Button ───── */}
-
-      {(request?.status !== 'accepted') && (
-
+      {/* Bottom-Right Start/Stop Sharing Button */}
+      {request?.status !== 'accepted' && (
         <Animated.View
           style={[
             styles.bottomRightButtonContainer,
-            {
-              transform: [{ translateY: shareTranslateY }],
-            },
+            { transform: [{ translateY: shareTranslateY }] },
           ]}
         >
           <TouchableOpacity
@@ -575,7 +576,8 @@ export default function DriverScreen() {
                 if (isSharing) {
                   await stopSharing();
                 } else {
-                  await startSharing(driverId);
+                  // ✅ If you updated LocationContext per earlier patch, this becomes startSharing()
+                  await startSharing();
                 }
               } catch (err) {
                 console.error(err);
@@ -584,14 +586,12 @@ export default function DriverScreen() {
             }}
           >
             <Icon name={isSharing ? 'gps-off' : 'gps-fixed'} size={24} color="#fff" />
-            <Text style={styles.shareButtonText}>
-              {isSharing ? 'Stop Sharing' : 'Start Sharing'}
-            </Text>
+            <Text style={styles.shareButtonText}>{isSharing ? 'Stop Sharing' : 'Start Sharing'}</Text>
           </TouchableOpacity>
         </Animated.View>
       )}
 
-      {/* ───── Bottom-Left “Add Students” Button ───── */}
+      {/* Bottom-Left Add Students Button */}
       {isSharing && !showBoardingCard && (
         <Animated.View
           style={[
@@ -621,16 +621,14 @@ export default function DriverScreen() {
         </Animated.View>
       )}
 
-      {/* ───── Banner if no fresh driver location ───── */}
+      {/* Banner if no fresh driver location */}
       {!driverOnline && hasLocationPermission && (
         <View style={styles.banner}>
-          <Text style={styles.bannerText}>
-            Not sharing location. Tap “Start Sharing” to go online.
-          </Text>
+          <Text style={styles.bannerText}>Not sharing location. Tap “Start Sharing” to go online.</Text>
         </View>
       )}
 
-      {/* ───── Banner if location permission denied ───── */}
+      {/* Banner if location permission denied */}
       {!hasLocationPermission && (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>
@@ -639,7 +637,7 @@ export default function DriverScreen() {
         </View>
       )}
 
-      {/* ───── MapView ───── */}
+      {/* Map */}
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
@@ -681,13 +679,14 @@ export default function DriverScreen() {
         {activeBusIds.map((id) => {
           const loc = busLocations[id];
           if (!loc) return null;
+
           return (
             <MarkerAnimated
               key={id}
               coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
               flat
               rotation={loc.heading}
-              anchor={{ x: 0.5, y: .5 }}
+              anchor={{ x: 0.5, y: 0.5 }}
             >
               <Image source={busIcon} style={{ width: 120, height: 120 }} resizeMode="contain" />
             </MarkerAnimated>
@@ -722,15 +721,11 @@ export default function DriverScreen() {
 
         {/* Route polyline */}
         {routeCoords.length > 0 && (
-          <Polyline
-            coordinates={routeCoords}
-            strokeWidth={4}
-            strokeColor={PRIMARY_COLOR}
-          />
+          <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />
         )}
       </MapView>
 
-      {/* ───── Bottom Card: Ride Info + Cancel ───── */}
+      {/* Bottom Card */}
       <Animated.View
         onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
         style={[
@@ -752,27 +747,18 @@ export default function DriverScreen() {
           <>
             <Text style={styles.cardTitle}>Request Status: {request.status}</Text>
             <Text style={styles.cardSubtitle}>
-              {request.status === 'accepted'
-                ? 'Navigate to Stop'
-                : 'Awaiting Acceptance'}
+              {request.status === 'accepted' ? 'Navigate to Stop' : 'Awaiting Acceptance'}
             </Text>
-            {request.stop?.name && (
-              <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>
-            )}
-            {eta && request.status !== 'pending' && (
-              <Text style={styles.etaText}>ETA: {eta}</Text>
-            )}
+            {request.stop?.name && <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>}
+            {eta && request.status !== 'pending' && <Text style={styles.etaText}>ETA: {eta}</Text>}
 
-            {request.status === 'pending' && !request.driverId && (
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => requestId && updateStatus(requestId, 'accepted')}
-              >
+            {request.status === 'pending' && !request.driverUid && (
+              <TouchableOpacity style={styles.cancelButton} onPress={() => requestId && updateStatus(requestId, 'accepted')}>
                 <Text style={styles.cancelButtonText}>Accept Stop</Text>
               </TouchableOpacity>
             )}
 
-            {request.status === 'accepted' && request.driverId === driverId && (
+            {request.status === 'accepted' && request.driverUid === driverId && (
               <>
                 <TouchableOpacity
                   style={styles.actionButton}
@@ -783,11 +769,13 @@ export default function DriverScreen() {
                 >
                   <Text style={styles.actionButtonText}>Stop Completed</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   style={styles.cancelButton}
                   onPress={async () => {
                     if (requestId) {
-                      await deleteDoc(doc(db, 'stopRequests', requestId));
+                      // ✅ delete is forbidden; update to cancelled is allowed for driver
+                      await updateStatus(requestId, 'cancelled');
                       setRequest(null);
                       setRequestId(null);
                       setRouteCoords([]);
@@ -806,7 +794,7 @@ export default function DriverScreen() {
         )}
       </Animated.View>
 
-      {/* ───── Boarding Count Card ───── */}
+      {/* Boarding Count Card */}
       {showBoardingCard && (
         <Animated.View
           onLayout={(e) => setBoardingCardHeight(e.nativeEvent.layout.height)}
@@ -833,17 +821,18 @@ export default function DriverScreen() {
             >
               <Text style={styles.counterButtonText}>-</Text>
             </TouchableOpacity>
+
             <Text style={styles.countText}>{boardingCount}</Text>
-            <TouchableOpacity
-              style={styles.counterButton}
-              onPress={() => setBoardingCount(boardingCount + 1)}
-            >
+
+            <TouchableOpacity style={styles.counterButton} onPress={() => setBoardingCount(boardingCount + 1)}>
               <Text style={styles.counterButtonText}>+</Text>
             </TouchableOpacity>
           </View>
+
           <TouchableOpacity style={styles.actionButton} onPress={saveBoardingCount}>
             <Text style={styles.actionButtonText}>Save</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.cancelButton}
             onPress={() => {
@@ -874,12 +863,7 @@ function getNearestStop(lat: number, lon: number) {
 }
 
 // Haversine distance (meters)
-function getDistanceInMeters(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-) {
+function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (value: number) => (value * Math.PI) / 180;
   const R = 6371000;
   const dLat = toRad(lat2 - lat1);
@@ -892,11 +876,8 @@ function getDistanceInMeters(
 }
 
 const styles = StyleSheet.create({
-  map: {
-    flex: 1,
-  },
+  map: { flex: 1 },
 
-  // Bottom-right share button
   bottomRightButtonContainer: {
     position: 'absolute',
     bottom: 20,
@@ -926,7 +907,6 @@ const styles = StyleSheet.create({
     zIndex: 500,
   },
 
-  // Banner if offline
   banner: {
     position: 'absolute',
     top: 80,
@@ -959,22 +939,10 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 10,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  cardSubtitle: {
-    fontSize: 14,
-    color: '#555',
-    marginBottom: 4,
-  },
-  etaText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: PRIMARY_COLOR,
-    marginBottom: 12,
-  },
+  cardTitle: { fontSize: 18, fontWeight: '600', marginBottom: 6 },
+  cardSubtitle: { fontSize: 14, color: '#555', marginBottom: 4 },
+  etaText: { fontSize: 14, fontWeight: '500', color: PRIMARY_COLOR, marginBottom: 12 },
+
   actionButton: {
     backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
@@ -982,11 +950,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
-  actionButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
-  },
+  actionButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
+
   cancelButton: {
     backgroundColor: PRIMARY_COLOR,
     borderRadius: 8,
@@ -994,16 +959,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
-  cancelButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  noRideText: {
-    fontSize: 16,
-    color: '#888',
-    textAlign: 'center',
-  },
+  cancelButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
+
+  noRideText: { fontSize: 16, color: '#888', textAlign: 'center' },
 
   counterRow: {
     flexDirection: 'row',
@@ -1019,14 +977,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  counterButtonText: {
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  countText: {
-    fontSize: 24,
-    marginHorizontal: 20,
-    fontWeight: '500',
-  },
+  counterButtonText: { color: '#fff', fontSize: 24, fontWeight: '600' },
+  countText: { fontSize: 24, marginHorizontal: 20, fontWeight: '500' },
 });

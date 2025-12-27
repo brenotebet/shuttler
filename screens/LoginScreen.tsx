@@ -10,12 +10,16 @@ import {
   Switch,
   StyleSheet,
   TouchableWithoutFeedback,
+  Image,
 } from 'react-native';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  type User,
 } from 'firebase/auth';
-import { auth } from '../firebase/firebaseconfig';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase/firebaseconfig';
+
 import { signInWithQuickLaunch } from '../quicklaunch/quicklaunchAuth';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -26,10 +30,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import FormField from '../components/FormField';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
-import {
-  persistSamlHandoffFromUrl,
-  trySamlHandoffLogin,
-} from '../src/auth/samlAuth';
+import { persistSamlHandoffFromUrl, trySamlHandoffLogin } from '../src/auth/samlAuth';
 import * as Linking from 'expo-linking';
 import InfoBanner from '../components/InfoBanner';
 
@@ -43,73 +44,128 @@ type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Login'>;
 };
 
+async function upsertUserProfile(user: User, role: 'student' | 'driver' | 'admin') {
+  // NOTE: merge:true so we never wipe existing fields
+  await setDoc(
+    doc(db, 'users', user.uid),
+    {
+      uid: user.uid,
+      email: user.email ?? null,
+      role,
+      lastLoginAt: serverTimestamp(),
+      // createdAt only set on first create by using merge + checking not possible in client rules;
+      // fine to always send; serverTimestamp will just overwrite, but that's okay for now.
+      createdAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
 export default function LoginScreen({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
   const [isDriver, setIsDriver] = useState(false);
-  const { setDriverId } = useDriver();
+
   const [isCheckingSaml, setIsCheckingSaml] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const finishStudentLogin = useCallback(
+    async (user: User) => {
+      await upsertUserProfile(user, 'student');
+      navigation.replace('StudentHome');
+    },
+    [navigation]
+  );
 
   const handleLogin = useCallback(async () => {
+    if (isSubmitting) return;
+
     const trimmedEmail = email.trim();
     const trimmedPassword = password.trim();
 
-    if (isDriver) {
-      if (adminAccounts[trimmedEmail] === trimmedPassword) {
-        setDriverId(trimmedEmail);
+    // TEMP driver gate (NOT secure) — keep for demo/testing only.
+      if (isDriver) {
+      try {
+        setIsSubmitting(true);
+
+        const cred = await signInWithEmailAndPassword(
+          auth,
+          trimmedEmail,
+          trimmedPassword
+        );
+
+        await upsertUserProfile(cred.user, 'driver');
+
         navigation.replace('DriverHome');
-      } else {
-        showAlert('Invalid driver credentials');
+      } catch (err: any) {
+        showAlert(err?.message ?? 'Driver login failed');
+      } finally {
+        setIsSubmitting(false);
       }
       return;
-    }
+  }
 
-    if (!trimmedEmail.endsWith('@mckendree.edu')) {
-      showAlert('Only McKendree emails are allowed.');
-      return;
-    }
 
     try {
-      await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-      navigation.replace('StudentHome');
-    } catch (err: any) {
-      if (err.code === 'auth/user-not-found') {
-        try {
-          await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-          navigation.replace('StudentHome');
-        } catch (e: any) {
-          showAlert(e.message, 'Error creating account');
+      setIsSubmitting(true);
+
+      try {
+        const cred = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+        await finishStudentLogin(cred.user);
+      } catch (err: any) {
+        if (err?.code === 'auth/user-not-found') {
+          const cred = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+          await finishStudentLogin(cred.user);
+        } else {
+          throw err;
         }
-      } else {
-        showAlert(err.message, 'Login Error');
       }
+    } catch (err: any) {
+      showAlert(err?.message ?? 'Unknown error', 'Login Error');
+    } finally {
+      setIsSubmitting(false);
     }
-  }, [email, password, isDriver, navigation, setDriverId]);
+  }, [email, password, isDriver, navigation, finishStudentLogin, isSubmitting]);
 
   const handleQuickLaunch = useCallback(async () => {
+    if (isSubmitting) return;
     try {
-      await signInWithQuickLaunch();
-      navigation.replace('StudentHome');
+      setIsSubmitting(true);
+      const user = await signInWithQuickLaunch(); // should return Firebase user or sign in under the hood
+      // If your function doesn't return a user, use auth.currentUser
+      const resolved = (user as any)?.user ?? auth.currentUser;
+      if (!resolved) throw new Error('SSO completed but no Firebase session found.');
+      await finishStudentLogin(resolved);
     } catch (e: any) {
-      showAlert(e.message, 'SSO Error');
+      showAlert(e?.message ?? 'Unknown error', 'SSO Error');
+    } finally {
+      setIsSubmitting(false);
     }
-  }, [navigation]);
+  }, [finishStudentLogin, isSubmitting]);
 
   const handleSchoolSso = useCallback(async () => {
+    if (isSubmitting) return;
     try {
+      setIsSubmitting(true);
+
       const signedIn = await trySamlHandoffLogin();
       if (signedIn) {
-        navigation.replace('StudentHome');
+        const resolved = auth.currentUser;
+        if (!resolved) throw new Error('School SSO completed but no Firebase session found.');
+        await finishStudentLogin(resolved);
       } else {
         showAlert(
           'Open the shuttle app from the school app to reuse your SSO session.',
-          'Waiting for school SSO',
+          'Waiting for school SSO'
         );
       }
     } catch (e: any) {
-      showAlert(e.message, 'School SSO Error');
+      showAlert(e?.message ?? 'Unknown error', 'School SSO Error');
+    } finally {
+      setIsSubmitting(false);
     }
-  }, [navigation]);
+  }, [finishStudentLogin, isSubmitting]);
 
   useEffect(() => {
     let isMounted = true;
@@ -118,14 +174,18 @@ export default function LoginScreen({ navigation }: Props) {
       try {
         const signedIn = await trySamlHandoffLogin();
         if (signedIn && isMounted) {
-          navigation.replace('StudentHome');
+          const resolved = auth.currentUser;
+          if (resolved) {
+            await upsertUserProfile(resolved, 'student');
+            navigation.replace('StudentHome');
+          } else {
+            navigation.replace('StudentHome');
+          }
         }
       } catch (e: any) {
-        showAlert(e.message, 'School SSO Error');
+        showAlert(e?.message ?? 'Unknown error', 'School SSO Error');
       } finally {
-        if (isMounted) {
-          setIsCheckingSaml(false);
-        }
+        if (isMounted) setIsCheckingSaml(false);
       }
     };
 
@@ -136,10 +196,14 @@ export default function LoginScreen({ navigation }: Props) {
       try {
         const signedIn = await trySamlHandoffLogin(url);
         if (signedIn && isMounted) {
+          const resolved = auth.currentUser;
+          if (resolved) {
+            await upsertUserProfile(resolved, 'student');
+          }
           navigation.replace('StudentHome');
         }
       } catch (e: any) {
-        showAlert(e.message, 'School SSO Error');
+        showAlert(e?.message ?? 'Unknown error', 'School SSO Error');
       }
     });
 
@@ -158,10 +222,12 @@ export default function LoginScreen({ navigation }: Props) {
         >
           <View style={styles.content}>
             <View style={styles.hero}>
-              <Text style={styles.brand}>BogeyBus</Text>
-              <Text style={styles.subtitle}>
-                Seamless rides for students and drivers alike.
-              </Text>
+              {/* Prefer PNG/JPG for reliability */}
+              <Image
+                source={require('../assets/mck.avif')}
+                style={styles.logo}
+                resizeMode="contain"
+              />
             </View>
 
             <InfoBanner
@@ -170,6 +236,15 @@ export default function LoginScreen({ navigation }: Props) {
               description="Use your @mckendree.edu email to sign in. Toggle Driver mode for bus staff, or tap Quick Launch / School SSO to reuse your campus login."
               style={styles.helperBanner}
             />
+
+            {isDriver && (
+              <View style={styles.driverWarning}>
+                <Text style={styles.driverWarningText}>
+                  Driver mode is currently a temporary demo login. For production, drivers will use
+                  SSO/Firebase Auth and role-based access.
+                </Text>
+              </View>
+            )}
 
             <View style={styles.card}>
               <FormField
@@ -200,17 +275,18 @@ export default function LoginScreen({ navigation }: Props) {
               </View>
 
               <AppButton
-                label="Login / Sign Up"
+                label={isSubmitting ? 'Please wait…' : 'Login / Sign Up'}
                 onPress={handleLogin}
                 style={styles.primaryButton}
+                disabled={isSubmitting}
               />
 
               <AppButton
-                label="Use School SSO (SAML)"
+                label={isCheckingSaml ? 'Checking SSO…' : 'Use School SSO (SAML)'}
                 onPress={handleSchoolSso}
                 variant="secondary"
                 style={styles.secondaryButton}
-                disabled={isCheckingSaml}
+                disabled={isCheckingSaml || isSubmitting}
               />
 
               <AppButton
@@ -218,6 +294,7 @@ export default function LoginScreen({ navigation }: Props) {
                 onPress={handleQuickLaunch}
                 variant="secondary"
                 style={styles.secondaryButton}
+                disabled={isSubmitting}
               />
             </View>
           </View>
@@ -235,21 +312,23 @@ const styles = StyleSheet.create({
   },
   hero: {
     alignItems: 'center',
-    marginBottom: spacing.section * 1.5,
-  },
-  brand: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: PRIMARY_COLOR,
-  },
-  subtitle: {
-    marginTop: 8,
-    fontSize: 16,
-    textAlign: 'center',
-    color: '#4b5563',
+    marginBottom: spacing.section,
   },
   helperBanner: {
     marginBottom: spacing.section,
+  },
+  driverWarning: {
+    backgroundColor: '#fff7ed',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: spacing.section,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+  },
+  driverWarningText: {
+    color: '#9a3412',
+    fontSize: 13,
+    lineHeight: 18,
   },
   card: {
     backgroundColor: '#fff',
@@ -272,5 +351,10 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     marginTop: spacing.item / 2,
+  },
+  logo: {
+    width: 140,
+    height: 140,
+    marginBottom: spacing.item,
   },
 });

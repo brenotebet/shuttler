@@ -1,3 +1,5 @@
+// src/screens/RequestStopScreen.tsx
+
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
@@ -22,14 +24,20 @@ export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
   { id: 'stop2', name: 'PAC', latitude: 38.60790, longitude: -89.81561 },
   { id: 'stop3', name: 'Performance Center', latitude: 38.59875, longitude: -89.82447 },
-  { id: 'stop4', name: 'Carnegie Hall', latitude: 38.60699, longitude: -89.81709},
-  { id: 'stop5', name: 'McKendree West Clubhouse', latitude: 38.60573, longitude: -89.82468},
+  { id: 'stop4', name: 'Carnegie Hall', latitude: 38.60699, longitude: -89.81709 },
+  { id: 'stop5', name: 'McKendree West Clubhouse', latitude: 38.60573, longitude: -89.82468 },
 ];
 
 export default function RequestStopScreen({ navigation }: { navigation: any }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [busOnline, setBusOnline] = useState(false);
 
+  const user = auth.currentUser;
+
+  // ───────────────────────────────────────────────────
+  // 1) Listen for active buses (student can see bus even
+  //    without requesting a stop)
+  // ───────────────────────────────────────────────────
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'buses'), (snapshot) => {
       let anyBusOnline = false;
@@ -37,8 +45,7 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         const lastUpdated = new Date(data.timestamp?.toDate?.() || data.timestamp);
-        const now = new Date();
-        const secondsAgo = (now.getTime() - lastUpdated.getTime()) / 1000;
+        const secondsAgo = (Date.now() - lastUpdated.getTime()) / 1000;
 
         if (secondsAgo < 15) {
           anyBusOnline = true;
@@ -51,26 +58,39 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
     return () => unsub();
   }, []);
 
+  // ───────────────────────────────────────────────────
+  // 2) Create stop request (SECURE)
+  // ───────────────────────────────────────────────────
   const handleRequest = async () => {
-    const [existing, accepted] = await Promise.all([
-      getDocs(
-        query(
-          collection(db, 'stopRequests'),
-          where('studentEmail', '==', auth.currentUser?.email),
-          where('status', 'in', ['pending', 'accepted'])
-        )
-      ),
-      getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'accepted'))),
-    ]);
+    if (!user) {
+      showAlert('You must be logged in to request a stop.');
+      return;
+    }
 
-    if (!existing.empty) {
+    const studentUid = user.uid;
+
+    // A student may only have ONE active request
+    const existingSnap = await getDocs(
+      query(
+        collection(db, 'stopRequests'),
+        where('studentUid', '==', studentUid),
+        where('status', 'in', ['pending', 'accepted'])
+      )
+    );
+
+    if (!existingSnap.empty) {
       showAlert('You already have a stop in progress.');
       navigation.goBack();
       return;
     }
 
-    if (!accepted.empty) {
-      showAlert('A stop has already been requested.');
+    // Only ONE accepted request system-wide
+    const acceptedSnap = await getDocs(
+      query(collection(db, 'stopRequests'), where('status', '==', 'accepted'))
+    );
+
+    if (!acceptedSnap.empty) {
+      showAlert('A stop has already been accepted by a driver.');
       navigation.goBack();
       return;
     }
@@ -79,14 +99,16 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 
     try {
       await addDoc(collection(db, 'stopRequests'), {
-        studentEmail: auth.currentUser?.email,
+        studentUid,
+        studentEmail: user.email ?? null, // display only
         stop: {
+          id: selectedStop.id,
+          name: selectedStop.name,
           latitude: selectedStop.latitude,
           longitude: selectedStop.longitude,
-          name: selectedStop.name,
         },
         status: 'pending',
-        timestamp: serverTimestamp(),
+        createdAt: serverTimestamp(),
       });
 
       showAlert('Stop requested successfully!');
@@ -96,13 +118,16 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
     }
   };
 
+  // ───────────────────────────────────────────────────
+  // 3) UI
+  // ───────────────────────────────────────────────────
   if (!busOnline) {
     return (
       <ScreenContainer>
         <View style={styles.centerContent}>
           <Text style={styles.warningTitle}>No buses online</Text>
           <Text style={styles.warningText}>
-            Please try again in a few moments once a driver is available.
+            Please try again once a driver is available.
           </Text>
         </View>
       </ScreenContainer>
@@ -121,21 +146,22 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
       <InfoBanner
         icon="notifications-active"
         title="Keep your ride moving"
-        description="You can only have one active pickup at a time. We’ll alert you as soon as a driver accepts."
+        description="You can only have one active pickup at a time."
         style={styles.helperBanner}
       />
 
       <View style={styles.card}>
         <Text style={styles.heading}>Pickup location</Text>
+
         <View style={styles.pickerWrapper}>
           <Picker
             selectedValue={selectedIndex}
-            onValueChange={(itemValue) => setSelectedIndex(itemValue)}
+            onValueChange={(value) => setSelectedIndex(value)}
             style={styles.picker}
             dropdownIconColor={PRIMARY_COLOR}
           >
             {LOCATIONS.map((loc, index) => (
-              <Picker.Item label={loc.name} value={index} key={loc.name} />
+              <Picker.Item key={loc.id} label={loc.name} value={index} />
             ))}
           </Picker>
         </View>

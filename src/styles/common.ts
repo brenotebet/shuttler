@@ -1,6 +1,6 @@
 export const spacing = {
   screenPadding: 24,
-  section: 16,
+  section: 10,
   item: 12,
 };
 

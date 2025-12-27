@@ -1,10 +1,16 @@
+// src/screens/DriverMenuScreen.tsx
+
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
+
 import { useDriver } from '../drivercontext/DriverContext';
 import { useLocationSharing } from '../location/LocationContext';
+import { signOut } from 'firebase/auth';
+import { auth } from '../firebase/firebaseconfig';
+
 import MenuItem from '../components/MenuItem';
 import ScreenContainer from '../components/ScreenContainer';
 import { PRIMARY_COLOR } from '../src/constants/theme';
@@ -12,19 +18,27 @@ import { spacing } from '../src/styles/common';
 
 export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { logout } = useDriver();
+  const { logout: clearDriverContext } = useDriver();
   const { stopSharing, isSharing } = useLocationSharing();
 
   const handleLogout = async () => {
     try {
+      // 1️⃣ Stop location sharing FIRST
       if (isSharing) {
         await stopSharing();
       }
+
+      // 2️⃣ Clear local driver UI state
+      clearDriverContext();
+
+      // 3️⃣ Sign out of Firebase Auth
+      await signOut(auth);
+
+      // ❌ DO NOT navigate manually
+      // StackNavigator will switch to Login automatically
     } catch (err) {
-      console.error('Error stopping sharing on logout', err);
+      console.error('Error during driver logout', err);
     }
-    logout();
-    navigation.replace('Login');
   };
 
   return (
@@ -41,17 +55,20 @@ export default function DriverMenuScreen() {
           description="Take a look at your past completed rides"
           onPress={() => navigation.navigate('DriverHistory')}
         />
+
         <MenuItem
           icon="list"
           title="Requested Rides"
           description="View and manage current ride requests"
           onPress={() => navigation.navigate('AdminDriver')}
         />
+
         <MenuItem
           icon="logout"
           title="Logout"
           description="Sign out of your account"
           onPress={handleLogout}
+          variant="danger"
         />
       </View>
     </ScreenContainer>

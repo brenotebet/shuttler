@@ -5,6 +5,7 @@ import { LocationProvider } from './location/LocationContext';
 import * as Notifications from 'expo-notifications';
 import { DriverProvider } from './drivercontext/DriverContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AuthProvider } from './src/auth/AuthProvider';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -23,13 +24,15 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <DriverProvider>
-        <LocationProvider>
-          <NavigationContainer>
-            <StackNavigator />
-          </NavigationContainer>
-        </LocationProvider>
-      </DriverProvider>
+      <AuthProvider>
+        <DriverProvider>
+          <LocationProvider>
+            <NavigationContainer>
+              <StackNavigator />
+            </NavigationContainer>
+          </LocationProvider>
+        </DriverProvider>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

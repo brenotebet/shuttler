@@ -1,52 +1,40 @@
 // drivercontext/DriverContext.tsx
-
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth } from '../firebase/firebaseconfig';
 
 type DriverContextType = {
-  driverId: string | null;
-  setDriverId: (id: string | null) => void;
-  logout: () => void;
+  driverId: string | null;     // keep name to minimize refactors; this now equals auth.uid
+  loading: boolean;
+  logout: () => Promise<void>;
 };
 
 const DriverContext = createContext<DriverContextType>({
   driverId: null,
-  setDriverId: () => {},
-  logout: () => {},
+  loading: true,
+  logout: async () => {},
 });
 
-// Named export:
-export const useDriver = () => {
-  return useContext(DriverContext);
-};
+export const useDriver = () => useContext(DriverContext);
 
 export const DriverProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [driverId, setDriverIdState] = useState<string | null>(null);
+  const [driverId, setDriverId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      const stored = await AsyncStorage.getItem('driverId');
-      if (stored) setDriverIdState(stored);
-    })();
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setDriverId(user?.uid ?? null); // ✅ ONLY source of truth
+      setLoading(false);
+    });
+    return () => unsub();
   }, []);
 
-  const setDriverId = useCallback((id: string | null) => {
-    setDriverIdState(id);
-    if (id) {
-      AsyncStorage.setItem('driverId', id);
-    } else {
-      AsyncStorage.removeItem('driverId');
-    }
-  }, []);
+  const logout = async () => {
+    await signOut(auth); // ✅ clears auth + token
+    // state will reset via onAuthStateChanged
+  };
 
-  const logout = useCallback(() => {
-    setDriverIdState(null);
-    AsyncStorage.removeItem('driverId');
-  }, []);
+  const value = useMemo(() => ({ driverId, loading, logout }), [driverId, loading]);
 
-  return (
-    <DriverContext.Provider value={{ driverId, setDriverId, logout }}>
-      {children}
-    </DriverContext.Provider>
-  );
+  return <DriverContext.Provider value={value}>{children}</DriverContext.Provider>;
 };

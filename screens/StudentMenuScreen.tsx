@@ -1,36 +1,26 @@
+// src/screens/StudentMenuScreen.tsx
+
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import {
-  BottomTabNavigationProp,
-} from '@react-navigation/bottom-tabs';
-import {
-  CompositeNavigationProp,
-  useNavigation,
-} from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../navigation/StackNavigator';
-import { StudentTabParamList } from '../tabs/StudentTabs';
-import { auth } from '../firebase/firebaseconfig';
-import MenuItem from '../components/MenuItem';
+import { signOut } from 'firebase/auth';
+
 import ScreenContainer from '../components/ScreenContainer';
+import MenuItem from '../components/MenuItem';
+import { auth } from '../firebase/firebaseconfig';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { spacing } from '../src/styles/common';
 
 export default function StudentMenuScreen() {
-  const navigation = useNavigation<
-    CompositeNavigationProp<
-      BottomTabNavigationProp<StudentTabParamList, 'Menu'>,
-      NativeStackNavigationProp<RootStackParamList>
-    >
-  >();
-
   const handleLogout = async () => {
     try {
-      await auth.signOut();
+      await signOut(auth);
     } catch (err) {
       console.error('Error signing out', err);
     }
-    navigation.replace('Login');
+  };
+
+  const handleHistoryPress = () => {
+    console.log('Student history pressed');
   };
 
   return (
@@ -45,8 +35,9 @@ export default function StudentMenuScreen() {
           icon="history"
           title="History"
           description="Take a look at your past completed rides"
-          onPress={() => navigation.navigate('StudentHistory')}
+          onPress={handleHistoryPress}
         />
+
         <MenuItem
           icon="logout"
           title="Logout"

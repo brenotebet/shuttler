@@ -69,6 +69,8 @@ const SIDEBAR_WIDTH = 220;
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const user = auth.currentUser;
+const studentUid = user?.uid ?? null;
 
 const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -298,21 +300,23 @@ export default function MapScreen() {
     });
 
     // Subscribe to this student's stopRequests
-    unsubOwn = onSnapshot(
-      query(
-        collection(db, 'stopRequests'),
-        where('studentEmail', '==', auth.currentUser?.email),
-        where('status', 'in', ['pending', 'accepted'])
-      ),
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const docSnap = snapshot.docs[0];
-          setOwnRequest({ id: docSnap.id, ...(docSnap.data() as any) });
-        } else {
-          setOwnRequest(null);
+    if (studentUid) {
+      unsubOwn = onSnapshot(
+        query(
+          collection(db, 'stopRequests'),
+          where('studentUid', '==', studentUid),
+          where('status', 'in', ['pending', 'accepted'])
+        ),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const docSnap = snapshot.docs[0];
+            setOwnRequest({ id: docSnap.id, ...(docSnap.data() as any) });
+          } else {
+            setOwnRequest(null);
+          }
         }
-      }
-    );
+      );
+    }
 
     // Also subscribe to any globally accepted stop request
     unsubAccepted = onSnapshot(
@@ -345,7 +349,7 @@ export default function MapScreen() {
       setDriverId(ownRequest.driverId || null);
     } else if (
       acceptedRequest &&
-      acceptedRequest.studentEmail !== auth.currentUser?.email
+      acceptedRequest.studentUid !== studentUid
     ) {
       setRequest(acceptedRequest);
       setRequestId(acceptedRequest.id);
@@ -502,7 +506,7 @@ export default function MapScreen() {
   // 5) Auto‐switch tabs when request status changes
   useEffect(() => {
     if (request?.status === 'completed') {
-      navigation.navigate('StudentHistory');
+      navigation.getParent()?.navigate('StudentHistory');
     }
   }, [request?.status, navigation]);
 
@@ -631,16 +635,24 @@ export default function MapScreen() {
     }
 
     try {
-      await addDoc(collection(db, 'stopRequests'), {
-        studentEmail: auth.currentUser?.email,
+      if (!studentUid) {
+  showAlert('You must be logged in to request a stop.');
+  return;
+}
+
+    await addDoc(collection(db, 'stopRequests'), {
+        studentUid,
+        studentEmail: user?.email ?? null, // display only
         stop: {
+          id: selectedStop.id,
+          name: selectedStop.name,
           latitude: selectedStop.latitude,
           longitude: selectedStop.longitude,
-          name: selectedStop.name,
         },
         status: 'pending',
-        timestamp: serverTimestamp(),
+        createdAt: serverTimestamp(),
       });
+
       showAlert('Stop requested successfully!');
       setShowLocationList(false);
       setSelectedStopIndex(null);
@@ -866,7 +878,8 @@ export default function MapScreen() {
               <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>
             )}
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
-            {request.studentEmail === auth.currentUser?.email && (
+            {request.studentUid === studentUid && (
+
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={async () => {
