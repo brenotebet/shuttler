@@ -44,7 +44,12 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        const lastUpdated = new Date(data.timestamp?.toDate?.() || data.timestamp);
+        const lastUpdated =
+          data?.updatedAt?.toDate?.() ||
+          data?.lastSeen?.toDate?.() ||
+          (typeof data?.updatedAt === 'string' ? new Date(data.updatedAt) : null) ||
+          (typeof data?.lastSeen === 'string' ? new Date(data.lastSeen) : null) ||
+          new Date();
         const secondsAgo = (Date.now() - lastUpdated.getTime()) / 1000;
 
         if (secondsAgo < 15) {

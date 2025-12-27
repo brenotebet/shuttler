@@ -51,11 +51,10 @@ export default function AdminDriverScreen() {
       });
 
       // Filter: show requests that belong to this driver OR are pending
-      const myList = arr.filter(
-        (r) =>
-          r.driverId === driverId ||
-          (r.status === 'pending' && !r.driverId)
-      );
+      const myList = arr.filter((r) => {
+        const assignedDriver = r.driverUid || r.driverId;
+        return assignedDriver === driverId || (r.status === 'pending' && !assignedDriver);
+      });
       setRequests(myList);
       setLoading(false);
     });
@@ -68,10 +67,11 @@ export default function AdminDriverScreen() {
     try {
       const updateData: any = { status: newStatus };
       if (newStatus === 'accepted' && driverId) {
-        updateData.driverId = driverId;
+        updateData.driverUid = driverId;
+        updateData.acceptedAt = serverTimestamp();
       }
       if (newStatus === 'completed') {
-        updateData.completedTimestamp = serverTimestamp();
+        updateData.completedAt = serverTimestamp();
       }
        await updateDoc(doc(db, 'stopRequests', id), updateData);
     } catch (err: any) {

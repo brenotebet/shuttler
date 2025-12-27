@@ -272,7 +272,9 @@ export default function DriverScreen() {
           });
 
         const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
-        const visibleBuses = buses.filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS);
+        const visibleBuses = buses
+          .filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS)
+          .filter((bus) => bus.id === driverId);
 
         setBusOnline(freshBuses.length > 0);
 
