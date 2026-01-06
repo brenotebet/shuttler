@@ -1,8 +1,36 @@
+const isProductionBuild =
+  process.env.NODE_ENV === 'production' || (typeof __DEV__ !== 'undefined' && !__DEV__);
+
+const handleMissingEnvVar = (key: string): string => {
+  const message = `Environment variable ${key} is not defined.`;
+  if (isProductionBuild) {
+    throw new Error(message);
+  }
+  console.warn(message);
+  return '';
+};
+
 const getPublicEnvVar = (key: string): string => {
   const value = process.env[key];
   if (!value) {
-    console.warn(`Environment variable ${key} is not defined.`);
-    return '';
+    return handleMissingEnvVar(key);
+  }
+
+  return value;
+};
+
+const getSecureUrlEnvVar = (key: string): string => {
+  const value = getPublicEnvVar(key);
+  if (!value) {
+    return value;
+  }
+
+  if (!value.startsWith('https://')) {
+    const message = `Environment variable ${key} must be a secure HTTPS URL.`;
+    if (isProductionBuild) {
+      throw new Error(message);
+    }
+    console.warn(message);
   }
 
   return value;
@@ -10,18 +38,21 @@ const getPublicEnvVar = (key: string): string => {
 
 export const GOOGLE_MAPS_API_KEY = getPublicEnvVar('EXPO_PUBLIC_GOOGLE_MAPS_API_KEY');
 
-// QuickLaunch OIDC configuration. Replace the placeholder values with your
-// institution specific endpoints and client information.
-export const QUICKLAUNCH_AUTHORIZATION_ENDPOINT =
-  'https://YOUR-QUICKLAUNCH-DOMAIN/oidc/authorize';
-export const QUICKLAUNCH_TOKEN_ENDPOINT =
-  'https://YOUR-QUICKLAUNCH-DOMAIN/oidc/token';
-export const QUICKLAUNCH_CLIENT_ID = 'YOUR-CLIENT-ID';
+// QuickLaunch OIDC configuration. These must point at your institution-specific
+// endpoints and client information.
+export const QUICKLAUNCH_AUTHORIZATION_ENDPOINT = getSecureUrlEnvVar(
+  'EXPO_PUBLIC_QUICKLAUNCH_AUTHORIZATION_ENDPOINT',
+);
+export const QUICKLAUNCH_TOKEN_ENDPOINT = getSecureUrlEnvVar(
+  'EXPO_PUBLIC_QUICKLAUNCH_TOKEN_ENDPOINT',
+);
+export const QUICKLAUNCH_CLIENT_ID = getPublicEnvVar('EXPO_PUBLIC_QUICKLAUNCH_CLIENT_ID');
 
-// Endpoint on your backend that exchanges a QuickLaunch token for a Firebase
-// custom token.
-export const QUICKLAUNCH_TOKEN_EXCHANGE_URL =
-  'https://YOUR-BACKEND/quicklaunch/exchange';
+// Endpoint on your backend that validates QuickLaunch auth codes, verifies the
+// PKCE verifier, and mints Firebase custom tokens.
+export const QUICKLAUNCH_TOKEN_EXCHANGE_URL = getSecureUrlEnvVar(
+  'EXPO_PUBLIC_QUICKLAUNCH_TOKEN_EXCHANGE_URL',
+);
 
 // SAML handoff configuration for the school app SSO flow.
 // The exchange URL should validate the SAML assertion or one-time token and
