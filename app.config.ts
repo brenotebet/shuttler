@@ -10,6 +10,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: 'bogey-bus',
   slug: 'bogey-bus',
   version: '1.0.0',
+  scheme: 'bogeybus',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'light',
@@ -36,6 +37,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     config: {
       googleMaps: { apiKey: googleMapsApiKey },
     },
+    intentFilters: [
+      {
+        action: 'VIEW',
+        category: ['BROWSABLE', 'DEFAULT'],
+        data: [{ scheme: 'bogeybus', host: 'sso' }],
+      },
+    ],
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#ffffff',
