@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+// DriverScreen.tsx
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SafeAreaView,
   View,
@@ -32,7 +33,9 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
-  addDoc,
+  limit,
+  getDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -42,7 +45,6 @@ import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import MapMarker from '../components/MapMarker';
 import { LOCATIONS } from './RequestStopScreen';
 import { fetchDirections } from '../src/utils/directions';
-
 
 function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -73,15 +75,103 @@ const STALE_WINDOW_SECONDS = 90;
 
 type StopRequestStatus = 'pending' | 'accepted' | 'completed' | 'cancelled';
 
+async function getMyRole(uid: string) {
+  const snap = await getDoc(doc(db, 'users', uid));
+  return snap.exists() ? (snap.data() as any)?.role ?? null : null;
+}
+
+function isDriverRole(role: any) {
+  return role === 'driver' || role === 'admin';
+}
+
+/** ─────────────────────────────────────────────────────────────
+ * Bounds helpers (stops-based) — with 25% padding
+ * ───────────────────────────────────────────────────────────── */
+type Bounds = { latMin: number; latMax: number; lonMin: number; lonMax: number };
+
+function getStopsBounds(stops = LOCATIONS): Bounds {
+  let latMin = Infinity,
+    latMax = -Infinity,
+    lonMin = Infinity,
+    lonMax = -Infinity;
+
+  stops.forEach((s) => {
+    latMin = Math.min(latMin, s.latitude);
+    latMax = Math.max(latMax, s.latitude);
+    lonMin = Math.min(lonMin, s.longitude);
+    lonMax = Math.max(lonMax, s.longitude);
+  });
+
+  if (
+    !Number.isFinite(latMin) ||
+    !Number.isFinite(latMax) ||
+    !Number.isFinite(lonMin) ||
+    !Number.isFinite(lonMax)
+  ) {
+    return { latMin: 0, latMax: 0, lonMin: 0, lonMax: 0 };
+  }
+
+  return { latMin, latMax, lonMin, lonMax };
+}
+
+function boundsRegion(bounds: Bounds, pad = 0.9): Region {
+  const latCenter = (bounds.latMin + bounds.latMax) / 2;
+  const lonCenter = (bounds.lonMin + bounds.lonMax) / 2;
+
+  const latDelta = (bounds.latMax - bounds.latMin) * (1 + pad);
+  const lonDelta = (bounds.lonMax - bounds.lonMin) * (1 + pad);
+
+  return {
+    latitude: latCenter,
+    longitude: lonCenter,
+    latitudeDelta: Math.min(Math.max(latDelta, 0.002), MAX_LAT_DELTA),
+    longitudeDelta: Math.min(Math.max(lonDelta, 0.002), MAX_LON_DELTA),
+  };
+}
+
+function clampToBounds(r: Region, b: Bounds): Region {
+  return {
+    latitude: Math.min(Math.max(r.latitude, b.latMin), b.latMax),
+    longitude: Math.min(Math.max(r.longitude, b.lonMin), b.lonMax),
+    latitudeDelta: Math.min(r.latitudeDelta, MAX_LAT_DELTA),
+    longitudeDelta: Math.min(r.longitudeDelta, MAX_LON_DELTA),
+  };
+}
+
+type CameraMode = 'free' | 'overview';
+
 export default function DriverScreen() {
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
   const { driverId, loading } = useDriver();
   if (loading) return null;
-  if (!driverId) return null; // This MUST be auth.uid
+  if (!driverId) return null; // MUST be auth.uid
+
+  const STOPS_BOUNDS = useMemo(() => getStopsBounds(LOCATIONS), []);
+  const INITIAL_REGION = useMemo(() => boundsRegion(STOPS_BOUNDS, 0.25), [STOPS_BOUNDS]); // ✅ 25% padding
 
   // 1) Map region
   const [region, setRegion] = useState<Region>(DEFAULT_REGION);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
+
+  // ✅ Camera UX: fit once + don’t fight user
+  const [cameraMode, setCameraMode] = useState<CameraMode>('overview');
+  const didInitialFitRef = useRef(false);
+
+  const userInteractingRef = useRef(false);
+  const lastUserInteractionRef = useRef(0);
+  const markUserInteraction = () => {
+    lastUserInteractionRef.current = Date.now();
+    userInteractingRef.current = true;
+  };
+  const recentlyInteracted = (ms = 2500) => Date.now() - lastUserInteractionRef.current < ms;
+
+  const lastProgrammaticMoveRef = useRef(0);
+  const markProgrammaticMove = () => {
+    lastProgrammaticMoveRef.current = Date.now();
+  };
+  const isProgrammaticMove = () => Date.now() - lastProgrammaticMoveRef.current < 1200;
+
+  const lastAutoFitRequestIdRef = useRef<string | null>(null);
 
   // 2) Current stop request assigned to this driver
   const [request, setRequest] = useState<any>(null);
@@ -89,10 +179,9 @@ export default function DriverScreen() {
   const [requests, setRequests] = useState<any[]>([]);
 
   // 3) Route polyline coordinates & ETA string
-  const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>(
-    []
-  );
+  const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [eta, setEta] = useState<string | null>(null);
+  const fullRouteRef = useRef<Array<{ latitude: number; longitude: number }>>([]);
 
   // 4) AnimatedRegion for each bus-ID
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
@@ -109,7 +198,7 @@ export default function DriverScreen() {
     };
   }>({});
 
-  // 5) Slide-up bottom card when a request is active
+  // 5) Slide-up bottom card
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [cardHeight, setCardHeight] = useState(300);
 
@@ -126,34 +215,100 @@ export default function DriverScreen() {
 
   const mapRef = useRef<MapView | null>(null);
 
-  // 7) “Heads-up” flag so we only alert once when near pickup
+  // 7) “Heads-up” flag
   const notifiedRef = useRef(false);
 
   const busIcon = require('../assets/bus-icon.png');
 
+  /** ─────────────────────────────────────────────────────────────
+   * UI helpers: map buttons floating above BOTH bottom cards
+   * ───────────────────────────────────────────────────────────── */
+  const maxBottomCardHeight = Math.min(
+    Math.max(cardHeight || 0, showBoardingCard ? boardingCardHeight || 0 : 0),
+    340,
+  );
+
+  // Base is just above bottom nav / screen safe zone (driver has no tabs, but keep consistent)
+  const baseFloatingBottom = 20 + (request ? maxBottomCardHeight + 10 : 0);
+
+  // If Add Students button is visible (bottom-left), lift the map controls above it
+  // (shareButton is ~44-50px tall; 70 gives comfortable clearance)
+  const mapControlsBottom = baseFloatingBottom + (isSharing && !showBoardingCard ? 70 : 0);
+
+  // Add Students visibility affects where we place map buttons
+  const showAddStudents = isSharing && !showBoardingCard;
+  const fabSideStyle = showAddStudents ? styles.fabWrapBottomRight : styles.fabWrapBottomLeft;
+
+  const centerOnMe = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        showAlert('Permission denied');
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({});
+      const next = clampToBounds(
+        {
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        },
+        STOPS_BOUNDS,
+      );
+
+      setCameraMode('overview');
+      markProgrammaticMove();
+      setRegion(next);
+      mapRef.current?.animateToRegion(next, 500);
+    } catch (e) {
+      console.error('centerOnMe error', e);
+    }
+  };
+
+  const fitStops = () => {
+    setCameraMode('overview');
+    markProgrammaticMove();
+    setRegion(INITIAL_REGION);
+    mapRef.current?.animateToRegion(INITIAL_REGION, 550);
+  };
+
+  const fitActiveRide = () => {
+    if (!request || request.status !== 'accepted' || !request.stop) return;
+
+    const d = lastCoords.current[driverId] || busLocations[driverId];
+    if (!d) return;
+
+    const points = [
+      { latitude: d.latitude, longitude: d.longitude },
+      { latitude: request.stop.latitude, longitude: request.stop.longitude },
+    ];
+
+    // bottom padding accounts for whatever card is visible
+    setCameraMode('overview');
+    markProgrammaticMove();
+    mapRef.current?.fitToCoordinates(points, {
+      edgePadding: { top: 120, right: 70, bottom: maxBottomCardHeight + 220, left: 70 },
+      animated: true,
+    });
+  };
+
   // ───────────────────────────────────────────────────────────────────
-  // Helper: update stop request status (MUST write driverUid for driver updates)
+  // Helper: update stop request status
   // ───────────────────────────────────────────────────────────────────
   const updateStatus = async (id: string, newStatus: StopRequestStatus) => {
     try {
       if (!driverId) throw new Error('Driver ID missing');
 
-      const data: any = { status: newStatus };
+      const data: any = {
+        status: newStatus,
+        driverUid: driverId,
+        statusUpdatedAt: serverTimestamp(),
+      };
 
-      if (newStatus === 'accepted') {
-        data.driverUid = driverId; // ✅ REQUIRED by rules
-        data.acceptedAt = serverTimestamp();
-      }
-
-      if (newStatus === 'completed') {
-        data.driverUid = driverId; // ✅ keep consistent
-        data.completedAt = serverTimestamp();
-      }
-
-      if (newStatus === 'cancelled') {
-        data.driverUid = driverId; // ✅ keep consistent
-        data.cancelledAt = serverTimestamp();
-      }
+      if (newStatus === 'accepted') data.acceptedAt = serverTimestamp();
+      if (newStatus === 'completed') data.completedAt = serverTimestamp();
+      if (newStatus === 'cancelled') data.cancelledAt = serverTimestamp();
 
       await updateDoc(doc(db, 'stopRequests', id), data);
     } catch (err: any) {
@@ -162,7 +317,7 @@ export default function DriverScreen() {
   };
 
   // ───────────────────────────────────────────────────────────────────
-  // Save boarding count to database (driver-only write)
+  // Save boarding count
   // ───────────────────────────────────────────────────────────────────
   const saveBoardingCount = async () => {
     if (!driverId) return;
@@ -172,30 +327,41 @@ export default function DriverScreen() {
       showAlert('Driver location unavailable');
       return;
     }
+
     const nearest = getNearestStop(loc.latitude, loc.longitude);
 
     try {
-      await addDoc(collection(db, 'boardingCounts'), {
-        driverUid: driverId, // ✅ align to UID naming
+      const batch = writeBatch(db);
+
+      const boardingRef = doc(collection(db, 'boardingCounts'));
+      batch.set(boardingRef, {
+        driverUid: driverId,
+        stopRequestId: requestId || null,
+        studentUid: request?.studentUid || null,
+
+        stopId: nearest.id,
+        stopName: nearest.name,
+        stopLat: nearest.latitude,
+        stopLng: nearest.longitude,
+
         count: boardingCount,
-        stop: {
-          id: nearest.id,
-          name: nearest.name,
-          latitude: nearest.latitude,
-          longitude: nearest.longitude,
-        },
-        requestId: requestId || null,
-        studentUid: request?.studentUid || null, // ✅ UID, not email
         createdAt: serverTimestamp(),
       });
 
       if (completeAfterSave && request && requestId && request.status === 'accepted') {
-        await updateStatus(requestId, 'completed');
+        const reqRef = doc(db, 'stopRequests', requestId);
+        batch.update(reqRef, {
+          status: 'completed',
+          driverUid: driverId,
+          completedAt: serverTimestamp(),
+          statusUpdatedAt: serverTimestamp(),
+        });
       }
 
+      await batch.commit();
       showAlert('Boarding saved');
     } catch (err: any) {
-      showAlert(err.message ?? 'Error saving boarding', 'Error saving boarding');
+      showAlert(err?.message ?? 'Error saving boarding', 'Error saving boarding');
     }
 
     setBoardingCount(0);
@@ -204,295 +370,378 @@ export default function DriverScreen() {
   };
 
   // ───────────────────────────────────────────────────────────────────
-  // 1) On mount: request location & subscribe to “buses” + “stopRequests”
+  // On mount: gated subscriptions
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     const uid = auth.currentUser?.uid;
-      if (!uid) {
-        console.warn('DriverScreen: auth.currentUser is null - skipping subscriptions');
-        return;
-      }
-      if (!driverId) {
-        console.warn('DriverScreen: driverId missing - skipping subscriptions');
-        return;
-      }
-      if (driverId !== uid) {
-        console.warn('DriverScreen: driverId != auth.uid - skipping subscriptions', { driverId, uid });
-        return;
-      } 
+    if (!uid) {
+      console.warn('DriverScreen: auth.currentUser is null - skipping subscriptions');
+      return;
+    }
+    if (!driverId) {
+      console.warn('DriverScreen: driverId missing - skipping subscriptions');
+      return;
+    }
+    if (driverId !== uid) {
+      console.warn('DriverScreen: driverId != auth.uid - skipping subscriptions', { driverId, uid });
+      return;
+    }
+
     let unsubBus: (() => void) | undefined;
     let unsubRide: (() => void) | undefined;
+    let cancelled = false;
 
     (async () => {
+      // ✅ Role gate
+      let role: any = null;
+      try {
+        role = await getMyRole(uid);
+      } catch (e: any) {
+        console.error('DriverScreen: failed to read /users role', {
+          uid,
+          code: e?.code,
+          message: e?.message,
+          err: e,
+        });
+        return;
+      }
+
+      if (!isDriverRole(role)) {
+        console.warn('DriverScreen: role not driver/admin, skipping driver subscriptions', { uid, role });
+        return;
+      }
+
+      if (cancelled) return;
+
+      // Location permission / initial region
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         setHasLocationPermission(false);
-        setRegion(DEFAULT_REGION);
+
+        // still show stops region even without location
+        if (!didInitialFitRef.current) {
+          didInitialFitRef.current = true;
+          setCameraMode('overview');
+          markProgrammaticMove();
+          setRegion(INITIAL_REGION);
+          mapRef.current?.animateToRegion(INITIAL_REGION, 450);
+        }
         return;
       }
       setHasLocationPermission(true);
 
-      const loc = await Location.getCurrentPositionAsync({});
-      setRegion({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      });
-    })();
+      // ✅ Start on stop-bounds view once (Uber/Lyft style “service area”)
+      if (!didInitialFitRef.current) {
+        didInitialFitRef.current = true;
+        setCameraMode('overview');
+        markProgrammaticMove();
+        setRegion(INITIAL_REGION);
+        setTimeout(() => mapRef.current?.animateToRegion(INITIAL_REGION, 450), 10);
+      }
 
-    // (b) Subscribe to “buses”
-    unsubBus = onSnapshot(
-      collection(db, 'buses'),
-      (snapshot) => {
-        if (snapshot.metadata.hasPendingWrites) return;
+      // (b) Subscribe to “buses”
+      unsubBus = onSnapshot(
+        collection(db, 'buses'),
+        (snapshot) => {
+          if (snapshot.metadata.hasPendingWrites) return;
 
-        const buses = snapshot.docs
-          .map((docSnap) => {
-            const data: any = docSnap.data();
+          const buses = snapshot.docs
+            .map((docSnap) => {
+              const data: any = docSnap.data();
 
-            // ✅ Your buses write updatedAt/lastSeen (not "timestamp")
-            const ts =
-              data?.updatedAt?.toDate?.() ||
-              data?.lastSeen?.toDate?.() ||
-              (typeof data?.updatedAt === 'string' ? new Date(data.updatedAt) : null) ||
-              (typeof data?.lastSeen === 'string' ? new Date(data.lastSeen) : null) ||
-              new Date();
+              const ts =
+                data?.updatedAt?.toDate?.() ||
+                data?.lastSeen?.toDate?.() ||
+                (typeof data?.updatedAt === 'string' ? new Date(data.updatedAt) : null) ||
+                (typeof data?.lastSeen === 'string' ? new Date(data.lastSeen) : null) ||
+                null;
 
-            return {
-              id: docSnap.id,
-              latitude: data.latitude as number,
-              longitude: data.longitude as number,
-              timestamp: ts as Date,
+              if (!ts || isNaN(ts.getTime())) return null;
+
+              const online = data?.online === true;
+              if (!online) return null;
+              if (typeof data.latitude !== 'number' || typeof data.longitude !== 'number') return null;
+
+              return {
+                id: docSnap.id,
+                latitude: data.latitude as number,
+                longitude: data.longitude as number,
+                timestamp: ts as Date,
+                online,
+              };
+            })
+            .filter(Boolean)
+            .map((bus: any) => {
+              const secondsAgo = (Date.now() - bus.timestamp.getTime()) / 1000;
+              return { ...bus, secondsAgo };
+            });
+
+          const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
+
+          // ✅ Driver screen only animates THIS driver’s bus marker
+          const visibleBuses = buses
+            .filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS)
+            .filter((bus) => bus.id === driverId);
+
+          setBusOnline(freshBuses.length > 0);
+
+          const newLocations: {
+            [id: string]: {
+              latitude: number;
+              longitude: number;
+              heading: number;
+              lastUpdated: Date;
+              isFresh: boolean;
+              secondsAgo: number;
             };
-          })
-          .map((bus) => {
-            const secondsAgo = (Date.now() - bus.timestamp.getTime()) / 1000;
-            return { ...bus, secondsAgo };
-          });
+          } = {};
 
-        const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
-        const visibleBuses = buses
-          .filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS)
-          .filter((bus) => bus.id === driverId);
+          visibleBuses.forEach((bus) => {
+            const { id, latitude, longitude, secondsAgo, timestamp } = bus;
 
-        setBusOnline(freshBuses.length > 0);
+            const prev = lastCoords.current[id];
+            if (prev) {
+              const raw = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
+              headings.current[id] = quantizeBearing(raw);
+            } else {
+              headings.current[id] = 0;
+            }
 
-        const newLocations: {
-          [id: string]: {
-            latitude: number;
-            longitude: number;
-            heading: number;
-            lastUpdated: Date;
-            isFresh: boolean;
-            secondsAgo: number;
-          };
-        } = {};
-
-        visibleBuses.forEach((bus) => {
-          const { id, latitude, longitude, secondsAgo, timestamp } = bus;
-
-          const prev = lastCoords.current[id];
-          if (prev) {
-            const raw = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
-            headings.current[id] = quantizeBearing(raw);
-          } else {
-            headings.current[id] = 0;
-          }
-
-          lastCoords.current[id] = { latitude, longitude };
-          newLocations[id] = {
-            latitude,
-            longitude,
-            heading: headings.current[id],
-            lastUpdated: timestamp,
-            isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
-            secondsAgo,
-          };
-
-          if (!busRegions.current[id]) {
-            busRegions.current[id] = new AnimatedRegion({
+            lastCoords.current[id] = { latitude, longitude };
+            newLocations[id] = {
               latitude,
               longitude,
-              latitudeDelta: 0,
-              longitudeDelta: 0,
-            });
-          } else {
-            busRegions.current[id]
-              .timing(
-                {
-                  toValue: {
-                    latitude,
-                    longitude,
-                    latitudeDelta: 0,
-                    longitudeDelta: 0,
+              heading: headings.current[id],
+              lastUpdated: timestamp,
+              isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
+              secondsAgo,
+            };
+
+            if (!busRegions.current[id]) {
+              busRegions.current[id] = new AnimatedRegion({
+                latitude,
+                longitude,
+                latitudeDelta: 0,
+                longitudeDelta: 0,
+              });
+            } else {
+              busRegions.current[id]
+                .timing(
+                  {
+                    toValue: {
+                      latitude,
+                      longitude,
+                      latitudeDelta: 0,
+                      longitudeDelta: 0,
+                    } as any,
+                    duration: 2900,
+                    useNativeDriver: false,
                   } as any,
-                  duration: 2900,
-                  useNativeDriver: false,
-                } as any
-              )
-              .start();
+                )
+                .start();
+            }
+          });
+
+          setBusLocations(newLocations);
+
+          const recentIds = visibleBuses.map((b) => b.id);
+          Object.keys(busRegions.current).forEach((key) => {
+            if (!recentIds.includes(key)) delete busRegions.current[key];
+          });
+          Object.keys(lastCoords.current).forEach((key) => {
+            if (!recentIds.includes(key)) delete lastCoords.current[key];
+          });
+          Object.keys(headings.current).forEach((key) => {
+            if (!recentIds.includes(key)) delete headings.current[key];
+          });
+
+          setActiveBusIds(recentIds);
+        },
+        (err) => {
+          console.error('buses snapshot error', {
+            code: (err as any)?.code,
+            message: (err as any)?.message,
+          });
+        },
+      );
+
+      // (c) Subscribe to stop requests (pending or accepted)
+      unsubRide = onSnapshot(
+        query(
+          collection(db, 'stopRequests'),
+          where('status', 'in', ['pending', 'accepted']),
+          limit(50),
+        ),
+        (snapshot) => {
+          const list = snapshot.docs
+            .map((d) => ({ id: d.id, ...(d.data() as any) }))
+            .sort((a, b) => {
+              const ta = a.createdAt?.toMillis?.() ?? 0;
+              const tb = b.createdAt?.toMillis?.() ?? 0;
+              return tb - ta;
+            });
+
+          setRequests(list);
+
+          const current = list.find((r) => r.driverUid === driverId && r.status !== 'completed');
+          const pending = list.find((r) => r.status === 'pending' && !r.driverUid);
+
+          const selected = current || pending || null;
+
+          if (selected) {
+            setRequest(selected);
+            setRequestId(selected.id);
+          } else {
+            setRequest(null);
+            setRequestId(null);
+            setRouteCoords([]);
+            fullRouteRef.current = [];
+            setEta(null);
+            notifiedRef.current = false;
           }
-        });
-
-        setBusLocations(newLocations);
-
-        const recentIds = visibleBuses.map((b) => b.id);
-        Object.keys(busRegions.current).forEach((key) => {
-          if (!recentIds.includes(key)) delete busRegions.current[key];
-        });
-        Object.keys(lastCoords.current).forEach((key) => {
-          if (!recentIds.includes(key)) delete lastCoords.current[key];
-        });
-        Object.keys(headings.current).forEach((key) => {
-          if (!recentIds.includes(key)) delete headings.current[key];
-        });
-
-        setActiveBusIds(recentIds);
-      },
-      (err) => {
-        console.error('buses snapshot error', {
-          code: (err as any)?.code,
-          message: (err as any)?.message,
-        });
-
-      }
-    );
-
-    // (c) Subscribe to stop requests (pending or accepted)
-    // Driver can read all stopRequests if isDriver() resolves true.
-    unsubRide = onSnapshot(
-      query(collection(db, 'stopRequests'), where('status', 'in', ['pending', 'accepted'])),
-      (snapshot) => {
-        const list: any[] = [];
-        snapshot.forEach((docSnap) => {
-          list.push({ id: docSnap.id, ...(docSnap.data() as any) });
-        });
-        setRequests(list);
-
-        // ✅ Use driverUid (not driverId)
-        const current = list.find((r) => r.driverUid === driverId && r.status !== 'completed');
-        const pending = list.find((r) => r.status === 'pending' && !r.driverUid);
-
-        const selected = current || pending || null;
-
-        if (selected) {
-          setRequest(selected);
-          setRequestId(selected.id);
-        } else {
-          setRequest(null);
-          setRequestId(null);
-          setRouteCoords([]);
-          setEta(null);
-          notifiedRef.current = false;
-        }
-      },
-      (err) => {
-        console.error('❌ onSnapshot(stopRequests status in [pending, accepted]) permission error', {
-          code: (err as any)?.code,
-          message: (err as any)?.message,
-        });
-      }
-    );
+        },
+        (err) => {
+          console.error('❌ onSnapshot(stopRequests) permission error', {
+            code: (err as any)?.code,
+            message: (err as any)?.message,
+            uid,
+            role,
+          });
+        },
+      );
+    })();
 
     return () => {
+      cancelled = true;
       if (unsubBus) unsubBus();
       if (unsubRide) unsubRide();
     };
-  }, [driverId]);
+  }, [driverId, INITIAL_REGION, STOPS_BOUNDS]);
 
   // ───────────────────────────────────────────────────────────────────
-  // 2) Fetch route & ETA whenever request or driver location updates
+  // Fetch route & ETA (stores full route for progressive trimming)
   // ───────────────────────────────────────────────────────────────────
   const fetchRoute = async () => {
     if (!request || !driverId) {
       setRouteCoords([]);
+      fullRouteRef.current = [];
       setEta(null);
       return;
     }
 
-    const assigned = lastCoords.current[driverId];
+    // Prefer current state location, fallback to lastCoords ref
+    const assigned = busLocations[driverId] || lastCoords.current[driverId];
     if (!assigned) {
       setRouteCoords([]);
+      fullRouteRef.current = [];
       setEta(null);
       return;
     }
 
-    let destination: { latitude: number; longitude: number };
-    if (request.status === 'accepted') {
-      destination = request.stop;
-    } else {
+    if (request.status !== 'accepted') {
       setRouteCoords([]);
+      fullRouteRef.current = [];
       setEta(null);
       return;
     }
 
     try {
-      const { coords, eta } = await fetchDirections(assigned, destination);
+      const { coords, eta: etaText } = await fetchDirections(assigned, request.stop);
+      fullRouteRef.current = coords;
       setRouteCoords(coords);
-      setEta(eta);
+      setEta(etaText);
     } catch (err) {
       console.error('DriverScreen fetchRoute error', err);
       setRouteCoords([]);
+      fullRouteRef.current = [];
       setEta(null);
     }
   };
 
+  // ✅ keep route refreshed while driver moves (this is what keeps the polyline alive)
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const driverOnline = activeBusIds.includes(driverId || '');
   useEffect(() => {
     if (!driverId) return;
+
     if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
-    fetchTimeout.current = setTimeout(fetchRoute, 2000);
+
+    fetchTimeout.current = setTimeout(() => {
+      fetchRoute();
+    }, 1200);
+
     return () => {
       if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driverId, request?.status, driverOnline, busLocations[driverId ?? '']]);
 
-  // Gradually remove visited points from the route polyline
+  // ✅ Progressive trimming based on fullRouteRef (NOT trimming the already-trimmed array)
   useEffect(() => {
     if (!driverId) return;
-    const loc = busLocations[driverId];
+    if (!request || request.status !== 'accepted') return;
+
+    const loc = busLocations[driverId] || lastCoords.current[driverId];
     if (!loc) return;
 
-    setRouteCoords((current) => {
-      if (current.length === 0) return current;
+    const full = fullRouteRef.current;
+    if (!full || full.length === 0) return;
 
-      let furthestIdx = -1;
-      for (let idx = 0; idx < current.length; idx++) {
-        const distance = getDistanceInMeters(
-          loc.latitude,
-          loc.longitude,
-          current[idx].latitude,
-          current[idx].longitude
-        );
-        if (distance <= 40) {
-          furthestIdx = idx;
-        } else if (furthestIdx >= 0) {
-          break;
-        }
+    let furthestIdx = -1;
+    for (let idx = 0; idx < full.length; idx++) {
+      const distance = getDistanceInMeters(
+        loc.latitude,
+        loc.longitude,
+        full[idx].latitude,
+        full[idx].longitude,
+      );
+
+      if (distance <= 40) {
+        furthestIdx = idx;
+      } else if (furthestIdx >= 0) {
+        break;
       }
+    }
 
-      if (furthestIdx < 0) return current;
+    if (furthestIdx < 0) return;
 
-      const remaining = current.slice(furthestIdx);
-      const lastPoint = remaining[remaining.length - 1];
+    const remaining = full.slice(furthestIdx);
+    const lastPoint = remaining[remaining.length - 1];
 
-      if (
-        remaining.length <= 1 &&
-        lastPoint &&
-        getDistanceInMeters(loc.latitude, loc.longitude, lastPoint.latitude, lastPoint.longitude) <= 40
-      ) {
-        return [];
-      }
+    if (
+      remaining.length <= 1 &&
+      lastPoint &&
+      getDistanceInMeters(loc.latitude, loc.longitude, lastPoint.latitude, lastPoint.longitude) <= 40
+    ) {
+      setRouteCoords([]);
+      return;
+    }
 
-      if (remaining.length === current.length) return current;
-      return remaining;
-    });
-  }, [busLocations[driverId ?? ''], driverId]);
+    setRouteCoords(remaining);
+  }, [driverId, request?.status, busLocations[driverId ?? '']]);
+
+  // ✅ Auto-fit when accepted, but don’t fight user; once per request
+  useEffect(() => {
+    if (request?.status !== 'accepted') {
+      lastAutoFitRequestIdRef.current = null;
+      return;
+    }
+
+    const id = requestId ?? null;
+    if (id && lastAutoFitRequestIdRef.current === id) return;
+
+    if (cameraMode === 'free' || recentlyInteracted(2500)) return;
+
+    lastAutoFitRequestIdRef.current = id;
+
+    // give route a moment to load so fit looks clean
+    setTimeout(() => fitActiveRide(), 350);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request?.status, requestId, driverId]);
 
   // ───────────────────────────────────────────────────────────────────
-  // 3) Schedule local notifications for accepted/completed
+  // Notifications
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (request?.status === 'accepted') {
@@ -509,7 +758,7 @@ export default function DriverScreen() {
   }, [request?.status]);
 
   // ───────────────────────────────────────────────────────────────────
-  // 4) Alert driver when within ~50m of stop
+  // Near stop alert
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (
@@ -524,7 +773,7 @@ export default function DriverScreen() {
         driverLoc.latitude,
         driverLoc.longitude,
         request.stop.latitude,
-        request.stop.longitude
+        request.stop.longitude,
       );
       if (dist < 50) {
         showAlert('You are within 50 meters of the stop.', 'Almost There!');
@@ -534,7 +783,7 @@ export default function DriverScreen() {
   }, [request, driverId, activeBusIds]);
 
   // ───────────────────────────────────────────────────────────────────
-  // 5) Animate bottom status card in/out
+  // Animate cards
   // ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (request) {
@@ -542,7 +791,7 @@ export default function DriverScreen() {
     } else {
       Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     }
-  }, [request]);
+  }, [request, slideAnim]);
 
   useEffect(() => {
     if (showBoardingCard) {
@@ -550,15 +799,16 @@ export default function DriverScreen() {
     } else {
       Animated.timing(boardingSlideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     }
-  }, [showBoardingCard]);
+  }, [showBoardingCard, boardingSlideAnim]);
 
+  // Keep your existing translate logic for sharing buttons
   const shareTranslateY = Animated.add(
     slideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -cardHeight + 8] }),
-    boardingSlideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -boardingCardHeight + 8] })
+    boardingSlideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -boardingCardHeight + 8] }),
   );
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {/* Bottom-Right Start/Stop Sharing Button */}
       {request?.status !== 'accepted' && (
         <Animated.View
@@ -578,7 +828,6 @@ export default function DriverScreen() {
                 if (isSharing) {
                   await stopSharing();
                 } else {
-                  // ✅ If you updated LocationContext per earlier patch, this becomes startSharing()
                   await startSharing();
                 }
               } catch (err) {
@@ -623,12 +872,24 @@ export default function DriverScreen() {
         </Animated.View>
       )}
 
-      {/* Banner if no fresh driver location */}
-      {!driverOnline && hasLocationPermission && (
+        {/* Banner when sharing is OFF (should come back every time) */}
+        {!isSharing && hasLocationPermission && (
+          <View style={styles.banner}>
+            <Text style={styles.bannerText}>
+              Not sharing location. Tap “Start Sharing” to go online.
+            </Text>
+          </View>
+        )}
+
+        {/* Optional: sharing ON but bus doc is stale/not fresh */}
+      {isSharing && !driverOnline && hasLocationPermission && (
         <View style={styles.banner}>
-          <Text style={styles.bannerText}>Not sharing location. Tap “Start Sharing” to go online.</Text>
+          <Text style={styles.bannerText}>
+            Sharing is ON, but your location hasn’t updated yet.
+          </Text>
         </View>
       )}
+
 
       {/* Banner if location permission denied */}
       {!hasLocationPermission && (
@@ -652,29 +913,35 @@ export default function DriverScreen() {
         rotateEnabled={false}
         pitchEnabled={false}
         customMapStyle={grayscaleMapStyle}
+        onPanDrag={() => {
+          markUserInteraction();
+        }}
+        onTouchStart={() => {
+          markUserInteraction();
+        }}
+        onTouchEnd={() => {
+          setTimeout(() => {
+            userInteractingRef.current = false;
+          }, 250);
+        }}
         onRegionChangeComplete={(newRegion) => {
-          const latMin = 38.59678;
-          const latMax = 38.61775;
-          const lonMin = -89.82802;
-          const lonMax = -89.79585;
+          if (!isProgrammaticMove() && userInteractingRef.current) {
+            setCameraMode('free');
+          }
 
-          const clampedRegion = {
-            latitude: Math.min(Math.max(newRegion.latitude, latMin), latMax),
-            longitude: Math.min(Math.max(newRegion.longitude, lonMin), lonMax),
-            latitudeDelta: Math.min(newRegion.latitudeDelta, MAX_LAT_DELTA),
-            longitudeDelta: Math.min(newRegion.longitudeDelta, MAX_LON_DELTA),
-          };
+          const clamped = clampToBounds(newRegion, STOPS_BOUNDS);
 
           const needsAdjustment =
-            clampedRegion.latitude !== newRegion.latitude ||
-            clampedRegion.longitude !== newRegion.longitude ||
-            clampedRegion.latitudeDelta !== newRegion.latitudeDelta ||
-            clampedRegion.longitudeDelta !== newRegion.longitudeDelta;
+            clamped.latitude !== newRegion.latitude ||
+            clamped.longitude !== newRegion.longitude ||
+            clamped.latitudeDelta !== newRegion.latitudeDelta ||
+            clamped.longitudeDelta !== newRegion.longitudeDelta;
 
-          setRegion(clampedRegion);
+          setRegion(clamped);
 
           if (needsAdjustment) {
-            mapRef.current?.animateToRegion(clampedRegion, 300);
+            markProgrammaticMove();
+            mapRef.current?.animateToRegion(clamped, 260);
           }
         }}
       >
@@ -690,7 +957,11 @@ export default function DriverScreen() {
               rotation={loc.heading}
               anchor={{ x: 0.5, y: 0.5 }}
             >
-              <Image source={busIcon} style={{ width: 120, height: 120 }} resizeMode="contain" />
+              <Image
+                source={busIcon}
+                style={{ width: 120, height: 120, opacity: loc.isFresh ? 1 : 0.55 }}
+                resizeMode="contain"
+              />
             </MarkerAnimated>
           );
         })}
@@ -727,6 +998,29 @@ export default function DriverScreen() {
         )}
       </MapView>
 
+      {/* ✅ Map controls (float ABOVE cards) — switch side when Add Students is shown */}
+            {/* ✅ Bottom-left map controls (float ABOVE cards + above Add Students when visible) */}
+        <View
+          pointerEvents="box-none"
+          style={[styles.fabWrapBottomLeft, { bottom: mapControlsBottom }]}
+        >
+          <TouchableOpacity style={styles.fab} onPress={centerOnMe} activeOpacity={0.9}>
+            <Icon name="my-location" size={22} color="#111" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.fab} onPress={fitStops} activeOpacity={0.9}>
+            <Icon name="map" size={22} color="#111" />
+          </TouchableOpacity>
+
+          {request?.status === 'accepted' && (
+            <TouchableOpacity style={styles.fabPrimary} onPress={fitActiveRide} activeOpacity={0.9}>
+              <Icon name="alt-route" size={22} color="#fff" />
+              <Text style={styles.fabPrimaryText}>Fit</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+
       {/* Bottom Card */}
       <Animated.View
         onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
@@ -755,7 +1049,10 @@ export default function DriverScreen() {
             {eta && request.status !== 'pending' && <Text style={styles.etaText}>ETA: {eta}</Text>}
 
             {request.status === 'pending' && !request.driverUid && (
-              <TouchableOpacity style={styles.cancelButton} onPress={() => requestId && updateStatus(requestId, 'accepted')}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => requestId && updateStatus(requestId, 'accepted')}
+              >
                 <Text style={styles.cancelButtonText}>Accept Stop</Text>
               </TouchableOpacity>
             )}
@@ -776,11 +1073,11 @@ export default function DriverScreen() {
                   style={styles.cancelButton}
                   onPress={async () => {
                     if (requestId) {
-                      // ✅ delete is forbidden; update to cancelled is allowed for driver
                       await updateStatus(requestId, 'cancelled');
                       setRequest(null);
                       setRequestId(null);
                       setRouteCoords([]);
+                      fullRouteRef.current = [];
                       setEta(null);
                       showAlert('Stop canceled.');
                     }
@@ -816,6 +1113,7 @@ export default function DriverScreen() {
           ]}
         >
           <Text style={styles.cardTitle}>Students Boarding</Text>
+
           <View style={styles.counterRow}>
             <TouchableOpacity
               style={styles.counterButton}
@@ -840,6 +1138,7 @@ export default function DriverScreen() {
             onPress={() => {
               setShowBoardingCard(false);
               setBoardingCount(0);
+              setCompleteAfterSave(false);
             }}
           >
             <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -924,6 +1223,50 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
+
+  // ✅ Map controls
+  fabWrapBottomLeft: {
+    position: 'absolute',
+    left: 14,
+    zIndex: 520,
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  fabWrapBottomRight: {
+    position: 'absolute',
+    right: 14,
+    zIndex: 520,
+    alignItems: 'flex-end',
+    gap: 10,
+  },
+  fab: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  fabPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: PRIMARY_COLOR,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 7,
+  },
+  fabPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 
   bottomCard: {
     position: 'absolute',

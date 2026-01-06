@@ -3,24 +3,25 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { signOut } from 'firebase/auth';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import ScreenContainer from '../components/ScreenContainer';
 import MenuItem from '../components/MenuItem';
 import { auth } from '../firebase/firebaseconfig';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { spacing } from '../src/styles/common';
+import type { RootStackParamList } from '../navigation/StackNavigator';
 
 export default function StudentMenuScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
     } catch (err) {
       console.error('Error signing out', err);
     }
-  };
-
-  const handleHistoryPress = () => {
-    console.log('Student history pressed');
   };
 
   return (
@@ -35,7 +36,7 @@ export default function StudentMenuScreen() {
           icon="history"
           title="History"
           description="Take a look at your past completed rides"
-          onPress={handleHistoryPress}
+          onPress={() => navigation.navigate('StudentHistory')}
         />
 
         <MenuItem
