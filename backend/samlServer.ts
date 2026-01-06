@@ -33,13 +33,13 @@ const SAML_SP_ACS_URL =
 // IdP metadata values you already have from IT
 const IDP_ENTITY_ID = process.env.EXPO_PUBLIC_SAML_IDP_ENTITY_ID || '';
 const IDP_SSO_URL = process.env.EXPO_PUBLIC_SAML_IDP_SSO_URL || '';
-const IDP_SIGNING_CERT = formatCert(process.env.EXPO_PUBLIC_SAML_IDP_CERT || '');
+const IDP_SIGNING_CERT = formatCert(process.env.EXPO_PUBLIC_SAML_IDP_CERT_FINGERPRINT || '');
 
 // SAML schema validation (per samlify guidance)
 saml.setSchemaValidator({
   validate: async (xml: string) => {
     const dom = new DOMParser({
-      errorHandler: { warning: null, error: null },
+      errorHandler: { warning: undefined, error: undefined },
     }).parseFromString(xml);
     const rootName = dom.documentElement?.localName;
     if (!rootName) {
