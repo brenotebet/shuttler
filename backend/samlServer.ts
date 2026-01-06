@@ -4,6 +4,7 @@ import * as saml from 'samlify';
 import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 /**
  * Drop-in example that covers SAML setup steps 1 and 2:
@@ -73,7 +74,48 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// Step 2: ACS endpoint that validates SAMLResponse and returns a Firebase token
+const HANDOFF_TOKEN_TTL_MS = 5 * 60 * 1000;
+const handoffTokens = new Map<string, HandoffTokenPayload>();
+
+type HandoffTokenPayload = {
+  uid: string;
+  attributes: Record<string, unknown>;
+  expiresAt: number;
+};
+
+function cleanupExpiredHandoffTokens() {
+  const now = Date.now();
+  for (const [token, payload] of handoffTokens.entries()) {
+    if (payload.expiresAt <= now) {
+      handoffTokens.delete(token);
+    }
+  }
+}
+
+function issueHandoffToken(uid: string, attributes: Record<string, unknown>) {
+  cleanupExpiredHandoffTokens();
+  const token = crypto.randomBytes(32).toString('hex');
+  handoffTokens.set(token, {
+    uid,
+    attributes,
+    expiresAt: Date.now() + HANDOFF_TOKEN_TTL_MS,
+  });
+  return token;
+}
+
+function consumeHandoffToken(token: string): HandoffTokenPayload | null {
+  cleanupExpiredHandoffTokens();
+  const payload = handoffTokens.get(token);
+  if (!payload) return null;
+  if (payload.expiresAt <= Date.now()) {
+    handoffTokens.delete(token);
+    return null;
+  }
+  handoffTokens.delete(token);
+  return payload;
+}
+
+// Step 2: ACS endpoint that validates SAMLResponse and returns a handoff token
 app.post('/saml/acs', async (req, res) => {
   const samlResponse = req.body?.SAMLResponse;
   if (!samlResponse) {
@@ -90,18 +132,36 @@ app.post('/saml/acs', async (req, res) => {
       return res.status(422).json({ error: 'SAML assertion missing UID/email attribute' });
     }
 
-    const firebaseToken = await admin.auth().createCustomToken(uid, {
-      email: attributes.email as string | undefined,
-      displayName: attributes.displayName as string | undefined,
-      roles: attributes.roles as string[] | string | undefined,
-    });
+    const samlToken = issueHandoffToken(uid, attributes);
 
     // Return JSON for the mobile app; adjust to redirect if you prefer app-deep-link handoff
-    return res.json({ firebaseToken });
+    return res.json({ samlToken });
   } catch (error) {
     console.error('Failed to validate SAMLResponse', error);
     return res.status(401).json({ error: 'Invalid SAML assertion' });
   }
+});
+
+// Step 3: Exchange a one-time-use SAML handoff token for a Firebase token
+app.post('/saml/exchange', async (req, res) => {
+  const samlToken = req.body?.samlToken;
+  if (!samlToken) {
+    return res.status(400).json({ error: 'Missing SAML handoff token' });
+  }
+
+  const payload = consumeHandoffToken(samlToken);
+  if (!payload) {
+    return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
+  }
+
+  const { uid, attributes } = payload;
+  const firebaseToken = await admin.auth().createCustomToken(uid, {
+    email: attributes.email as string | undefined,
+    displayName: attributes.displayName as string | undefined,
+    roles: attributes.roles as string[] | string | undefined,
+  });
+
+  return res.json({ firebaseToken });
 });
 
 app.get('/saml/metadata', (_req, res) => {
@@ -140,4 +200,3 @@ function formatCert(cert: string): string {
   const wrapped = compact.match(/.{1,64}/g)?.join('\n') || compact;
   return `-----BEGIN CERTIFICATE-----\n${wrapped}\n-----END CERTIFICATE-----`;
 }
-

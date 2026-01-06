@@ -1,5 +1,5 @@
 import * as Linking from 'expo-linking';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { signInWithCustomToken } from 'firebase/auth';
 
 import { auth } from '../../firebase/firebaseconfig';
@@ -19,7 +19,7 @@ function extractTokenFromUrl(url?: string | null): string | null {
 }
 
 async function cacheToken(token: string) {
-  await AsyncStorage.setItem(SAML_HANDOFF_STORAGE_KEY, token);
+  await SecureStore.setItemAsync(SAML_HANDOFF_STORAGE_KEY, token);
 }
 
 async function exchangeAndSignIn(token: string) {
@@ -59,7 +59,7 @@ export async function trySamlHandoffLogin(urlFromEvent?: string | null) {
 
   let tokenToUse = initialToken;
   if (!tokenToUse) {
-    tokenToUse = await AsyncStorage.getItem(SAML_HANDOFF_STORAGE_KEY);
+    tokenToUse = await SecureStore.getItemAsync(SAML_HANDOFF_STORAGE_KEY);
   }
 
   if (!tokenToUse) {
@@ -67,6 +67,6 @@ export async function trySamlHandoffLogin(urlFromEvent?: string | null) {
   }
 
   await exchangeAndSignIn(tokenToUse);
-  await AsyncStorage.removeItem(SAML_HANDOFF_STORAGE_KEY);
+  await SecureStore.deleteItemAsync(SAML_HANDOFF_STORAGE_KEY);
   return true;
 }
