@@ -5,6 +5,8 @@ import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { DOMParser } from '@xmldom/xmldom';
+import xpath from 'xpath';
 
 /**
  * Drop-in example that covers SAML setup steps 1 and 2:
@@ -33,9 +35,49 @@ const IDP_ENTITY_ID = process.env.EXPO_PUBLIC_SAML_IDP_ENTITY_ID || '';
 const IDP_SSO_URL = process.env.EXPO_PUBLIC_SAML_IDP_SSO_URL || '';
 const IDP_SIGNING_CERT = formatCert(process.env.EXPO_PUBLIC_SAML_IDP_CERT || '');
 
-// Minimal schema validator so samlify can run without external XML tooling
+// SAML schema validation (per samlify guidance)
 saml.setSchemaValidator({
-  validate: async () => Promise.resolve(''),
+  validate: async (xml: string) => {
+    const dom = new DOMParser({
+      errorHandler: { warning: null, error: null },
+    }).parseFromString(xml);
+    const rootName = dom.documentElement?.localName;
+    if (!rootName) {
+      throw new Error('ERR_SAML_SCHEMA_MISSING_ROOT');
+    }
+
+    const isResponse = rootName === 'Response';
+    const isLogout = rootName === 'LogoutResponse' || rootName === 'LogoutRequest';
+    const isAuthnRequest = rootName === 'AuthnRequest';
+    if (!isResponse && !isLogout && !isAuthnRequest) {
+      throw new Error(`ERR_SAML_SCHEMA_UNEXPECTED_ROOT_${rootName}`);
+    }
+
+    if (isResponse) {
+      const assertionNode = xpath.select1(
+        "//*[local-name()='Assertion']",
+        dom,
+      );
+      const issuerNode = xpath.select1(
+        "//*[local-name()='Issuer']",
+        dom,
+      );
+      const subjectConfirmationNode = xpath.select1(
+        "//*[local-name()='SubjectConfirmationData']",
+        dom,
+      );
+      const audienceNode = xpath.select1(
+        "//*[local-name()='AudienceRestriction']/*[local-name()='Audience']",
+        dom,
+      );
+
+      if (!assertionNode || !issuerNode || !subjectConfirmationNode || !audienceNode) {
+        throw new Error('ERR_SAML_SCHEMA_MISSING_ASSERTION_CONTENTS');
+      }
+    }
+
+    return Promise.resolve('ok');
+  },
 });
 
 const idp = saml.IdentityProvider({
@@ -63,11 +105,21 @@ const sp = saml.ServiceProvider({
 // Boot Firebase Admin so we can mint custom tokens after a valid assertion
 const serviceAccountPath =
   process.env.FIREBASE_SERVICE_ACCOUNT_PATH || path.join(__dirname, 'serviceAccount.json');
-if (fs.existsSync(serviceAccountPath) && admin.apps.length === 0) {
-  const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
-  });
+const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+if (admin.apps.length === 0) {
+  if (serviceAccountJson) {
+    const serviceAccount = JSON.parse(serviceAccountJson);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
+    });
+  } else if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
+    });
+  } else {
+    admin.initializeApp();
+  }
 }
 
 const app = express();
@@ -123,12 +175,20 @@ app.post('/saml/acs', async (req, res) => {
   }
 
   try {
-    // samlify handles decoding, signature validation, and audience/recipient checks
-    const { extract } = await sp.parseLoginResponse(idp, 'post', { body: req.body });
+    // samlify handles decoding and signature validation; we enforce audience/recipient below
+    const { extract, samlContent } = await sp.parseLoginResponse(idp, 'post', { body: req.body });
+    const assertionDetails = enforceAudienceAndRecipient(extract, samlContent);
     const attributes = extract?.attributes || {};
     const uid = selectUid(attributes);
 
     if (!uid) {
+      logAssertionFailure('missing_uid', {
+        ...assertionDetails,
+        issuer: extract?.issuer,
+        requestId: extract?.response?.inResponseTo,
+        ip: req.ip,
+        userAgent: req.get('user-agent'),
+      });
       return res.status(422).json({ error: 'SAML assertion missing UID/email attribute' });
     }
 
@@ -137,7 +197,13 @@ app.post('/saml/acs', async (req, res) => {
     // Return JSON for the mobile app; adjust to redirect if you prefer app-deep-link handoff
     return res.json({ samlToken });
   } catch (error) {
-    console.error('Failed to validate SAMLResponse', error);
+    if (!isSamlValidationError(error)) {
+      logAssertionFailure('validation_error', {
+        ip: req.ip,
+        userAgent: req.get('user-agent'),
+        error,
+      });
+    }
     return res.status(401).json({ error: 'Invalid SAML assertion' });
   }
 });
@@ -199,4 +265,83 @@ function formatCert(cert: string): string {
     .replace(/\r?\n|\s+/g, '');
   const wrapped = compact.match(/.{1,64}/g)?.join('\n') || compact;
   return `-----BEGIN CERTIFICATE-----\n${wrapped}\n-----END CERTIFICATE-----`;
+}
+
+function enforceAudienceAndRecipient(extract: any, samlContent: string) {
+  const expectedAudience = SAML_SP_ENTITY_ID;
+  const expectedRecipient = SAML_SP_ACS_URL;
+  const audienceValues = normalizeAudience(extract?.audience);
+  const responseDestination = extract?.response?.destination as string | undefined;
+  const recipientExtract = saml.Extractor.extract(samlContent, [
+    {
+      key: 'recipient',
+      localPath: ['Assertion', 'Subject', 'SubjectConfirmation', 'SubjectConfirmationData'],
+      attributes: ['Recipient'],
+    },
+  ]);
+  const recipientValue = normalizeString(recipientExtract?.recipient);
+
+  if (!audienceValues.includes(expectedAudience)) {
+    const error = new Error('ERR_SAML_AUDIENCE_MISMATCH');
+    logAssertionFailure('audience_mismatch', {
+      audience: audienceValues,
+      expectedAudience,
+      destination: responseDestination,
+      recipient: recipientValue,
+    });
+    throw error;
+  }
+
+  if (responseDestination && responseDestination !== expectedRecipient) {
+    const error = new Error('ERR_SAML_DESTINATION_MISMATCH');
+    logAssertionFailure('destination_mismatch', {
+      audience: audienceValues,
+      expectedAudience,
+      destination: responseDestination,
+      recipient: recipientValue,
+    });
+    throw error;
+  }
+
+  if (!recipientValue || recipientValue !== expectedRecipient) {
+    const error = new Error('ERR_SAML_RECIPIENT_MISMATCH');
+    logAssertionFailure('recipient_mismatch', {
+      audience: audienceValues,
+      expectedAudience,
+      destination: responseDestination,
+      recipient: recipientValue,
+    });
+    throw error;
+  }
+
+  return {
+    audience: audienceValues,
+    destination: responseDestination,
+    recipient: recipientValue,
+  };
+}
+
+function normalizeAudience(audience: unknown): string[] {
+  if (!audience) return [];
+  if (Array.isArray(audience)) {
+    return audience.map((value) => String(value));
+  }
+  return [String(audience)];
+}
+
+function normalizeString(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) return value[0] ? String(value[0]) : undefined;
+  return String(value);
+}
+
+function logAssertionFailure(reason: string, details: Record<string, unknown>) {
+  console.error('SAML assertion rejected', {
+    reason,
+    ...details,
+  });
+}
+
+function isSamlValidationError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('ERR_SAML_');
 }
