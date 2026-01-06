@@ -1,4 +1,5 @@
 import * as AuthSession from 'expo-auth-session';
+import { buildCodeAsync, generateRandom } from 'expo-auth-session/build/PKCE';
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import {
@@ -13,9 +14,15 @@ import {
  */
 export async function signInWithQuickLaunch() {
   const redirectUri = AuthSession.makeRedirectUri({ useProxy: true } as any);
+  const { codeVerifier, codeChallenge } = await buildCodeAsync();
+  const state = generateRandom(16);
   const authUrl = `${QUICKLAUNCH_AUTHORIZATION_ENDPOINT}?client_id=${encodeURIComponent(
     QUICKLAUNCH_CLIENT_ID,
-  )}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  )}&response_type=code&redirect_uri=${encodeURIComponent(
+    redirectUri,
+  )}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(
+    codeChallenge,
+  )}&code_challenge_method=S256`;
 
   const result = await (AuthSession as any).startAsync({ authUrl });
 
@@ -23,10 +30,21 @@ export async function signInWithQuickLaunch() {
     throw new Error('QuickLaunch authentication failed');
   }
 
+  if (!result.params?.state || result.params.state !== state) {
+    throw new Error(
+      'QuickLaunch authentication failed: state verification failed',
+    );
+  }
+
   const exchangeRes = await fetch(QUICKLAUNCH_TOKEN_EXCHANGE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: result.params.code, redirectUri }),
+    body: JSON.stringify({
+      code: result.params.code,
+      codeVerifier,
+      redirectUri,
+      state,
+    }),
   });
 
   if (!exchangeRes.ok) {
