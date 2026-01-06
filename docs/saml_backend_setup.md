@@ -106,8 +106,8 @@ binding `urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST`.
   - **Attributes expected:** immutable user ID, email, display name, and any
     roles/groups.
   - **Deep link handoff format (if used):** the param name (`samlToken`,
-    `saml_token`, or `samlHandoff`) and your app scheme/host (e.g.,
-    `bogeybus://sso`).
+    `saml_token`, or `samlHandoff`) and your app scheme/host (`bogeybus://sso`,
+    scheme `bogeybus`).
 
 ## 6) Share the checklist along with the metadata
 - Include the IdP values you received (`EXPO_PUBLIC_SAML_IDP_ENTITY_ID`,

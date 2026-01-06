@@ -23,10 +23,10 @@ session or fall back to QuickLaunch" flow.
   by the IdP.
 
 ## App-to-App Handoff
-- Deep-link scheme/host to register (e.g., `bogeybus://sso`) and confirmation
-  that the school app will launch the shuttle app with one of these query
-  parameters carrying a one-time token: `samlToken`, `saml_token`, or
-  `samlHandoff`.
+- Deep-link scheme/host to register (use `bogeybus://sso`, scheme `bogeybus`)
+  and confirmation that the school app will launch the shuttle app with one of
+  these query parameters carrying a one-time token: `samlToken`, `saml_token`,
+  or `samlHandoff`.
 - Bundle identifier/package name to whitelist for the deep link (Android and
   iOS).
 - Clarify whether the handoff token is a full SAML Response, an artifact, or a
