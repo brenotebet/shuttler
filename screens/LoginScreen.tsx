@@ -155,9 +155,25 @@ export default function LoginScreen({ navigation }: Props) {
         const resolved = auth.currentUser;
         if (!resolved) throw new Error('School SSO completed but no Firebase session found.');
         await finishStudentLogin(resolved);
-      } else {
-        await startSamlLogin();
+        return;
       }
+
+      const redirectUrl = await startSamlLogin();
+      if (!redirectUrl) {
+        return;
+      }
+
+      await persistSamlHandoffFromUrl(redirectUrl);
+      const signedInFromRedirect = await trySamlHandoffLogin(redirectUrl);
+      if (!signedInFromRedirect) {
+        throw new Error(
+          'School SSO finished but no handoff token was found. Check ACS redirect and RelayState.'
+        );
+      }
+
+      const resolved = auth.currentUser;
+      if (!resolved) throw new Error('School SSO completed but no Firebase session found.');
+      await finishStudentLogin(resolved);
     } catch (e: any) {
       showAlert(e?.message ?? 'Unknown error', 'School SSO Error');
     } finally {

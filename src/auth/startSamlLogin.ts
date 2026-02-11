@@ -1,19 +1,31 @@
 // src/auth/startSamlLogin.ts
+import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
-import { APP_DEEP_LINK_SCHEME, SAML_LOGIN_URL } from '../../config';
+import { SAML_LOGIN_URL } from '../../config';
 
 // For iOS: makes the browser session return cleanly
 WebBrowser.maybeCompleteAuthSession?.();
 
-export async function startSamlLogin() {
+export async function startSamlLogin(): Promise<string | null> {
   if (!SAML_LOGIN_URL) {
     throw new Error('Missing SAML_LOGIN_URL in config/.env');
   }
 
-  const returnTo = `${APP_DEEP_LINK_SCHEME}://sso`;
+  // Use a runtime-aware callback URL so this works in Expo Go/dev client and standalone builds.
+  const returnTo = Linking.createURL('sso');
   const joiner = SAML_LOGIN_URL.includes('?') ? '&' : '?';
   const loginUrl = `${SAML_LOGIN_URL}${joiner}returnTo=${encodeURIComponent(returnTo)}`;
 
-  // Opens the IdP login page. After login, IdP -> /saml/acs -> redirects back to app deep link.
-  await WebBrowser.openBrowserAsync(loginUrl);
+  // Use auth-session mode so the browser closes when redirected to the app scheme.
+  const result = await WebBrowser.openAuthSessionAsync(loginUrl, returnTo);
+
+  if (result.type === 'success') {
+    return result.url;
+  }
+
+  if (result.type === 'cancel' || result.type === 'dismiss') {
+    return null;
+  }
+
+  throw new Error(`School SSO did not complete (result: ${result.type}).`);
 }
