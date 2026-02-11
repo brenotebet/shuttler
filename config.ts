@@ -1,5 +1,8 @@
+// config.ts
+
 const isProductionBuild =
-  process.env.NODE_ENV === 'production' || (typeof __DEV__ !== 'undefined' && !__DEV__);
+  process.env.NODE_ENV === 'production' ||
+  (typeof __DEV__ !== 'undefined' && !__DEV__);
 
 const handleMissingEnvVar = (key: string): string => {
   const message = `Environment variable ${key} is not defined.`;
@@ -11,19 +14,17 @@ const handleMissingEnvVar = (key: string): string => {
 };
 
 const getPublicEnvVar = (key: string): string => {
-  const value = process.env[key];
+  const raw = process.env[key];
+  const value = typeof raw === 'string' ? raw.trim() : '';
   if (!value) {
     return handleMissingEnvVar(key);
   }
-
   return value;
 };
 
 const getSecureUrlEnvVar = (key: string): string => {
   const value = getPublicEnvVar(key);
-  if (!value) {
-    return value;
-  }
+  if (!value) return value;
 
   if (!value.startsWith('https://')) {
     const message = `Environment variable ${key} must be a secure HTTPS URL.`;
@@ -36,30 +37,49 @@ const getSecureUrlEnvVar = (key: string): string => {
   return value;
 };
 
-export const GOOGLE_MAPS_API_KEY = getPublicEnvVar('EXPO_PUBLIC_GOOGLE_MAPS_API_KEY');
+export const GOOGLE_MAPS_API_KEY = getPublicEnvVar(
+  'EXPO_PUBLIC_GOOGLE_MAPS_API_KEY',
+);
 
-// QuickLaunch OIDC configuration. These must point at your institution-specific
-// endpoints and client information.
+// -------------------- QuickLaunch (OIDC) --------------------
 export const QUICKLAUNCH_AUTHORIZATION_ENDPOINT = getSecureUrlEnvVar(
   'EXPO_PUBLIC_QUICKLAUNCH_AUTHORIZATION_ENDPOINT',
 );
+
 export const QUICKLAUNCH_TOKEN_ENDPOINT = getSecureUrlEnvVar(
   'EXPO_PUBLIC_QUICKLAUNCH_TOKEN_ENDPOINT',
 );
-export const QUICKLAUNCH_CLIENT_ID = getPublicEnvVar('EXPO_PUBLIC_QUICKLAUNCH_CLIENT_ID');
 
-// Endpoint on your backend that validates QuickLaunch auth codes, verifies the
-// PKCE verifier, and mints Firebase custom tokens.
+export const QUICKLAUNCH_CLIENT_ID = getPublicEnvVar(
+  'EXPO_PUBLIC_QUICKLAUNCH_CLIENT_ID',
+);
+
+// Backend endpoint that exchanges code+PKCE for Firebase custom token
 export const QUICKLAUNCH_TOKEN_EXCHANGE_URL = getSecureUrlEnvVar(
   'EXPO_PUBLIC_QUICKLAUNCH_TOKEN_EXCHANGE_URL',
 );
 
-// SAML handoff configuration for the school app SSO flow.
-// The exchange URL should validate the SAML assertion or one-time token and
-// return a Firebase custom token.
-export const SAML_TOKEN_EXCHANGE_URL = 'https://YOUR-BACKEND/saml/exchange';
-export const SAML_IDP_ENTITY_ID = process.env.EXPO_PUBLIC_SAML_IDP_ENTITY_ID;
-export const SAML_IDP_SSO_URL = process.env.EXPO_PUBLIC_SAML_IDP_SSO_URL;
-export const SAML_IDP_CERT_FINGERPRINT = process.env.EXPO_PUBLIC_SAML_IDP_CERT_FINGERPRINT;
-export const SAML_SP_ENTITY_ID = 'com.example.bogeybus';
-export const SAML_SP_ACS_URL = 'https://YOUR-BACKEND/saml/acs';
+// -------------------- School SSO (SAML) --------------------
+
+// Backend endpoint that exchanges SAML handoff token for Firebase custom token
+export const SAML_TOKEN_EXCHANGE_URL = getSecureUrlEnvVar(
+  'EXPO_PUBLIC_SAML_TOKEN_EXCHANGE_URL',
+);
+
+// SP-initiated login URL on the server (start here to begin SSO)
+export const SAML_LOGIN_URL = getSecureUrlEnvVar(
+  'EXPO_PUBLIC_SAML_LOGIN_URL',
+);
+
+// Optional: you may not need these in the mobile app anymore, but keeping them here
+// in case you display or log them (do NOT show cert in UI).
+export const SAML_IDP_ENTITY_ID = getPublicEnvVar('EXPO_PUBLIC_SAML_IDP_ENTITY_ID');
+export const SAML_IDP_SSO_URL = getSecureUrlEnvVar('EXPO_PUBLIC_SAML_IDP_SSO_URL');
+export const SAML_IDP_CERT_FINGERPRINT = getPublicEnvVar('EXPO_PUBLIC_SAML_IDP_CERT_FINGERPRINT');
+
+// These are mainly for the SERVER, but you can still keep them in app config if needed
+export const SAML_SP_ENTITY_ID = getPublicEnvVar('EXPO_PUBLIC_SAML_SP_ENTITY_ID');
+export const SAML_SP_ACS_URL = getSecureUrlEnvVar('EXPO_PUBLIC_SAML_SP_ACS_URL');
+
+// Your app deep link scheme (you told me it is bogeybus)
+export const APP_DEEP_LINK_SCHEME = getPublicEnvVar('EXPO_PUBLIC_APP_SCHEME');

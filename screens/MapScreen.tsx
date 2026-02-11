@@ -11,7 +11,6 @@ import {
   Image,
   FlatList,
   TouchableWithoutFeedback,
-  Dimensions,
 } from 'react-native';
 import MapView, {
   PROVIDER_GOOGLE,
@@ -51,10 +50,8 @@ import { showAlert } from '../src/utils/alerts';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 
-const SIDEBAR_WIDTH = 220;
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -93,8 +90,12 @@ function getStopsBounds(stops = LOCATIONS): Bounds {
     lonMax = Math.max(lonMax, s.longitude);
   });
 
-  // Fallback safety
-  if (!Number.isFinite(latMin) || !Number.isFinite(latMax) || !Number.isFinite(lonMin) || !Number.isFinite(lonMax)) {
+  if (
+    !Number.isFinite(latMin) ||
+    !Number.isFinite(latMax) ||
+    !Number.isFinite(lonMin) ||
+    !Number.isFinite(lonMax)
+  ) {
     return { latMin: 0, latMax: 0, lonMin: 0, lonMax: 0 };
   }
 
@@ -127,6 +128,12 @@ function clampToBounds(r: Region, b: Bounds): Region {
 
 type CameraMode = 'free' | 'followUser' | 'overview';
 
+type BusPopup = {
+  etaToYou: string | null;
+  nextStop: string | null;
+  lastSeenText: string | null;
+};
+
 export default function MapScreen() {
   const navigation = useNavigation<
     CompositeNavigationProp<
@@ -136,7 +143,7 @@ export default function MapScreen() {
   >();
 
   const STOPS_BOUNDS = useMemo(() => getStopsBounds(LOCATIONS), []);
-  const INITIAL_REGION = useMemo(() => boundsRegion(STOPS_BOUNDS, 0.90), [STOPS_BOUNDS]);
+  const INITIAL_REGION = useMemo(() => boundsRegion(STOPS_BOUNDS, 0.9), [STOPS_BOUNDS]);
 
   const [region, setRegion] = useState<Region | null>(null);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
@@ -168,10 +175,8 @@ export default function MapScreen() {
   const [selectedStopIndex, setSelectedStopIndex] = useState<number | null>(null);
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
-  const [busEta, setBusEta] = useState<string | null>(null);
-  const [nextStop, setNextStop] = useState<string | null>(null);
+  const [selectedBusPopup, setSelectedBusPopup] = useState<BusPopup | null>(null);
 
-  const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
   const mapRef = useRef<MapView | null>(null);
 
   const notifiedRef = useRef(false);
@@ -180,29 +185,65 @@ export default function MapScreen() {
   const headings = useRef<{ [id: string]: number }>({});
   const fullRouteRef = useRef<{ latitude: number; longitude: number }[]>([]);
   const didInitialFitRef = useRef(false);
+
   const lastUserInteractionRef = useRef(0);
-  const markUserInteraction = () => {
-  lastUserInteractionRef.current = Date.now();
-  userInteractingRef.current = true;
-};
-const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.current < ms;
-
-
-  const slideAnim = useRef(new Animated.Value(0)).current;
-
-  // ✅ measure bottom card height so buttons can float ABOVE it
-  const [bottomCardHeight, setBottomCardHeight] = useState(0);
-
-  // ✅ Camera UX
-  const [cameraMode, setCameraMode] = useState<CameraMode>('followUser');
   const userInteractingRef = useRef(false);
   const lastProgrammaticMoveRef = useRef<number>(0);
+
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const [bottomCardHeight, setBottomCardHeight] = useState(0);
+
+  const [cameraMode, setCameraMode] = useState<CameraMode>('followUser');
+
+  const busIcon = require('../assets/bus-icon.png');
+
+  // ✅ FIX: force marker image to render on Android (otherwise it may only appear after tapping)
+  const [forceBusTracks, setForceBusTracks] = useState(true);
+  const forceTracksTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const bumpBusTracks = () => {
+    setForceBusTracks(true);
+    if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);
+    forceTracksTimerRef.current = setTimeout(() => setForceBusTracks(false), 900);
+  };
+
+  // ☁️ Cloud animation
+  const cloudAnim = useRef(new Animated.Value(0)).current;
+
+  const markUserInteraction = () => {
+    lastUserInteractionRef.current = Date.now();
+    userInteractingRef.current = true;
+  };
+  const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.current < ms;
+
   const markProgrammaticMove = () => {
     lastProgrammaticMoveRef.current = Date.now();
   };
   const isProgrammaticMove = () => Date.now() - lastProgrammaticMoveRef.current < 1200;
 
-  const busIcon = require('../assets/bus-icon.png');
+  const showCloud = () => {
+    cloudAnim.stopAnimation();
+    Animated.spring(cloudAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 18,
+      bounciness: 6,
+    }).start();
+  };
+
+  const hideCloud = () => {
+    cloudAnim.stopAnimation();
+    Animated.timing(cloudAnim, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const closeSelectedBus = () => {
+    setSelectedBusId(null);
+    setSelectedBusPopup(null);
+    hideCloud();
+  };
 
   const formatLastSeen = (seconds: number) => {
     if (seconds < 60) return `${Math.max(1, Math.round(seconds))}s ago`;
@@ -210,8 +251,11 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     return `${Math.round(seconds / 3600)}h ago`;
   };
 
-  // ✅ Hide “browsing” UI when ride exists (pending/accepted)
+  // ✅ Hide browsing UI when ride exists (pending/accepted)
   const rideActive = !!request && (request.status === 'pending' || request.status === 'accepted');
+
+  // Cache last known user location for ETA-to-you in the cloud
+  const userLocRef = useRef<{ latitude: number; longitude: number } | null>(null);
 
   const centerOnUser = async () => {
     try {
@@ -221,6 +265,8 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
         return;
       }
       const loc = await Location.getCurrentPositionAsync({});
+      userLocRef.current = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+
       markProgrammaticMove();
       setCameraMode('followUser');
       mapRef.current?.animateToRegion(
@@ -276,7 +322,7 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     return () => unsub();
   }, []);
 
-  // 1) Init + buses
+  // ✅ Init + buses
   useEffect(() => {
     let unsubBus: (() => void) | undefined;
     let locationSub: Location.LocationSubscription | null = null;
@@ -288,7 +334,6 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
         return;
       }
 
-      // ✅ fitcampus='stops'
       if (!didInitialFitRef.current) {
         didInitialFitRef.current = true;
         setRegion(INITIAL_REGION);
@@ -296,9 +341,12 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
         setTimeout(() => mapRef.current?.animateToRegion(INITIAL_REGION, 450), 10);
       }
 
+      // keep updating userLocRef so cloud ETA can refresh
       locationSub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation },
-        () => {},
+        (pos) => {
+          userLocRef.current = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+        },
       );
     })();
 
@@ -307,29 +355,74 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
       (snapshot) => {
         if (snapshot.metadata.hasPendingWrites) return;
 
+        const toDateSafe = (v: any): Date | null => {
+          if (!v) return null;
+
+          if (typeof v?.toDate === 'function') {
+            const d = v.toDate();
+            return d instanceof Date && !isNaN(d.getTime()) ? d : null;
+          }
+
+          if (typeof v === 'number') {
+            const d = new Date(v);
+            return !isNaN(d.getTime()) ? d : null;
+          }
+
+          if (typeof v === 'string') {
+            const d = new Date(v);
+            return !isNaN(d.getTime()) ? d : null;
+          }
+
+          return null;
+        };
+
         const buses = snapshot.docs
           .map((docSnap) => {
-            const data = docSnap.data();
+            const data: any = docSnap.data();
 
-            const timestamp =
-              data?.updatedAt?.toDate?.() ||
-              data?.lastSeen?.toDate?.() ||
-              (typeof data?.updatedAt === 'string' ? new Date(data.updatedAt) : null) ||
-              (typeof data?.lastSeen === 'string' ? new Date(data.lastSeen) : null) ||
-              null;
+            const latitude =
+              typeof data.latitude === 'number'
+                ? data.latitude
+                : typeof data.lat === 'number'
+                ? data.lat
+                : typeof data?.coords?.latitude === 'number'
+                ? data.coords.latitude
+                : null;
 
-            if (!timestamp || isNaN(timestamp.getTime())) return null;
+            const longitude =
+              typeof data.longitude === 'number'
+                ? data.longitude
+                : typeof data.lng === 'number'
+                ? data.lng
+                : typeof data?.coords?.longitude === 'number'
+                ? data.coords.longitude
+                : null;
 
-            const online = data?.online === true;
+            if (latitude == null || longitude == null) return null;
+
+            const online =
+              data?.online === true ||
+              data?.isOnline === true ||
+              data?.sharing === true ||
+              data?.isSharing === true;
+
             if (!online) return null;
 
-            if (typeof data.latitude !== 'number' || typeof data.longitude !== 'number') return null;
+            const timestamp =
+              toDateSafe(data?.updatedAt) ||
+              toDateSafe(data?.lastSeen) ||
+              toDateSafe(data?.lastUpdated) ||
+              toDateSafe(data?.timestamp) ||
+              toDateSafe(data?.sentAt) ||
+              null;
+
+            if (!timestamp) return null;
 
             return {
               id: docSnap.id,
-              latitude: data.latitude as number,
-              longitude: data.longitude as number,
-              timestamp: timestamp as Date,
+              latitude,
+              longitude,
+              timestamp,
               online,
             };
           })
@@ -339,8 +432,8 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
             return { ...bus, secondsAgo };
           });
 
-        const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
-        const visibleBuses = buses.filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS);
+        const freshBuses = buses.filter((bus: any) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
+        const visibleBuses = buses.filter((bus: any) => bus.secondsAgo < STALE_WINDOW_SECONDS);
 
         setBusOnline(freshBuses.length > 0);
 
@@ -355,7 +448,7 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
           };
         } = {};
 
-        visibleBuses.forEach((bus) => {
+        visibleBuses.forEach((bus: any) => {
           const { id, latitude, longitude, secondsAgo, timestamp } = bus;
 
           const prev = lastCoords.current[id];
@@ -398,7 +491,13 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
 
         setBusLocations(newLocations);
 
-        const recentIds = visibleBuses.map((b) => b.id);
+        const recentIds = visibleBuses.map((b: any) => b.id);
+        setActiveBusIds(recentIds);
+
+        // ✅ IMPORTANT: whenever buses update, briefly allow Marker to track view changes
+        // so the <Image> inside MarkerAnimated renders immediately (prevents “only shows when tapped”).
+        bumpBusTracks();
+
         Object.keys(busRegions.current).forEach((key) => {
           if (!recentIds.includes(key)) delete busRegions.current[key];
         });
@@ -408,8 +507,6 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
         Object.keys(headings.current).forEach((key) => {
           if (!recentIds.includes(key)) delete headings.current[key];
         });
-
-        setActiveBusIds(recentIds);
       },
       (err) => {
         console.error('buses snapshot error', {
@@ -422,10 +519,11 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     return () => {
       if (unsubBus) unsubBus();
       if (locationSub) locationSub.remove();
+      if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);
     };
   }, [INITIAL_REGION, STOPS_BOUNDS]);
 
-  // 2) subscribe to student's accepted/pending
+  // ✅ subscribe to student's accepted/pending
   useEffect(() => {
     if (!studentUid) {
       setOwnRequest(null);
@@ -480,12 +578,13 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     };
   }, [studentUid]);
 
-  // 3) consolidate
+  // ✅ consolidate
   useEffect(() => {
     if (ownRequest) {
       setRequest(ownRequest);
       setRequestId(ownRequest.id);
       setDriverId(ownRequest.driverUid || ownRequest.driverId || null);
+      closeSelectedBus();
       return;
     }
 
@@ -497,14 +596,11 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     setDriverId(null);
     notifiedRef.current = false;
 
-    // restore browsing UI state
-    setSelectedBusId(null);
-    setBusEta(null);
-    setNextStop(null);
+    closeSelectedBus();
     setShowLocationList(false);
   }, [ownRequest]);
 
-  // 4) route/ETA
+  // ✅ route/ETA for ACTIVE RIDE (accepted)
   const fetchRoute = async () => {
     if (!request || !driverId) {
       setRouteCoords([]);
@@ -540,80 +636,67 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const driverOnline = activeBusIds.includes(driverId || '');
 
-    useEffect(() => {
-      if (!driverId) return;
-      if (!request || request.status !== 'accepted') return;
-      if (!driverOnline) return;
+  useEffect(() => {
+    if (!driverId) return;
+    if (!request || request.status !== 'accepted') return;
+    if (!driverOnline) return;
 
-      if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
+    if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
 
-      const busLoc = busLocations[driverId] || lastCoords.current[driverId];
-      if (!busLoc) return;
+    const busLoc = busLocations[driverId] || lastCoords.current[driverId];
+    if (!busLoc) return;
 
-      const full = fullRouteRef.current;
+    const full = fullRouteRef.current;
 
-      // ✅ If we don't have a route yet, fetch it ASAP (this fixes "polyline never draws")
-      if (!full || full.length === 0) {
-        fetchTimeout.current = setTimeout(() => {
-          fetchRoute();
-        }, 250);
-
-        return () => {
-          if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
-        };
-      }
-
-      // ✅ Progressive trimming (more stable): advance along route only if we're within ~40m
-      // This avoids jumping the polyline to a far "closest point" when the bus is off-route.
-      let furthestIdx = -1;
-      for (let idx = 0; idx < full.length; idx++) {
-        const p = full[idx];
-        const d = getDistanceInMeters(busLoc.latitude, busLoc.longitude, p.latitude, p.longitude);
-
-        if (d <= 40) {
-          furthestIdx = idx;
-        } else if (furthestIdx >= 0) {
-          break;
-        }
-      }
-
-      if (furthestIdx >= 0) {
-        const trimmed = full.slice(furthestIdx);
-
-        setRouteCoords((prev) => {
-          // lightweight guard to reduce rerenders
-          if (prev.length === trimmed.length) return prev;
-          return trimmed;
-        });
-      }
-
-      // ✅ Periodic refresh to keep ETA and route geometry accurate as bus moves
+    if (!full || full.length === 0) {
       fetchTimeout.current = setTimeout(() => {
         fetchRoute();
-      }, 1200);
+      }, 250);
 
       return () => {
         if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [driverId, request?.status, driverOnline, busLocations[driverId ?? '']]);
+    }
 
+    let furthestIdx = -1;
+    for (let idx = 0; idx < full.length; idx++) {
+      const p = full[idx];
+      const d = getDistanceInMeters(busLoc.latitude, busLoc.longitude, p.latitude, p.longitude);
 
+      if (d <= 40) {
+        furthestIdx = idx;
+      } else if (furthestIdx >= 0) {
+        break;
+      }
+    }
 
+    if (furthestIdx >= 0) {
+      const trimmed = full.slice(furthestIdx);
+      setRouteCoords((prev) => {
+        if (prev.length === trimmed.length) return prev;
+        return trimmed;
+      });
+    }
 
-  // Auto-fit when accepted
+    fetchTimeout.current = setTimeout(() => {
+      fetchRoute();
+    }, 1200);
+
+    return () => {
+      if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driverId, request?.status, driverOnline, busLocations[driverId ?? '']]);
+
+  // ✅ Auto-fit when accepted
   useEffect(() => {
     if (request?.status !== 'accepted') return;
-
-    // Don’t fight the user if they just moved the map
     if (cameraMode === 'free' || recentlyInteracted(2500)) return;
-
     fitActiveRide();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.status, driverId]);
 
-
-  // Notifications
+  // ✅ Notifications
   useEffect(() => {
     if (request?.status === 'accepted') {
       Notifications.scheduleNotificationAsync({
@@ -628,7 +711,7 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     }
   }, [request?.status]);
 
-  // Arrival alert
+  // ✅ Arrival alert
   useEffect(() => {
     if (
       request?.status === 'accepted' &&
@@ -651,14 +734,14 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     }
   }, [request, driverId, activeBusIds]);
 
-  // Auto-switch when completed
+  // ✅ Auto-switch when completed
   useEffect(() => {
     if (request?.status === 'completed') {
       navigation.navigate('StudentHistory');
     }
   }, [request?.status, navigation]);
 
-  // Animate bottom card
+  // ✅ Animate bottom card
   useEffect(() => {
     if (request) {
       Animated.timing(slideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
@@ -667,41 +750,71 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     }
   }, [request, slideAnim]);
 
-  // Sidebar animation
+  // ✅ Keep "last seen" fresh for the selected bus
   useEffect(() => {
-    Animated.timing(sidebarAnim, {
-      toValue: selectedBusId ? 0 : SIDEBAR_WIDTH,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [selectedBusId, sidebarAnim]);
+    if (!selectedBusId) return;
+    const loc = busLocations[selectedBusId];
+    if (!loc) return;
+    setSelectedBusPopup((prev) => ({
+      etaToYou: prev?.etaToYou ?? null,
+      nextStop: prev?.nextStop ?? null,
+      lastSeenText: formatLastSeen(loc.secondsAgo),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBusId, busLocations[selectedBusId ?? '']]);
+
+  // ✅ Live update ETA-to-you for selected bus while it moves
+  const selectedEtaTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    if (selectedEtaTimerRef.current) clearInterval(selectedEtaTimerRef.current as any);
+    selectedEtaTimerRef.current = null;
+
+    if (!selectedBusId) return;
+
+    const tick = async () => {
+      try {
+        const busLoc = busLocations[selectedBusId] || lastCoords.current[selectedBusId];
+        const userLoc = userLocRef.current;
+        if (!busLoc || !userLoc) return;
+
+        const { eta: e } = await fetchDirections(
+          { latitude: busLoc.latitude, longitude: busLoc.longitude },
+          { latitude: userLoc.latitude, longitude: userLoc.longitude },
+        );
+
+        setSelectedBusPopup((prev) => ({
+          etaToYou: e ?? prev?.etaToYou ?? null,
+          nextStop: prev?.nextStop ?? null,
+          lastSeenText: prev?.lastSeenText ?? null,
+        }));
+      } catch {
+        // ignore transient failures
+      }
+    };
+
+    tick();
+    selectedEtaTimerRef.current = setInterval(tick, 2500) as any;
+
+    return () => {
+      if (selectedEtaTimerRef.current) clearInterval(selectedEtaTimerRef.current as any);
+      selectedEtaTimerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBusId, busLocations[selectedBusId ?? '']]);
 
   const handleBusPress = async (id: string) => {
-    // ✅ buses visible always, but you can still decide whether tapping is allowed during active ride:
-    // if (rideActive) return;
-
     const loc = busLocations[id];
     if (!loc) return;
 
     setSelectedBusId(id);
     setShowLocationList(false);
 
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setBusEta(null);
-        return;
-      }
-      const userLoc = await Location.getCurrentPositionAsync({});
-      const { eta: e } = await fetchDirections(
-        { latitude: loc.latitude, longitude: loc.longitude },
-        { latitude: userLoc.coords.latitude, longitude: userLoc.coords.longitude },
-      );
-      setBusEta(e);
-    } catch (err) {
-      console.error('Failed to fetch ETA', err);
-      setBusEta(null);
-    }
+    setSelectedBusPopup({
+      etaToYou: null,
+      nextStop: null,
+      lastSeenText: formatLastSeen(loc.secondsAgo),
+    });
+    showCloud();
 
     let nearestIdx = 0;
     let minDist = Number.MAX_VALUE;
@@ -712,26 +825,40 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
         nearestIdx = idx;
       }
     });
-
     const nextIdx = (nearestIdx + 1) % LOCATIONS.length;
-    setNextStop(LOCATIONS[nextIdx].name);
+    const nextStopName = LOCATIONS[nextIdx].name;
+
+    setSelectedBusPopup((prev) => ({
+      etaToYou: prev?.etaToYou ?? null,
+      nextStop: nextStopName,
+      lastSeenText: prev?.lastSeenText ?? formatLastSeen(loc.secondsAgo),
+    }));
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const userLoc = await Location.getCurrentPositionAsync({});
+        userLocRef.current = { latitude: userLoc.coords.latitude, longitude: userLoc.coords.longitude };
+      }
+    } catch {
+      // ignore
+    }
 
     const latDelta = region ? region.latitudeDelta / 1.5 : 0.008;
     const lonDelta = region ? region.longitudeDelta / 1.5 : 0.008;
-    const lonOffset = (lonDelta * (SIDEBAR_WIDTH / SCREEN_WIDTH)) / 2;
 
     markProgrammaticMove();
     mapRef.current?.animateToRegion(
       clampToBounds(
         {
           latitude: loc.latitude,
-          longitude: loc.longitude + lonOffset,
+          longitude: loc.longitude,
           latitudeDelta: latDelta,
           longitudeDelta: lonDelta,
         },
         STOPS_BOUNDS,
       ),
-      500,
+      650,
     );
   };
 
@@ -835,14 +962,14 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
     );
   }
 
-  const selectedBus = selectedBusId ? busLocations[selectedBusId] : null;
-
-  // ✅ Buttons float above tabbar + above bottom card when it slides up
   const buttonsBottom = 96 + (request ? Math.min(bottomCardHeight, 260) + 10 : 0);
+
+  const cloudScale = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] });
+  const cloudOpacity = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+  const cloudTranslateY = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
-      {/* ✅ During active ride, hide dropdown + tips */}
       {!rideActive && !selectedBusId && (
         <TouchableOpacity
           style={styles.searchContainer}
@@ -902,18 +1029,13 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
         rotateEnabled={false}
         pitchEnabled={false}
         customMapStyle={grayscaleMapStyle}
-        onPanDrag={() => {
-          markUserInteraction();
-        }}
-        onTouchStart={() => {
-          markUserInteraction();
-        }}
+        onPanDrag={markUserInteraction}
+        onTouchStart={markUserInteraction}
         onTouchEnd={() => {
           setTimeout(() => {
             userInteractingRef.current = false;
           }, 250);
         }}
-
         onRegionChangeComplete={(newRegion) => {
           if (!isProgrammaticMove() && userInteractingRef.current) {
             setCameraMode('free');
@@ -935,7 +1057,6 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
           }
         }}
       >
-        {/* ✅ Stops markers hidden during active ride */}
         {!rideActive &&
           LOCATIONS.map((stop) => (
             <Marker
@@ -948,29 +1069,72 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
             </Marker>
           ))}
 
-        {/* ✅ Bus markers ALWAYS visible */}
+        {/* Bus markers ALWAYS visible + cloud on selected */}
         {activeBusIds.map((id) => {
           const loc = busLocations[id];
           if (!loc) return null;
+
+          const isSelected = selectedBusId === id;
+          const animatedCoord = busRegions.current[id];
+
           return (
-            <MarkerAnimated
-              key={id}
-              coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
-              flat
-              rotation={loc.heading}
-              anchor={{ x: 0.5, y: 0.5 }}
-              onPress={() => handleBusPress(id)}
-            >
-              <Image
-                source={busIcon}
-                style={{ width: 120, height: 120, opacity: loc.isFresh ? 1 : 0.55 }}
-                resizeMode="contain"
-              />
-            </MarkerAnimated>
+            <React.Fragment key={id}>
+              <MarkerAnimated
+                coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
+                flat
+                rotation={loc.heading}
+                anchor={{ x: 0.5, y: 0.5 }}
+                onPress={() => handleBusPress(id)}
+                // ✅ FIX: this is the real reason you only “see it when you tap”
+                // Image markers on Android often render only after interaction unless tracksViewChanges is true briefly.
+                tracksViewChanges={isSelected || forceBusTracks}
+              >
+                <Image
+                  source={busIcon}
+                  style={{ width: 120, height: 120, opacity: loc.isFresh ? 1 : 0.55 }}
+                  resizeMode="contain"
+                />
+              </MarkerAnimated>
+
+              {isSelected && (
+                <Marker
+                  coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
+                  anchor={{ x: 0.5, y: 1.42 }}
+                  tappable={false}
+                  tracksViewChanges
+                >
+                  <Animated.View
+                    style={{
+                      opacity: cloudOpacity,
+                      transform: [{ translateY: cloudTranslateY }, { scale: cloudScale }],
+                    }}
+                  >
+                    <View style={styles.busCloud}>
+                      <View style={styles.busCloudInner}>
+                        <Text style={styles.busCloudTitle}>{`Bogey Bus ${id}`.trim()}</Text>
+
+                        {selectedBusPopup?.etaToYou ? (
+                          <Text style={styles.busCloudText}>ETA to you: {selectedBusPopup.etaToYou}</Text>
+                        ) : null}
+
+                        <Text style={styles.busCloudMuted}>
+                          Last seen: {selectedBusPopup?.lastSeenText ?? formatLastSeen(loc.secondsAgo)}
+                        </Text>
+
+                        {selectedBusPopup?.nextStop ? (
+                          <Text style={styles.busCloudMuted}>Next stop: {selectedBusPopup.nextStop}</Text>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.busCloudTail} />
+                    </View>
+                  </Animated.View>
+                </Marker>
+              )}
+            </React.Fragment>
           );
         })}
 
-        {/* Ride pickup marker */}
         {request?.stop && (
           <MarkerAnimated
             coordinate={{
@@ -983,11 +1147,9 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
           </MarkerAnimated>
         )}
 
-        {/* Route */}
         {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}
       </MapView>
 
-      {/* ✅ Bottom-left controls above tabs AND above the bottom card */}
       <View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { bottom: buttonsBottom }]}>
         <TouchableOpacity style={styles.fab} onPress={centerOnUser} activeOpacity={0.9}>
           <Icon name="my-location" size={22} color="#111" />
@@ -1014,27 +1176,12 @@ const recentlyInteracted = (ms = 2000) => Date.now() - lastUserInteractionRef.cu
         )}
       </View>
 
-      {/* Sidebar (still allowed; buses always visible) */}
       {selectedBusId && (
-        <TouchableWithoutFeedback onPress={() => setSelectedBusId(null)}>
+        <TouchableWithoutFeedback onPress={closeSelectedBus}>
           <View style={styles.transparentOverlay} />
         </TouchableWithoutFeedback>
       )}
 
-      <Animated.View
-        pointerEvents={selectedBusId ? 'auto' : 'none'}
-        style={[
-          styles.sidebar,
-          { transform: [{ translateX: sidebarAnim }], display: selectedBusId ? 'flex' : 'none' },
-        ]}
-      >
-        <Text style={styles.sidebarTitle}>{`Bogey Bus ${selectedBusId ?? ''}`.trim()}</Text>
-        {busEta && <Text style={styles.sidebarText}>ETA to you: {busEta}</Text>}
-        {selectedBus && <Text style={styles.sidebarText}>Last seen: {formatLastSeen(selectedBus.secondsAgo)}</Text>}
-        {nextStop && <Text style={styles.sidebarText}>Next stop: {nextStop}</Text>}
-      </Animated.View>
-
-      {/* Bottom Card */}
       <Animated.View
         onLayout={(e) => setBottomCardHeight(e.nativeEvent.layout.height)}
         style={[
@@ -1119,6 +1266,7 @@ const styles = StyleSheet.create({
   searchText: { flex: 1, fontSize: 16, color: '#888' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 99 },
   transparentOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', zIndex: 99 },
+
   locationListContainer: {
     position: 'absolute',
     top: 140,
@@ -1141,7 +1289,6 @@ const styles = StyleSheet.create({
   },
   locationText: { fontSize: 16, color: '#333' },
 
-  // Bottom-left controls (dynamic bottom set inline)
   fabWrapBottomLeft: {
     position: 'absolute',
     left: 14,
@@ -1223,29 +1370,53 @@ const styles = StyleSheet.create({
   cancelButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
   noRideText: { fontSize: 16, color: '#888', textAlign: 'center' },
 
-  sidebar: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: SIDEBAR_WIDTH,
-    bottom: 0,
-    backgroundColor: PRIMARY_COLOR,
-    padding: 20,
-    paddingTop: 50,
-    borderTopRightRadius: 20,
+  busCloud: {
+    width: 260,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+    zIndex: 999,
+  },
+  busCloudInner: {
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 18,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 2, height: 0 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 10,
-    zIndex: 101,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  sidebarTitle: {
-    fontSize: 20,
+  busCloudTail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 10,
+    borderRightWidth: 10,
+    borderTopWidth: 13,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: 'rgba(255,255,255,0.96)',
+    marginTop: -1,
+    alignSelf: 'center',
+  },
+  busCloudTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111',
+    marginBottom: 8,
+  },
+  busCloudText: {
+    fontSize: 16,
+    color: '#111',
+    marginBottom: 6,
     fontWeight: '600',
-    marginBottom: 12,
-    marginTop: 30,
-    color: '#fff',
   },
-  sidebarText: { fontSize: 16, marginBottom: 8, color: '#fff' },
+  busCloudMuted: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
 });

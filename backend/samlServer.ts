@@ -1,5 +1,4 @@
-import express from 'express';
-import bodyParser from 'body-parser';
+import express, { Request, Response } from 'express';
 import * as saml from 'samlify';
 import admin from 'firebase-admin';
 import fs from 'fs';
@@ -7,44 +6,53 @@ import path from 'path';
 import crypto from 'crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import xpath from 'xpath';
+import 'dotenv/config';
 
 /**
- * Drop-in example that covers SAML setup steps 1 and 2:
- * 1) Define your Service Provider identifiers (Entity ID + ACS URL)
- * 2) Stand up a real ACS endpoint that parses and validates SAML Responses
+ * SAML ACS + one-time token exchange for Firebase custom token.
  *
- * To run locally:
- *   npm install express body-parser samlify firebase-admin
- *   export SAML_SP_ENTITY_ID="https://YOUR-DOMAIN/sp"
- *   export SAML_SP_ACS_URL="https://YOUR-DOMAIN/saml/acs"
- *   export EXPO_PUBLIC_SAML_IDP_ENTITY_ID="https://idp.example.com/metadata"
- *   export EXPO_PUBLIC_SAML_IDP_SSO_URL="https://idp.example.com/sso"
- *   export EXPO_PUBLIC_SAML_IDP_CERT="<BASE64 PEM WITHOUT BEGIN/END LINES>"
- *   export FIREBASE_SERVICE_ACCOUNT_PATH="./serviceAccount.json"
- *   ts-node backend/samlServer.ts
+ * Endpoints:
+ *   GET  /health
+ *   GET  /saml/login        <-- ADDED (SP-initiated login)
+ *   POST /saml/acs
+ *   POST /saml/exchange
+ *   GET  /saml/metadata
  */
 
-// Step 1: lock in the SP identifiers your IdP will trust
-const SAML_SP_ENTITY_ID =
-  process.env.SAML_SP_ENTITY_ID || 'com.example.bogeybus';
-const SAML_SP_ACS_URL =
-  process.env.SAML_SP_ACS_URL || 'https://YOUR-BACKEND/saml/acs';
+// ---------- ENV (match your .env names) ----------
+const SAML_SP_ENTITY_ID = (
+  process.env.EXPO_PUBLIC_SAML_SP_ENTITY_ID ||
+  process.env.SAML_SP_ENTITY_ID ||
+  'com.example.bogeybus'
+).trim();
 
-// IdP metadata values you already have from IT
-const IDP_ENTITY_ID = process.env.EXPO_PUBLIC_SAML_IDP_ENTITY_ID || '';
-const IDP_SSO_URL = process.env.EXPO_PUBLIC_SAML_IDP_SSO_URL || '';
+const SAML_SP_ACS_URL = (
+  process.env.EXPO_PUBLIC_SAML_SP_ACS_URL ||
+  process.env.SAML_SP_ACS_URL ||
+  'https://YOUR-BACKEND/saml/acs'
+).trim();
+
+const IDP_ENTITY_ID = (process.env.EXPO_PUBLIC_SAML_IDP_ENTITY_ID || '').trim();
+const IDP_SSO_URL = (process.env.EXPO_PUBLIC_SAML_IDP_SSO_URL || '').trim();
+
+// NOTE: Despite the name, your value is a cert body (base64), not a fingerprint.
 const IDP_SIGNING_CERT = formatCert(process.env.EXPO_PUBLIC_SAML_IDP_CERT_FINGERPRINT || '');
 
-// SAML schema validation (per samlify guidance)
+const PORT = parseInt(process.env.PORT || '3000', 10);
+
+// Optional: where to send users after ACS when using browser-based testing.
+// If provided, ACS will redirect to `${RETURN_TO_DEFAULT}?samlToken=...` when no RelayState present.
+const RETURN_TO_DEFAULT = (process.env.SAML_RETURN_TO_DEFAULT || '').trim();
+
+// ---------- SAML schema validation (lightweight) ----------
 saml.setSchemaValidator({
   validate: async (xml: string) => {
     const dom = new DOMParser({
       errorHandler: { warning: undefined, error: undefined },
     }).parseFromString(xml);
+
     const rootName = dom.documentElement?.localName;
-    if (!rootName) {
-      throw new Error('ERR_SAML_SCHEMA_MISSING_ROOT');
-    }
+    if (!rootName) throw new Error('ERR_SAML_SCHEMA_MISSING_ROOT');
 
     const isResponse = rootName === 'Response';
     const isLogout = rootName === 'LogoutResponse' || rootName === 'LogoutRequest';
@@ -54,21 +62,15 @@ saml.setSchemaValidator({
     }
 
     if (isResponse) {
-      const assertionNode = xpath.select1(
-        "//*[local-name()='Assertion']",
-        dom,
-      );
-      const issuerNode = xpath.select1(
-        "//*[local-name()='Issuer']",
-        dom,
-      );
+      const assertionNode = xpath.select1("//*[local-name()='Assertion']", dom);
+      const issuerNode = xpath.select1("//*[local-name()='Issuer']", dom);
       const subjectConfirmationNode = xpath.select1(
         "//*[local-name()='SubjectConfirmationData']",
-        dom,
+        dom
       );
       const audienceNode = xpath.select1(
         "//*[local-name()='AudienceRestriction']/*[local-name()='Audience']",
-        dom,
+        dom
       );
 
       if (!assertionNode || !issuerNode || !subjectConfirmationNode || !audienceNode) {
@@ -80,9 +82,17 @@ saml.setSchemaValidator({
   },
 });
 
+// ---------- IdP + SP ----------
 const idp = saml.IdentityProvider({
   entityID: IDP_ENTITY_ID,
+  // IMPORTANT:
+  // For SP-initiated login, samlify commonly creates AuthnRequests using REDIRECT binding.
+  // Many IdPs accept both redirect and post at the same SSO URL, so we list both.
   singleSignOnService: [
+    {
+      Binding: saml.Constants.namespace.binding.redirect,
+      Location: IDP_SSO_URL,
+    },
     {
       Binding: saml.Constants.namespace.binding.post,
       Location: IDP_SSO_URL,
@@ -102,10 +112,11 @@ const sp = saml.ServiceProvider({
   wantAssertionsSigned: true,
 });
 
-// Boot Firebase Admin so we can mint custom tokens after a valid assertion
+// ---------- Firebase Admin init (optional but recommended) ----------
 const serviceAccountPath =
   process.env.FIREBASE_SERVICE_ACCOUNT_PATH || path.join(__dirname, 'serviceAccount.json');
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
 if (admin.apps.length === 0) {
   if (serviceAccountJson) {
     const serviceAccount = JSON.parse(serviceAccountJson);
@@ -118,29 +129,25 @@ if (admin.apps.length === 0) {
       credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
     });
   } else {
+    // Will NOT be able to createCustomToken without credentials.
     admin.initializeApp();
   }
 }
 
-const app = express();
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-
-const HANDOFF_TOKEN_TTL_MS = 5 * 60 * 1000;
-const handoffTokens = new Map<string, HandoffTokenPayload>();
-
+// ---------- One-time handoff token store ----------
 type HandoffTokenPayload = {
   uid: string;
   attributes: Record<string, unknown>;
   expiresAt: number;
 };
 
+const HANDOFF_TOKEN_TTL_MS = 5 * 60 * 1000;
+const handoffTokens = new Map<string, HandoffTokenPayload>();
+
 function cleanupExpiredHandoffTokens() {
   const now = Date.now();
   for (const [token, payload] of handoffTokens.entries()) {
-    if (payload.expiresAt <= now) {
-      handoffTokens.delete(token);
-    }
+    if (payload.expiresAt <= now) handoffTokens.delete(token);
   }
 }
 
@@ -167,19 +174,73 @@ function consumeHandoffToken(token: string): HandoffTokenPayload | null {
   return payload;
 }
 
-// Step 2: ACS endpoint that validates SAMLResponse and returns a handoff token
-app.post('/saml/acs', async (req, res) => {
-  const samlResponse = req.body?.SAMLResponse;
+// ---------- Express app ----------
+const app = express();
+
+// Replace body-parser with built-in Express parsers
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+// Health check for IT
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    spEntityId: SAML_SP_ENTITY_ID,
+    acsUrl: SAML_SP_ACS_URL,
+    idpEntityId: IDP_ENTITY_ID,
+  });
+});
+
+/**
+ * SP-initiated SAML login endpoint
+ * Visit:
+ *   https://sso.mckendree.edu/saml/login
+ *
+ * Optional:
+ *   /saml/login?returnTo=bogeybus://sso
+ *   /saml/login?relayState=bogeybus://sso
+ *
+ * relayState is carried by the IdP and returned with the POST to ACS.
+ */
+app.get('/saml/login', async (req: Request, res: Response) => {
+  try {
+    const returnTo =
+      (req.query.relayState as string) ||
+      (req.query.returnTo as string) ||
+      '';
+
+    const { context } = sp.createLoginRequest(idp, 'redirect');
+
+    // If you want RelayState, append it to the redirect URL manually
+    if (returnTo) {
+      const joiner = context.includes('?') ? '&' : '?';
+      return res.redirect(`${context}${joiner}RelayState=${encodeURIComponent(returnTo)}`);
+    }
+
+    return res.redirect(context);
+  } catch (e: any) {
+    console.error('Failed to create SAML login request:', e?.message ?? e);
+    return res.status(500).send('Failed to start SAML login');
+  }
+});
+
+
+// ACS endpoint
+app.post('/saml/acs', async (req: Request, res: Response) => {
+  const samlResponse = (req.body as any)?.SAMLResponse;
   if (!samlResponse) {
     return res.status(400).json({ error: 'Missing SAMLResponse payload' });
   }
 
   try {
-    // samlify handles decoding and signature validation; we enforce audience/recipient below
-    const { extract, samlContent } = await sp.parseLoginResponse(idp, 'post', { body: req.body });
+    const { extract, samlContent } = await sp.parseLoginResponse(idp, 'post', { body: req.body as any });
     const assertionDetails = enforceAudienceAndRecipient(extract, samlContent);
-    const attributes = extract?.attributes || {};
+
+    const attributes = (extract?.attributes || {}) as Record<string, unknown>;
     const uid = selectUid(attributes);
+
+    // log only attribute KEYS to help mapping without leaking values
+    console.log('SAML attributes received (keys only):', Object.keys(attributes));
 
     if (!uid) {
       logAssertionFailure('missing_uid', {
@@ -194,56 +255,107 @@ app.post('/saml/acs', async (req, res) => {
 
     const samlToken = issueHandoffToken(uid, attributes);
 
-    // Return JSON for the mobile app; adjust to redirect if you prefer app-deep-link handoff
+    // If RelayState or returnTo default is provided, redirect instead of JSON.
+    // RelayState can be any string; we expect a URL like bogeybus://sso or https://...
+    const relayState =
+      normalizeString((req.body as any)?.RelayState) ||
+      normalizeString((extract as any)?.relayState) ||
+      '';
+
+    const returnTo = relayState || RETURN_TO_DEFAULT;
+
+    if (returnTo) {
+      // Append samlToken to returnTo safely
+      const joiner = returnTo.includes('?') ? '&' : '?';
+      return res.redirect(`${returnTo}${joiner}samlToken=${encodeURIComponent(samlToken)}`);
+    }
+
+    // Default: JSON response (useful for debugging)
     return res.json({ samlToken });
   } catch (error) {
     if (!isSamlValidationError(error)) {
       logAssertionFailure('validation_error', {
         ip: req.ip,
         userAgent: req.get('user-agent'),
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
     return res.status(401).json({ error: 'Invalid SAML assertion' });
   }
 });
 
-// Step 3: Exchange a one-time-use SAML handoff token for a Firebase token
-app.post('/saml/exchange', async (req, res) => {
-  const samlToken = req.body?.samlToken;
+// Exchange endpoint
+app.post('/saml/exchange', async (req: Request, res: Response) => {
+  const samlToken = (req.body as any)?.samlToken;
   if (!samlToken) {
     return res.status(400).json({ error: 'Missing SAML handoff token' });
   }
 
-  const payload = consumeHandoffToken(samlToken);
+  const payload = consumeHandoffToken(String(samlToken));
   if (!payload) {
     return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
   }
 
   const { uid, attributes } = payload;
-  const firebaseToken = await admin.auth().createCustomToken(uid, {
-    email: attributes.email as string | undefined,
-    displayName: attributes.displayName as string | undefined,
-    roles: attributes.roles as string[] | string | undefined,
-  });
 
-  return res.json({ firebaseToken });
+  try {
+    // Map attributes coming from QuickLaunch.
+    // If IT sends Fname/Lname keys, we can build a display name:
+    const email =
+      normalizeString((attributes as any).email) ||
+      normalizeString((attributes as any).mail) ||
+      undefined;
+
+    const givenName =
+      normalizeString((attributes as any).givenName) ||
+      normalizeString((attributes as any).Fname) ||
+      undefined;
+
+    const lastName =
+      normalizeString((attributes as any).lastName) ||
+      normalizeString((attributes as any).Lname) ||
+      undefined;
+
+    const displayName =
+      normalizeString((attributes as any).displayName) ||
+      [givenName, lastName].filter(Boolean).join(' ') ||
+      undefined;
+
+    const firebaseToken = await admin.auth().createCustomToken(uid, {
+      email,
+      displayName,
+      // keep roles optional; you said roles stay in Firebase/Firestore
+      roles: (attributes as any).roles as string[] | string | undefined,
+    });
+
+    return res.json({ firebaseToken });
+  } catch (e) {
+    // This usually means Firebase Admin credentials aren’t configured on the server.
+    return res.status(500).json({
+      error: 'Failed to mint Firebase token. Check Firebase Admin credentials on server.',
+      details: e instanceof Error ? e.message : String(e),
+    });
+  }
 });
 
-app.get('/saml/metadata', (_req, res) => {
+// Metadata
+app.get('/saml/metadata', (_req: Request, res: Response) => {
   res.type('application/xml');
   res.send(sp.getMetadata());
 });
 
-const port = parseInt(process.env.PORT || '3000', 10);
-app.listen(port, () => {
-  console.log(`SAML ACS listening on http://localhost:${port}`);
+// Start
+app.listen(PORT, () => {
+  console.log(`SAML service listening on http://localhost:${PORT}`);
   console.log(`SP Entity ID: ${SAML_SP_ENTITY_ID}`);
   console.log(`ACS URL: ${SAML_SP_ACS_URL}`);
+  console.log(`Login URL: ${SAML_SP_ENTITY_ID.replace(/\/$/, '')}/saml/login (via IIS host)`);
 });
 
+// ---------- helpers ----------
 function selectUid(attributes: Record<string, unknown>): string | undefined {
-  const candidateKeys = ['uid', 'userId', 'email', 'nameID'];
+  // Adjust this list to match the IdP attribute mapping
+  const candidateKeys = ['uid', 'userId', 'email', 'mail', 'nameID', 'NameID'];
   for (const key of candidateKeys) {
     const value = attributes[key];
     if (!value) continue;
@@ -253,7 +365,6 @@ function selectUid(attributes: Record<string, unknown>): string | undefined {
       return String(value);
     }
   }
-
   return undefined;
 }
 
@@ -270,8 +381,10 @@ function formatCert(cert: string): string {
 function enforceAudienceAndRecipient(extract: any, samlContent: string) {
   const expectedAudience = SAML_SP_ENTITY_ID;
   const expectedRecipient = SAML_SP_ACS_URL;
+
   const audienceValues = normalizeAudience(extract?.audience);
   const responseDestination = extract?.response?.destination as string | undefined;
+
   const recipientExtract = saml.Extractor.extract(samlContent, [
     {
       key: 'recipient',
@@ -279,7 +392,7 @@ function enforceAudienceAndRecipient(extract: any, samlContent: string) {
       attributes: ['Recipient'],
     },
   ]);
-  const recipientValue = normalizeString(recipientExtract?.recipient);
+  const recipientValue = normalizeString((recipientExtract as any)?.recipient);
 
   if (!audienceValues.includes(expectedAudience)) {
     const error = new Error('ERR_SAML_AUDIENCE_MISMATCH');
@@ -323,9 +436,7 @@ function enforceAudienceAndRecipient(extract: any, samlContent: string) {
 
 function normalizeAudience(audience: unknown): string[] {
   if (!audience) return [];
-  if (Array.isArray(audience)) {
-    return audience.map((value) => String(value));
-  }
+  if (Array.isArray(audience)) return audience.map((v) => String(v));
   return [String(audience)];
 }
 
@@ -336,10 +447,7 @@ function normalizeString(value: unknown): string | undefined {
 }
 
 function logAssertionFailure(reason: string, details: Record<string, unknown>) {
-  console.error('SAML assertion rejected', {
-    reason,
-    ...details,
-  });
+  console.error('SAML assertion rejected', { reason, ...details });
 }
 
 function isSamlValidationError(error: unknown): boolean {
