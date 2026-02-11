@@ -1,6 +1,7 @@
 // src/auth/startSamlLogin.ts
+import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
-import { APP_DEEP_LINK_SCHEME, SAML_LOGIN_URL } from '../../config';
+import { SAML_LOGIN_URL } from '../../config';
 
 // For iOS: makes the browser session return cleanly
 WebBrowser.maybeCompleteAuthSession?.();
@@ -10,7 +11,8 @@ export async function startSamlLogin(): Promise<string | null> {
     throw new Error('Missing SAML_LOGIN_URL in config/.env');
   }
 
-  const returnTo = `${APP_DEEP_LINK_SCHEME}://sso`;
+  // Use a runtime-aware callback URL so this works in Expo Go/dev client and standalone builds.
+  const returnTo = Linking.createURL('sso');
   const joiner = SAML_LOGIN_URL.includes('?') ? '&' : '?';
   const loginUrl = `${SAML_LOGIN_URL}${joiner}returnTo=${encodeURIComponent(returnTo)}`;
 
@@ -25,5 +27,5 @@ export async function startSamlLogin(): Promise<string | null> {
     return null;
   }
 
-  throw new Error('School SSO did not complete.');
+  throw new Error(`School SSO did not complete (result: ${result.type}).`);
 }
