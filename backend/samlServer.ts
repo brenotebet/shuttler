@@ -285,6 +285,12 @@ app.post('/saml/acs', async (req: Request, res: Response) => {
 });
 
 // Exchange endpoint
+app.get('/saml/exchange', (_req: Request, res: Response) => {
+  return res.status(405).json({
+    error: 'Method not allowed. Use POST /saml/exchange with JSON body { samlToken }.',
+  });
+});
+
 app.post('/saml/exchange', async (req: Request, res: Response) => {
   const samlToken = (req.body as any)?.samlToken;
   if (!samlToken) {
