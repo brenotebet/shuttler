@@ -31,6 +31,7 @@ import AppButton from '../components/AppButton';
 import FormField from '../components/FormField';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { persistSamlHandoffFromUrl, trySamlHandoffLogin } from '../src/auth/samlAuth';
+import { startSamlLogin } from '../src/auth/startSamlLogin';
 import * as Linking from 'expo-linking';
 import InfoBanner from '../components/InfoBanner';
 
@@ -154,12 +155,25 @@ export default function LoginScreen({ navigation }: Props) {
         const resolved = auth.currentUser;
         if (!resolved) throw new Error('School SSO completed but no Firebase session found.');
         await finishStudentLogin(resolved);
-      } else {
-        showAlert(
-          'Open the shuttle app from the school app to reuse your SSO session.',
-          'Waiting for school SSO'
+        return;
+      }
+
+      const redirectUrl = await startSamlLogin();
+      if (!redirectUrl) {
+        return;
+      }
+
+      await persistSamlHandoffFromUrl(redirectUrl);
+      const signedInFromRedirect = await trySamlHandoffLogin(redirectUrl);
+      if (!signedInFromRedirect) {
+        throw new Error(
+          'School SSO finished but no handoff token was found. Check ACS redirect and RelayState.'
         );
       }
+
+      const resolved = auth.currentUser;
+      if (!resolved) throw new Error('School SSO completed but no Firebase session found.');
+      await finishStudentLogin(resolved);
     } catch (e: any) {
       showAlert(e?.message ?? 'Unknown error', 'School SSO Error');
     } finally {
