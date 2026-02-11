@@ -31,6 +31,7 @@ import AppButton from '../components/AppButton';
 import FormField from '../components/FormField';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { persistSamlHandoffFromUrl, trySamlHandoffLogin } from '../src/auth/samlAuth';
+import { startSamlLogin } from '../src/auth/startSamlLogin';
 import * as Linking from 'expo-linking';
 import InfoBanner from '../components/InfoBanner';
 
@@ -155,10 +156,7 @@ export default function LoginScreen({ navigation }: Props) {
         if (!resolved) throw new Error('School SSO completed but no Firebase session found.');
         await finishStudentLogin(resolved);
       } else {
-        showAlert(
-          'Open the shuttle app from the school app to reuse your SSO session.',
-          'Waiting for school SSO'
-        );
+        await startSamlLogin();
       }
     } catch (e: any) {
       showAlert(e?.message ?? 'Unknown error', 'School SSO Error');
