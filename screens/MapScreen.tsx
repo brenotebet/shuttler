@@ -478,13 +478,12 @@ export default function MapScreen() {
             });
           } else {
             busRegions.current[id]
-              .timing(
-                {
-                  toValue: { latitude, longitude, latitudeDelta: 0, longitudeDelta: 0 } as any,
-                  duration: 2900,
-                  useNativeDriver: false,
-                } as any,
-              )
+              .timing({
+                latitude,
+                longitude,
+                duration: 2900,
+                useNativeDriver: false,
+              } as any)
               .start();
           }
         });

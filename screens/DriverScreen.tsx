@@ -534,7 +534,7 @@ export default function DriverScreen() {
                       latitudeDelta: 0,
                       longitudeDelta: 0,
                     } as any,
-                    duration: 2900,
+                    duration: 1400,
                     useNativeDriver: false,
                   } as any,
                 )
