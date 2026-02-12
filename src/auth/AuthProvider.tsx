@@ -6,6 +6,11 @@ import { auth, db } from '../../firebase/firebaseconfig';
 
 type Role = 'student' | 'driver' | 'admin';
 
+function normalizeRole(value: unknown): Role {
+  if (value === 'driver' || value === 'admin' || value === 'student') return value;
+  return 'student';
+}
+
 type AuthContextType = {
   user: User | null;
   role: Role | null;
@@ -35,7 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       try {
         const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
-        setRole((snap.data()?.role as Role) ?? 'student');
+        setRole(normalizeRole(snap.data()?.role));
       } catch {
         setRole('student');
       } finally {

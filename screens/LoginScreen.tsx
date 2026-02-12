@@ -17,13 +17,10 @@ import {
   createUserWithEmailAndPassword,
   type User,
 } from 'firebase/auth';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 
 import { signInWithQuickLaunch } from '../quicklaunch/quicklaunchAuth';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../navigation/StackNavigator';
-import { useDriver } from '../drivercontext/DriverContext';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import ScreenContainer from '../components/ScreenContainer';
@@ -35,24 +32,28 @@ import { startSamlLogin } from '../src/auth/startSamlLogin';
 import * as Linking from 'expo-linking';
 import InfoBanner from '../components/InfoBanner';
 
-const adminAccounts: { [key: string]: string } = {
-  driver1: 'bus123',
-  driver2: 'bus456',
-  driver3: 'bus789',
-};
+type UserRole = 'student' | 'driver' | 'admin';
 
-type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Login'>;
-};
+function normalizeRole(value: unknown): UserRole | null {
+  if (value === 'student' || value === 'driver' || value === 'admin') {
+    return value;
+  }
+  return null;
+}
 
-async function upsertUserProfile(user: User, role: 'student' | 'driver' | 'admin') {
+async function upsertUserProfile(user: User, fallbackRole: UserRole) {
+  const userRef = doc(db, 'users', user.uid);
+  const existing = await getDoc(userRef);
+  const existingRole = normalizeRole(existing.data()?.role);
+  const roleToPersist = existingRole ?? fallbackRole;
+
   // NOTE: merge:true so we never wipe existing fields
   await setDoc(
-    doc(db, 'users', user.uid),
+    userRef,
     {
       uid: user.uid,
       email: user.email ?? null,
-      role,
+      role: roleToPersist,
       lastLoginAt: serverTimestamp(),
       // createdAt only set on first create by using merge + checking not possible in client rules;
       // fine to always send; serverTimestamp will just overwrite, but that's okay for now.
@@ -62,7 +63,7 @@ async function upsertUserProfile(user: User, role: 'student' | 'driver' | 'admin
   );
 }
 
-export default function LoginScreen({ navigation }: Props) {
+export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -71,13 +72,9 @@ export default function LoginScreen({ navigation }: Props) {
   const [isCheckingSaml, setIsCheckingSaml] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const finishStudentLogin = useCallback(
-    async (user: User) => {
-      await upsertUserProfile(user, 'student');
-      navigation.replace('StudentHome');
-    },
-    [navigation]
-  );
+  const finishStudentLogin = useCallback(async (user: User) => {
+    await upsertUserProfile(user, 'student');
+  }, []);
 
   const handleLogin = useCallback(async () => {
     if (isSubmitting) return;
@@ -86,7 +83,7 @@ export default function LoginScreen({ navigation }: Props) {
     const trimmedPassword = password.trim();
 
     // TEMP driver gate (NOT secure) — keep for demo/testing only.
-      if (isDriver) {
+    if (isDriver) {
       try {
         setIsSubmitting(true);
 
@@ -97,16 +94,13 @@ export default function LoginScreen({ navigation }: Props) {
         );
 
         await upsertUserProfile(cred.user, 'driver');
-
-        navigation.replace('DriverHome');
       } catch (err: any) {
         showAlert(err?.message ?? 'Driver login failed');
       } finally {
         setIsSubmitting(false);
       }
       return;
-  }
-
+    }
 
     try {
       setIsSubmitting(true);
@@ -127,7 +121,7 @@ export default function LoginScreen({ navigation }: Props) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password, isDriver, navigation, finishStudentLogin, isSubmitting]);
+  }, [email, password, isDriver, finishStudentLogin, isSubmitting]);
 
   const handleQuickLaunch = useCallback(async () => {
     if (isSubmitting) return;
@@ -191,9 +185,6 @@ export default function LoginScreen({ navigation }: Props) {
           const resolved = auth.currentUser;
           if (resolved) {
             await upsertUserProfile(resolved, 'student');
-            navigation.replace('StudentHome');
-          } else {
-            navigation.replace('StudentHome');
           }
         }
       } catch (e: any) {
@@ -214,7 +205,6 @@ export default function LoginScreen({ navigation }: Props) {
           if (resolved) {
             await upsertUserProfile(resolved, 'student');
           }
-          navigation.replace('StudentHome');
         }
       } catch (e: any) {
         showAlert(e?.message ?? 'Unknown error', 'School SSO Error');
@@ -225,7 +215,7 @@ export default function LoginScreen({ navigation }: Props) {
       isMounted = false;
       subscription.remove();
     };
-  }, [navigation]);
+  }, []);
 
   return (
     <ScreenContainer>

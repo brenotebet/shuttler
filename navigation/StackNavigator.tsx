@@ -48,7 +48,7 @@ export default function StackNavigator() {
       {!user ? (
         // Logged out
         <Stack.Screen name="Login" component={LoginScreen} />
-      ) : role === 'driver' ? (
+      ) : role === 'driver' || role === 'admin' ? (
         // Logged in as driver/admin
         <>
           <Stack.Screen name="DriverHome" component={DriverTabs} />
