@@ -17,7 +17,7 @@ import {
   createUserWithEmailAndPassword,
   type User,
 } from 'firebase/auth';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 
 import { signInWithQuickLaunch } from '../quicklaunch/quicklaunchAuth';
@@ -45,14 +45,28 @@ type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Login'>;
 };
 
-async function upsertUserProfile(user: User, role: 'student' | 'driver' | 'admin') {
+type UserRole = 'student' | 'driver' | 'admin';
+
+function normalizeRole(value: unknown): UserRole | null {
+  if (value === 'student' || value === 'driver' || value === 'admin') {
+    return value;
+  }
+  return null;
+}
+
+async function upsertUserProfile(user: User, fallbackRole: UserRole) {
+  const userRef = doc(db, 'users', user.uid);
+  const existing = await getDoc(userRef);
+  const existingRole = normalizeRole(existing.data()?.role);
+  const roleToPersist = existingRole ?? fallbackRole;
+
   // NOTE: merge:true so we never wipe existing fields
   await setDoc(
-    doc(db, 'users', user.uid),
+    userRef,
     {
       uid: user.uid,
       email: user.email ?? null,
-      role,
+      role: roleToPersist,
       lastLoginAt: serverTimestamp(),
       // createdAt only set on first create by using merge + checking not possible in client rules;
       // fine to always send; serverTimestamp will just overwrite, but that's okay for now.
