@@ -41,6 +41,7 @@ import {
   updateDoc,
   orderBy,
   limit,
+  getDoc,
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase/firebaseconfig';
@@ -132,6 +133,7 @@ type BusPopup = {
   etaToYou: string | null;
   nextStop: string | null;
   lastSeenText: string | null;
+  driverName: string | null;
 };
 
 export default function MapScreen() {
@@ -176,6 +178,7 @@ export default function MapScreen() {
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [selectedBusPopup, setSelectedBusPopup] = useState<BusPopup | null>(null);
+  const [driverFirstNames, setDriverFirstNames] = useState<Record<string, string>>({});
 
   const mapRef = useRef<MapView | null>(null);
 
@@ -249,6 +252,22 @@ export default function MapScreen() {
     if (seconds < 60) return `${Math.max(1, Math.round(seconds))}s ago`;
     if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
     return `${Math.round(seconds / 3600)}h ago`;
+  };
+
+  const getDriverFirstName = async (uid: string) => {
+    if (!uid) return 'Driver';
+    if (driverFirstNames[uid]) return driverFirstNames[uid];
+
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      const data = (snap.data() as any) || {};
+      const firstName =
+        data.firstName || data.firstname || data.givenName || data.displayName?.split?.(' ')?.[0] || 'Driver';
+      setDriverFirstNames((prev) => ({ ...prev, [uid]: firstName }));
+      return firstName;
+    } catch {
+      return 'Driver';
+    }
   };
 
   // ✅ Hide browsing UI when ride exists (pending/accepted)
@@ -758,6 +777,7 @@ export default function MapScreen() {
       etaToYou: prev?.etaToYou ?? null,
       nextStop: prev?.nextStop ?? null,
       lastSeenText: formatLastSeen(loc.secondsAgo),
+      driverName: prev?.driverName ?? null,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusId, busLocations[selectedBusId ?? '']]);
@@ -785,6 +805,7 @@ export default function MapScreen() {
           etaToYou: e ?? prev?.etaToYou ?? null,
           nextStop: prev?.nextStop ?? null,
           lastSeenText: prev?.lastSeenText ?? null,
+          driverName: prev?.driverName ?? null,
         }));
       } catch {
         // ignore transient failures
@@ -808,10 +829,13 @@ export default function MapScreen() {
     setSelectedBusId(id);
     setShowLocationList(false);
 
+    const driverName = await getDriverFirstName(id);
+
     setSelectedBusPopup({
       etaToYou: null,
       nextStop: null,
       lastSeenText: formatLastSeen(loc.secondsAgo),
+      driverName,
     });
     showCloud();
 
@@ -831,6 +855,7 @@ export default function MapScreen() {
       etaToYou: prev?.etaToYou ?? null,
       nextStop: nextStopName,
       lastSeenText: prev?.lastSeenText ?? formatLastSeen(loc.secondsAgo),
+      driverName: prev?.driverName ?? null,
     }));
 
     try {
@@ -916,6 +941,25 @@ export default function MapScreen() {
         return;
       }
 
+      const freshActiveBusIds = activeBusIds.filter((id) => busLocations[id]?.isFresh);
+      const closestDriverUid = freshActiveBusIds
+        .map((id) => {
+          const bus = busLocations[id];
+          if (!bus) return null;
+          return {
+            id,
+            distance: getDistanceInMeters(
+              bus.latitude,
+              bus.longitude,
+              selectedStop.latitude,
+              selectedStop.longitude,
+            ),
+          };
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.distance - b.distance)?.[0]?.id;
+
+      const status = closestDriverUid ? 'accepted' : 'pending';
       const ref = await addDoc(collection(db, 'stopRequests'), {
         studentUid,
         studentEmail: studentEmail ?? null,
@@ -926,13 +970,15 @@ export default function MapScreen() {
           latitude: selectedStop.latitude,
           longitude: selectedStop.longitude,
         },
-        status: 'pending',
+        status,
+        driverUid: closestDriverUid || null,
+        acceptedAt: closestDriverUid ? serverTimestamp() : null,
         createdAt: serverTimestamp(),
       });
 
       console.log('[MapScreen][handleRequest] created stopRequest', ref.id);
 
-      showAlert('Stop requested successfully!');
+      showAlert(closestDriverUid ? 'Stop requested and assigned to the nearest bus!' : 'Stop requested successfully!');
       setShowLocationList(false);
       setSelectedStopIndex(null);
     } catch (err: any) {
@@ -1110,7 +1156,7 @@ export default function MapScreen() {
                   >
                     <View style={styles.busCloud}>
                       <View style={styles.busCloudInner}>
-                        <Text style={styles.busCloudTitle}>{`Bogey Bus ${id}`.trim()}</Text>
+                        <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
 
                         {selectedBusPopup?.etaToYou ? (
                           <Text style={styles.busCloudText}>ETA to you: {selectedBusPopup.etaToYou}</Text>
@@ -1193,8 +1239,8 @@ export default function MapScreen() {
       >
         {request ? (
           <>
-            <Text style={styles.cardTitle}>Stop Status: {request.status}</Text>
-            <Text style={styles.cardSubtitle}>{request.status === 'accepted' ? 'Bus is on the way' : 'Waiting'}</Text>
+            <Text style={styles.cardTitle}>Stop Status: {request.status === 'accepted' ? 'In transit' : request.status}</Text>
+            <Text style={styles.cardSubtitle}>{request.status === 'accepted' ? 'In transit' : 'Waiting'}</Text>
 
             {request.stop?.name && <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>}
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}

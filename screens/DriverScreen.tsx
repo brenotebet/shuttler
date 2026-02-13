@@ -36,6 +36,8 @@ import {
   limit,
   getDoc,
   writeBatch,
+  runTransaction,
+  orderBy,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -177,6 +179,8 @@ export default function DriverScreen() {
   const [request, setRequest] = useState<any>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [requests, setRequests] = useState<any[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const pendingRequestsRef = useRef<any[]>([]);
 
   // 3) Route polyline coordinates & ETA string
   const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
@@ -188,6 +192,16 @@ export default function DriverScreen() {
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
   const headings = useRef<{ [id: string]: number }>({});
   const [busLocations, setBusLocations] = useState<{
+    [id: string]: {
+      latitude: number;
+      longitude: number;
+      heading: number;
+      lastUpdated: Date;
+      isFresh: boolean;
+      secondsAgo: number;
+    };
+  }>({});
+  const busLocationsRef = useRef<{
     [id: string]: {
       latitude: number;
       longitude: number;
@@ -300,17 +314,55 @@ export default function DriverScreen() {
     try {
       if (!driverId) throw new Error('Driver ID missing');
 
-      const data: any = {
-        status: newStatus,
-        driverUid: driverId,
-        statusUpdatedAt: serverTimestamp(),
-      };
+      await runTransaction(db, async (tx) => {
+        const ref = doc(db, 'stopRequests', id);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('Stop request not found');
 
-      if (newStatus === 'accepted') data.acceptedAt = serverTimestamp();
-      if (newStatus === 'completed') data.completedAt = serverTimestamp();
-      if (newStatus === 'cancelled') data.cancelledAt = serverTimestamp();
+        const curr = snap.data() as any;
+        const assignedDriver = curr.driverUid || curr.driverId;
 
-      await updateDoc(doc(db, 'stopRequests', id), data);
+        if (newStatus === 'accepted') {
+          if (curr.status !== 'pending') {
+            throw new Error('This stop is no longer pending.');
+          }
+          if (assignedDriver && assignedDriver !== driverId) {
+            throw new Error('This stop is already assigned to another driver.');
+          }
+          tx.update(ref, {
+            status: 'accepted',
+            driverUid: driverId,
+            acceptedAt: serverTimestamp(),
+            statusUpdatedAt: serverTimestamp(),
+          });
+          return;
+        }
+
+        if (newStatus === 'completed') {
+          if (assignedDriver !== driverId) {
+            throw new Error('Only the assigned driver can complete this stop.');
+          }
+          tx.update(ref, {
+            status: 'completed',
+            driverUid: driverId,
+            completedAt: serverTimestamp(),
+            statusUpdatedAt: serverTimestamp(),
+          });
+          return;
+        }
+
+        if (newStatus === 'cancelled') {
+          if (assignedDriver && assignedDriver !== driverId) {
+            throw new Error('Only the assigned driver can cancel this stop.');
+          }
+          tx.update(ref, {
+            status: 'cancelled',
+            driverUid: driverId,
+            cancelledAt: serverTimestamp(),
+            statusUpdatedAt: serverTimestamp(),
+          });
+        }
+      });
     } catch (err: any) {
       showAlert(err.message ?? 'Error updating status', 'Error');
     }
@@ -388,7 +440,8 @@ export default function DriverScreen() {
     }
 
     let unsubBus: (() => void) | undefined;
-    let unsubRide: (() => void) | undefined;
+    let unsubAssigned: (() => void) | undefined;
+    let unsubPending: (() => void) | undefined;
     let cancelled = false;
 
     (async () => {
@@ -543,6 +596,7 @@ export default function DriverScreen() {
           });
 
           setBusLocations(newLocations);
+          busLocationsRef.current = newLocations;
 
           const recentIds = visibleBuses.map((b) => b.id);
           Object.keys(busRegions.current).forEach((key) => {
@@ -565,15 +619,17 @@ export default function DriverScreen() {
         },
       );
 
-      // (c) Subscribe to stop requests (pending or accepted)
-      unsubRide = onSnapshot(
+      // (c) Subscribe to stops assigned to this driver
+      unsubAssigned = onSnapshot(
         query(
           collection(db, 'stopRequests'),
+          where('driverUid', '==', driverId),
           where('status', 'in', ['pending', 'accepted']),
-          limit(50),
+          orderBy('createdAt', 'desc'),
+          limit(10),
         ),
         (snapshot) => {
-          const list = snapshot.docs
+          const assigned = snapshot.docs
             .map((d) => ({ id: d.id, ...(d.data() as any) }))
             .sort((a, b) => {
               const ta = a.createdAt?.toMillis?.() ?? 0;
@@ -581,12 +637,8 @@ export default function DriverScreen() {
               return tb - ta;
             });
 
-          setRequests(list);
-
-          const current = list.find((r) => r.driverUid === driverId && r.status !== 'completed');
-          const pending = list.find((r) => r.status === 'pending' && !r.driverUid);
-
-          const selected = current || pending || null;
+          const selected = assigned[0] || pendingRequestsRef.current[0] || null;
+          setRequests([...assigned, ...pendingRequestsRef.current]);
 
           if (selected) {
             setRequest(selected);
@@ -609,12 +661,72 @@ export default function DriverScreen() {
           });
         },
       );
+
+      // (d) Subscribe to unassigned pending stops, prioritize nearest one to this driver.
+      unsubPending = onSnapshot(
+        query(
+          collection(db, 'stopRequests'),
+          where('status', '==', 'pending'),
+          orderBy('createdAt', 'asc'),
+          limit(20),
+        ),
+        (snapshot) => {
+          const unassigned = snapshot.docs
+            .map((d) => ({ id: d.id, ...(d.data() as any) }))
+            .filter((r: any) => !r.driverUid && !r.driverId);
+
+          const me = busLocationsRef.current[driverId] || lastCoords.current[driverId];
+          const sorted = me
+            ? unassigned.sort((a: any, b: any) => {
+                const da = getDistanceInMeters(
+                  me.latitude,
+                  me.longitude,
+                  a.stop?.latitude ?? me.latitude,
+                  a.stop?.longitude ?? me.longitude,
+                );
+                const db = getDistanceInMeters(
+                  me.latitude,
+                  me.longitude,
+                  b.stop?.latitude ?? me.latitude,
+                  b.stop?.longitude ?? me.longitude,
+                );
+                return da - db;
+              })
+            : unassigned;
+
+          setPendingRequests(sorted);
+          pendingRequestsRef.current = sorted;
+          setRequests((prev) => {
+            const assigned = prev.filter((r) => (r.driverUid || r.driverId) === driverId);
+            return [...assigned, ...sorted];
+          });
+
+          setRequest((curr: any) => {
+            if (curr && (curr.driverUid || curr.driverId) === driverId) return curr;
+            return sorted[0] || curr || null;
+          });
+
+          const currentAssigned = request && (request.driverUid || request.driverId) === driverId;
+          if (!currentAssigned) {
+            setRequestId(sorted[0]?.id ?? null);
+          }
+        },
+        (err) => {
+          console.error('❌ onSnapshot(pending stopRequests) permission error', {
+            code: (err as any)?.code,
+            message: (err as any)?.message,
+            uid,
+            role,
+          });
+        },
+      );
     })();
 
     return () => {
       cancelled = true;
       if (unsubBus) unsubBus();
-      if (unsubRide) unsubRide();
+      if (unsubAssigned) unsubAssigned();
+      if (unsubPending) unsubPending();
     };
   }, [driverId, INITIAL_REGION, STOPS_BOUNDS]);
 
