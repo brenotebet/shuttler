@@ -983,7 +983,11 @@ export default function MapScreen() {
     );
   }
 
-  const buttonsBottom = 96 + (request ? Math.min(bottomCardHeight, 260) + 10 : 0);
+  const cardLift = Math.min(bottomCardHeight, 260) + 10;
+  const buttonsBottom = slideAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [96, 96 + cardLift],
+  });
   const topOverlay = insets.top + 12;
 
   const cloudScale = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] });
@@ -1173,7 +1177,7 @@ export default function MapScreen() {
         {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}
       </MapView>
 
-      <View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { bottom: buttonsBottom }]}>
+      <Animated.View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { bottom: buttonsBottom }]}>
         <TouchableOpacity style={styles.fab} onPress={centerOnUser} activeOpacity={0.9}>
           <Icon name="my-location" size={22} color="#111" />
         </TouchableOpacity>
@@ -1189,15 +1193,7 @@ export default function MapScreen() {
           </TouchableOpacity>
         )}
 
-        {cameraMode === 'free' && (
-          <View style={styles.freePanPill}>
-            <Text style={styles.freePanText}>Map moved</Text>
-            <TouchableOpacity onPress={() => (request?.status === 'accepted' ? fitActiveRide() : fitStops())}>
-              <Text style={styles.freePanLink}>{request?.status === 'accepted' ? 'Recenter ride' : 'Recenter'}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
+      </Animated.View>
 
       {selectedBusId && (
         <TouchableWithoutFeedback onPress={closeSelectedBus}>
@@ -1345,23 +1341,6 @@ const styles = StyleSheet.create({
     elevation: 7,
   },
   fabPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-
-  freePanPill: {
-    marginTop: 6,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    maxWidth: 170,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  freePanText: { fontSize: 12, color: '#374151', marginBottom: 2, fontWeight: '600' },
-  freePanLink: { fontSize: 12, color: PRIMARY_COLOR, fontWeight: '800' },
-
   bottomCard: {
     position: 'absolute',
     left: 0,
