@@ -55,17 +55,6 @@ function summarizeSnap(label: string, snap: any) {
 }
 
 
-function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const toRad = (value: number) => (value * Math.PI) / 180;
-  const R = 6371000;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
   { id: 'stop2', name: 'PAC', latitude: 38.6079, longitude: -89.81561 },
@@ -77,7 +66,6 @@ export const LOCATIONS = [
 export default function RequestStopScreen({ navigation }: { navigation: any }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [busOnline, setBusOnline] = useState(false);
-  const [freshBuses, setFreshBuses] = useState<Array<{ id: string; latitude: number; longitude: number }>>([]);
 
   // Debug UI counters so even if console is flaky you can SEE taps.
   const [tapCount, setTapCount] = useState(0);
@@ -115,7 +103,6 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 
     let anyBusOnline = false;
     let anyOnlineFlagTrue = false;
-    const nextFreshBuses: Array<{ id: string; latitude: number; longitude: number }> = [];
 
     let freshestSecondsAgo: number | null = null;
     let freshestLastUpdatedMs: number | null = null;
@@ -152,9 +139,6 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 
       if (onlineFlag && secondsAgo < 15) {
         anyBusOnline = true;
-        if (typeof data?.latitude === 'number' && typeof data?.longitude === 'number') {
-          nextFreshBuses.push({ id: docSnap.id, latitude: data.latitude, longitude: data.longitude });
-        }
       }
     });
 
@@ -162,7 +146,6 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
       freshestLastUpdatedMs !== null ? new Date(freshestLastUpdatedMs).toISOString() : null;
 
     setBusOnline(anyBusOnline);
-    setFreshBuses(nextFreshBuses);
     setLastBusDebug({
       docs: docsCount,
       anyOnlineFlagTrue,
@@ -297,18 +280,6 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 
       rsLog('phase3:createRequest:start');
 
-      const closestDriverUid = freshBuses
-        .map((bus) => ({
-          id: bus.id,
-          distance: getDistanceInMeters(
-            bus.latitude,
-            bus.longitude,
-            selectedStop.latitude,
-            selectedStop.longitude,
-          ),
-        }))
-        .sort((a, b) => a.distance - b.distance)?.[0]?.id;
-
       const payload = {
         studentUid,
         studentEmail: user.email ?? null, // display only
@@ -319,9 +290,9 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
           latitude: selectedStop.latitude,
           longitude: selectedStop.longitude,
         },
-        status: closestDriverUid ? 'accepted' : 'pending',
-        driverUid: closestDriverUid || null,
-        acceptedAt: closestDriverUid ? serverTimestamp() : null,
+        status: 'pending',
+        driverUid: null,
+        acceptedAt: null,
         createdAt: serverTimestamp(),
       };
 
@@ -330,7 +301,7 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
       const ref = await addDoc(collection(db, 'stopRequests'), payload);
 
       rsLog('phase3:createRequest:success', { id: ref.id });
-      showAlert(closestDriverUid ? 'Stop requested and assigned to the nearest bus!' : 'Stop requested successfully!');
+      showAlert('Stop requested successfully!');
       navigation.goBack();
     } catch (err: any) {
       rsErr('handleRequest:catch', err);
