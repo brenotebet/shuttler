@@ -77,7 +77,7 @@ export default function DriverMenuScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: spacing.section * 1.25,
+    paddingTop: spacing.section * 7,
     paddingBottom: spacing.section * 2,
   },
   hero: {
