@@ -1,8 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -978,7 +977,7 @@ export default function MapScreen() {
 
   if (!region) {
     return (
-      <SafeAreaView style={styles.center}>
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.center}>
         <ActivityIndicator size="large" color={PRIMARY_COLOR} />
       </SafeAreaView>
     );
@@ -992,7 +991,7 @@ export default function MapScreen() {
   const cloudTranslateY = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
+    <SafeAreaView edges={['left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {!rideActive && !selectedBusId && (
         <TouchableOpacity
           style={[styles.searchContainer, { top: topOverlay }]}
@@ -1164,11 +1163,11 @@ export default function MapScreen() {
               latitude: request.stop.latitude,
               longitude: request.stop.longitude,
             }}
-            anchor={{ x: 0.5, y: 1 }}
+            pinColor={PRIMARY_COLOR}
+            title="Requested stop"
+            description={request.stop.name ?? 'Requested stop'}
             tracksViewChanges={false}
-          >
-            <MapMarker icon="flag" />
-          </Marker>
+          />
         )}
 
         {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}

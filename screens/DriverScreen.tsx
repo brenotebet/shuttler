@@ -1,8 +1,7 @@
 // DriverScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -942,7 +941,7 @@ export default function DriverScreen() {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
+    <SafeAreaView edges={['left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {/* top overlay offset removes excess top gap while respecting notch */}
       {/* Bottom-Right Start/Stop Sharing Button */}
       {request?.status !== 'accepted' && (
