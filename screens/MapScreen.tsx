@@ -562,6 +562,13 @@ export default function MapScreen() {
       limit(1),
     );
 
+    const qCompleted = query(
+      collection(db, 'stopRequests'),
+      where('studentUid', '==', studentUid),
+      where('status', '==', 'completed'),
+      limit(1),
+    );
+
     const unsubAccepted = onSnapshot(
       qAccepted,
       (snap) => {
@@ -569,7 +576,9 @@ export default function MapScreen() {
           const d = snap.docs[0];
           setOwnRequest({ id: d.id, ...(d.data() as any) });
         } else {
-          setOwnRequest((current: any) => (current?.status === 'accepted' ? null : current));
+          setOwnRequest((current: any) =>
+            current?.status === 'accepted' || current?.status === 'pending' ? null : current,
+          );
         }
       },
       (err) => console.error('own accepted stopRequests snapshot error', err),
@@ -590,9 +599,23 @@ export default function MapScreen() {
       (err) => console.error('own pending stopRequests snapshot error', err),
     );
 
+    const unsubCompleted = onSnapshot(
+      qCompleted,
+      (snap) => {
+        if (!snap.empty) {
+          const d = snap.docs[0];
+          setOwnRequest({ id: d.id, ...(d.data() as any) });
+        } else {
+          setOwnRequest((current: any) => (current?.status === 'completed' ? null : current));
+        }
+      },
+      (err) => console.error('own completed stopRequests snapshot error', err),
+    );
+
     return () => {
       unsubAccepted();
       unsubPending();
+      unsubCompleted();
     };
   }, [studentUid]);
 
