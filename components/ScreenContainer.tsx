@@ -17,7 +17,7 @@ export default function ScreenContainer({
 }: ScreenContainerProps) {
   return (
     <SafeAreaView
-      edges={['top', 'bottom']}
+      edges={['left', 'right', 'bottom']}
       style={[styles.safe, padded ? styles.padded : null, style]}
     >
       {children}
@@ -32,7 +32,6 @@ const styles = StyleSheet.create({
   },
   padded: {
     paddingHorizontal: spacing.screenPadding,
-    paddingTop: spacing.screenPadding,
     paddingBottom: spacing.section,
   },
 });

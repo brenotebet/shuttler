@@ -52,7 +52,6 @@ export default function StudentMenuScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: spacing.section * 2,
     paddingBottom: spacing.section * 2,
   },
   hero: {
