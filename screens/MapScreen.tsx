@@ -562,6 +562,13 @@ export default function MapScreen() {
       limit(1),
     );
 
+    const qCompleted = query(
+      collection(db, 'stopRequests'),
+      where('studentUid', '==', studentUid),
+      where('status', '==', 'completed'),
+      limit(1),
+    );
+
     const unsubAccepted = onSnapshot(
       qAccepted,
       (snap) => {
@@ -594,6 +601,7 @@ export default function MapScreen() {
     return () => {
       unsubAccepted();
       unsubPending();
+      unsubCompleted();
     };
   }, [studentUid]);
 
