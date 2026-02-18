@@ -1,5 +1,6 @@
 // DriverScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   SafeAreaView,
   View,
@@ -160,6 +161,7 @@ function clampToBounds(r: Region, b: Bounds): Region {
 type CameraMode = 'free' | 'overview';
 
 export default function DriverScreen() {
+  const insets = useSafeAreaInsets();
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
   const { driverId, loading } = useDriver();
   if (loading) return null;
@@ -941,6 +943,7 @@ export default function DriverScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
+      {/* top overlay offset removes excess top gap while respecting notch */}
       {/* Bottom-Right Start/Stop Sharing Button */}
       {request?.status !== 'accepted' && (
         <Animated.View
@@ -1006,7 +1009,7 @@ export default function DriverScreen() {
 
         {/* Banner when sharing is OFF (should come back every time) */}
         {!isSharing && hasLocationPermission && (
-          <View style={styles.banner}>
+          <View style={[styles.banner, { top: insets.top + 12 }]}>
             <Text style={styles.bannerText}>
               Not sharing location. Tap “Start Sharing” to go online.
             </Text>
@@ -1015,7 +1018,7 @@ export default function DriverScreen() {
 
         {/* Optional: sharing ON but bus doc is stale/not fresh */}
       {isSharing && !driverOnline && hasLocationPermission && (
-        <View style={styles.banner}>
+        <View style={[styles.banner, { top: insets.top + 12 }]}>
           <Text style={styles.bannerText}>
             Sharing is ON, but your location hasn’t updated yet.
           </Text>
@@ -1025,7 +1028,7 @@ export default function DriverScreen() {
 
       {/* Banner if location permission denied */}
       {!hasLocationPermission && (
-        <View style={styles.banner}>
+        <View style={[styles.banner, { top: insets.top + 12 }]}>
           <Text style={styles.bannerText}>
             Location permission denied. Enable location to share your position.
           </Text>
@@ -1342,7 +1345,6 @@ const styles = StyleSheet.create({
 
   banner: {
     position: 'absolute',
-    top: 80,
     left: 20,
     right: 20,
     backgroundColor: 'rgba(255,165,0,0.9)',
