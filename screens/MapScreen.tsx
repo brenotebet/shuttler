@@ -1,7 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -143,6 +143,8 @@ export default function MapScreen() {
       NativeStackNavigationProp<RootStackParamList>
     >
   >();
+
+  const insets = useSafeAreaInsets();
 
   const STOPS_BOUNDS = useMemo(() => getStopsBounds(LOCATIONS), []);
   const INITIAL_REGION = useMemo(() => boundsRegion(STOPS_BOUNDS, 0.9), [STOPS_BOUNDS]);
@@ -561,14 +563,6 @@ export default function MapScreen() {
       where('status', '==', 'pending'),
       limit(1),
     );
-
-    const qCompleted = query(
-      collection(db, 'stopRequests'),
-      where('studentUid', '==', studentUid),
-      where('status', '==', 'completed'),
-      limit(1),
-    );
-
     const unsubAccepted = onSnapshot(
       qAccepted,
       (snap) => {
@@ -601,7 +595,6 @@ export default function MapScreen() {
     return () => {
       unsubAccepted();
       unsubPending();
-      unsubCompleted();
     };
   }, [studentUid]);
 
@@ -984,23 +977,24 @@ export default function MapScreen() {
 
   if (!region) {
     return (
-      <SafeAreaView style={styles.center}>
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.center}>
         <ActivityIndicator size="large" color={PRIMARY_COLOR} />
       </SafeAreaView>
     );
   }
 
   const buttonsBottom = 96 + (request ? Math.min(bottomCardHeight, 260) + 10 : 0);
+  const topOverlay = insets.top + 12;
 
   const cloudScale = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] });
   const cloudOpacity = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
   const cloudTranslateY = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
+    <SafeAreaView edges={['left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {!rideActive && !selectedBusId && (
         <TouchableOpacity
-          style={styles.searchContainer}
+          style={[styles.searchContainer, { top: topOverlay }]}
           onPress={() => setShowLocationList((prev) => !prev)}
           activeOpacity={0.8}
         >
@@ -1012,7 +1006,7 @@ export default function MapScreen() {
       )}
 
       {!rideActive && !showLocationList && !selectedBusId && (
-        <View style={styles.tipContainer}>
+        <View style={[styles.tipContainer, { top: topOverlay + 60 }]}>
           <InfoBanner
             icon="lightbulb-outline"
             title="Quick pointers"
@@ -1024,7 +1018,7 @@ export default function MapScreen() {
       {!rideActive && showLocationList && !selectedBusId && (
         <TouchableWithoutFeedback onPress={() => setShowLocationList(false)}>
           <View style={styles.overlay}>
-            <View style={styles.locationListContainer}>
+            <View style={[styles.locationListContainer, { top: topOverlay + 60 }]}>
               <FlatList
                 data={LOCATIONS}
                 keyExtractor={(item) => item.id}
@@ -1164,15 +1158,16 @@ export default function MapScreen() {
         })}
 
         {request?.stop && (
-          <MarkerAnimated
+          <Marker
             coordinate={{
               latitude: request.stop.latitude,
               longitude: request.stop.longitude,
             }}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            <MapMarker icon="location-on" />
-          </MarkerAnimated>
+            pinColor={PRIMARY_COLOR}
+            title="Requested stop"
+            description={request.stop.name ?? 'Requested stop'}
+            tracksViewChanges={false}
+          />
         )}
 
         {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}
@@ -1274,7 +1269,6 @@ const styles = StyleSheet.create({
 
   searchContainer: {
     position: 'absolute',
-    top: 80,
     left: 20,
     right: 20,
     height: 50,
@@ -1290,14 +1284,13 @@ const styles = StyleSheet.create({
     elevation: 5,
     zIndex: 100,
   },
-  tipContainer: { position: 'absolute', top: 140, left: 20, right: 20, zIndex: 90 },
+  tipContainer: { position: 'absolute', left: 20, right: 20, zIndex: 90 },
   searchText: { flex: 1, fontSize: 16, color: '#888' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 99 },
   transparentOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', zIndex: 99 },
 
   locationListContainer: {
     position: 'absolute',
-    top: 140,
     left: 20,
     right: 20,
     backgroundColor: BACKGROUND_COLOR,
