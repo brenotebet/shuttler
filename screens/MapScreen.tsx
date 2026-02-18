@@ -562,6 +562,13 @@ export default function MapScreen() {
       limit(1),
     );
 
+    const qCompleted = query(
+      collection(db, 'stopRequests'),
+      where('studentUid', '==', studentUid),
+      where('status', '==', 'completed'),
+      limit(1),
+    );
+
     const unsubAccepted = onSnapshot(
       qAccepted,
       (snap) => {
@@ -569,7 +576,9 @@ export default function MapScreen() {
           const d = snap.docs[0];
           setOwnRequest({ id: d.id, ...(d.data() as any) });
         } else {
-          setOwnRequest((current: any) => (current?.status === 'accepted' ? null : current));
+          setOwnRequest((current: any) =>
+            current?.status === 'accepted' || current?.status === 'pending' ? null : current,
+          );
         }
       },
       (err) => console.error('own accepted stopRequests snapshot error', err),
@@ -590,9 +599,23 @@ export default function MapScreen() {
       (err) => console.error('own pending stopRequests snapshot error', err),
     );
 
+    const unsubCompleted = onSnapshot(
+      qCompleted,
+      (snap) => {
+        if (!snap.empty) {
+          const d = snap.docs[0];
+          setOwnRequest({ id: d.id, ...(d.data() as any) });
+        } else {
+          setOwnRequest((current: any) => (current?.status === 'completed' ? null : current));
+        }
+      },
+      (err) => console.error('own completed stopRequests snapshot error', err),
+    );
+
     return () => {
       unsubAccepted();
       unsubPending();
+      unsubCompleted();
     };
   }, [studentUid]);
 
@@ -941,25 +964,6 @@ export default function MapScreen() {
         return;
       }
 
-      const freshActiveBusIds = activeBusIds.filter((id) => busLocations[id]?.isFresh);
-      const closestDriverUid = freshActiveBusIds
-        .map((id) => {
-          const bus = busLocations[id];
-          if (!bus) return null;
-          return {
-            id,
-            distance: getDistanceInMeters(
-              bus.latitude,
-              bus.longitude,
-              selectedStop.latitude,
-              selectedStop.longitude,
-            ),
-          };
-        })
-        .filter(Boolean)
-        .sort((a: any, b: any) => a.distance - b.distance)?.[0]?.id;
-
-      const status = closestDriverUid ? 'accepted' : 'pending';
       const ref = await addDoc(collection(db, 'stopRequests'), {
         studentUid,
         studentEmail: studentEmail ?? null,
@@ -970,15 +974,15 @@ export default function MapScreen() {
           latitude: selectedStop.latitude,
           longitude: selectedStop.longitude,
         },
-        status,
-        driverUid: closestDriverUid || null,
-        acceptedAt: closestDriverUid ? serverTimestamp() : null,
+        status: 'pending',
+        driverUid: null,
+        acceptedAt: null,
         createdAt: serverTimestamp(),
       });
 
       console.log('[MapScreen][handleRequest] created stopRequest', ref.id);
 
-      showAlert(closestDriverUid ? 'Stop requested and assigned to the nearest bus!' : 'Stop requested successfully!');
+      showAlert('Stop requested successfully!');
       setShowLocationList(false);
       setSelectedStopIndex(null);
     } catch (err: any) {
