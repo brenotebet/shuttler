@@ -598,20 +598,6 @@ export default function MapScreen() {
       },
       (err) => console.error('own pending stopRequests snapshot error', err),
     );
-
-    const unsubCompleted = onSnapshot(
-      qCompleted,
-      (snap) => {
-        if (!snap.empty) {
-          const d = snap.docs[0];
-          setOwnRequest({ id: d.id, ...(d.data() as any) });
-        } else {
-          setOwnRequest((current: any) => (current?.status === 'completed' ? null : current));
-        }
-      },
-      (err) => console.error('own completed stopRequests snapshot error', err),
-    );
-
     return () => {
       unsubAccepted();
       unsubPending();
@@ -774,13 +760,6 @@ export default function MapScreen() {
       }
     }
   }, [request, driverId, activeBusIds]);
-
-  // ✅ Auto-switch when completed
-  useEffect(() => {
-    if (request?.status === 'completed') {
-      navigation.navigate('StudentHistory');
-    }
-  }, [request?.status, navigation]);
 
   // ✅ Animate bottom card
   useEffect(() => {
