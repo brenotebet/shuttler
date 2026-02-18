@@ -86,6 +86,23 @@ function isDriverRole(role: any) {
   return role === 'driver' || role === 'admin';
 }
 
+
+function isActiveStopStatus(status: any): status is 'pending' | 'accepted' {
+  return status === 'pending' || status === 'accepted';
+}
+
+function dedupeRequestsById(items: any[]) {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const item of items) {
+    const id = item?.id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(item);
+  }
+  return out;
+}
+
 /** ─────────────────────────────────────────────────────────────
  * Bounds helpers (stops-based) — with 25% padding
  * ───────────────────────────────────────────────────────────── */
@@ -631,6 +648,7 @@ export default function DriverScreen() {
         (snapshot) => {
           const assigned = snapshot.docs
             .map((d) => ({ id: d.id, ...(d.data() as any) }))
+            .filter((r: any) => isActiveStopStatus(r.status))
             .sort((a, b) => {
               const ta = a.createdAt?.toMillis?.() ?? 0;
               const tb = b.createdAt?.toMillis?.() ?? 0;
@@ -638,7 +656,7 @@ export default function DriverScreen() {
             });
 
           const selected = assigned[0] || pendingRequestsRef.current[0] || null;
-          setRequests([...assigned, ...pendingRequestsRef.current]);
+          setRequests(dedupeRequestsById([...assigned, ...pendingRequestsRef.current]));
 
           if (selected) {
             setRequest(selected);
@@ -697,19 +715,21 @@ export default function DriverScreen() {
           setPendingRequests(sorted);
           pendingRequestsRef.current = sorted;
           setRequests((prev) => {
-            const assigned = prev.filter((r) => (r.driverUid || r.driverId) === driverId);
-            return [...assigned, ...sorted];
+            const assigned = prev.filter(
+              (r) => (r.driverUid || r.driverId) === driverId && isActiveStopStatus(r.status),
+            );
+            return dedupeRequestsById([...assigned, ...sorted]);
           });
 
           setRequest((curr: any) => {
-            if (curr && (curr.driverUid || curr.driverId) === driverId) return curr;
-            return sorted[0] || curr || null;
+            const keepCurrentAssigned =
+              !!curr &&
+              (curr.driverUid || curr.driverId) === driverId &&
+              isActiveStopStatus(curr.status);
+            const next = keepCurrentAssigned ? curr : sorted[0] || null;
+            setRequestId(next?.id ?? null);
+            return next;
           });
-
-          const currentAssigned = request && (request.driverUid || request.driverId) === driverId;
-          if (!currentAssigned) {
-            setRequestId(sorted[0]?.id ?? null);
-          }
         },
         (err) => {
           console.error('❌ onSnapshot(pending stopRequests) permission error', {
