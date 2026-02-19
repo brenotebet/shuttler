@@ -200,6 +200,7 @@ export default function DriverScreen() {
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const pendingRequestsRef = useRef<any[]>([]);
   const assignedRequestsRef = useRef<any[]>([]);
+  const clearSelectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 3) Route polyline coordinates & ETA string
   const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
@@ -646,17 +647,25 @@ export default function DriverScreen() {
 
         const selected = assigned[0] || pending[0] || null;
         if (selected) {
+          if (clearSelectionTimerRef.current) {
+            clearTimeout(clearSelectionTimerRef.current);
+            clearSelectionTimerRef.current = null;
+          }
           setRequest(selected);
           setRequestId(selected.id);
           return;
         }
 
-        setRequest(null);
-        setRequestId(null);
-        setRouteCoords([]);
-        fullRouteRef.current = [];
-        setEta(null);
-        notifiedRef.current = false;
+        if (clearSelectionTimerRef.current) return;
+        clearSelectionTimerRef.current = setTimeout(() => {
+          clearSelectionTimerRef.current = null;
+          setRequest(null);
+          setRequestId(null);
+          setRouteCoords([]);
+          fullRouteRef.current = [];
+          setEta(null);
+          notifiedRef.current = false;
+        }, 500);
       };
 
       // (c) Subscribe to stops assigned to this driver
@@ -743,6 +752,10 @@ export default function DriverScreen() {
       if (unsubBus) unsubBus();
       if (unsubAssigned) unsubAssigned();
       if (unsubPending) unsubPending();
+      if (clearSelectionTimerRef.current) {
+        clearTimeout(clearSelectionTimerRef.current);
+        clearSelectionTimerRef.current = null;
+      }
     };
   }, [driverId, INITIAL_REGION, STOPS_BOUNDS]);
 

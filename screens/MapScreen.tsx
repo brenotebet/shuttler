@@ -543,31 +543,56 @@ export default function MapScreen() {
     };
   }, [INITIAL_REGION, STOPS_BOUNDS]);
 
-  // ✅ subscribe to student's active request without race-induced flicker
+  // ✅ subscribe to student's accepted/pending requests without race flicker
   useEffect(() => {
     if (!studentUid) {
       setOwnRequest(null);
       return;
     }
 
-    const qOwnActive = query(
+    let acceptedRequest: any = null;
+    let pendingRequest: any = null;
+    let acceptedReady = false;
+    let pendingReady = false;
+
+    const reconcileOwnRequest = () => {
+      if (!acceptedReady || !pendingReady) return;
+      setOwnRequest(acceptedRequest || pendingRequest || null);
+    };
+
+    const qAccepted = query(
       collection(db, 'stopRequests'),
       where('studentUid', '==', studentUid),
       where('status', 'in', ['pending', 'accepted']),
       orderBy('createdAt', 'desc'),
       limit(1),
     );
-    const unsubOwnActive = onSnapshot(
-      qOwnActive,
+
+    const qPending = query(
+      collection(db, 'stopRequests'),
+      where('studentUid', '==', studentUid),
+      where('status', '==', 'pending'),
+      limit(1),
+    );
+
+    const unsubAccepted = onSnapshot(
+      qAccepted,
       (snap) => {
-        if (!snap.empty) {
-          const d = snap.docs[0];
-          setOwnRequest({ id: d.id, ...(d.data() as any) });
-        } else {
-          setOwnRequest(null);
-        }
+        acceptedReady = true;
+        acceptedRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
+        reconcileOwnRequest();
       },
       (err) => console.error('own active stopRequests snapshot error', err),
+    );
+
+    const unsubPending = onSnapshot(
+      qPending,
+      (snap) => {
+        pendingReady = true;
+        pendingRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
+        reconcileOwnRequest();
+      },
+      (err) => console.error('own pending stopRequests snapshot error', err),
     );
 
     return () => {
@@ -961,9 +986,9 @@ export default function MapScreen() {
   }
 
   const cardLift = Math.min(bottomCardHeight, 260) + 10;
-  const buttonsBottom = slideAnim.interpolate({
+  const buttonsLift = slideAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [96, 96 + cardLift],
+    outputRange: [0, cardLift],
   });
   const topOverlay = insets.top + 12;
 
@@ -1154,7 +1179,7 @@ export default function MapScreen() {
         {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}
       </MapView>
 
-      <Animated.View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { bottom: buttonsBottom }]}>
+      <Animated.View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { transform: [{ translateY: Animated.multiply(buttonsLift, -1) }] }]}>
         <TouchableOpacity style={styles.fab} onPress={centerOnUser} activeOpacity={0.9}>
           <Icon name="my-location" size={22} color="#111" />
         </TouchableOpacity>
