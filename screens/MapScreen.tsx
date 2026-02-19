@@ -563,7 +563,8 @@ export default function MapScreen() {
     const qAccepted = query(
       collection(db, 'stopRequests'),
       where('studentUid', '==', studentUid),
-      where('status', '==', 'accepted'),
+      where('status', 'in', ['pending', 'accepted']),
+      orderBy('createdAt', 'desc'),
       limit(1),
     );
 
@@ -581,7 +582,7 @@ export default function MapScreen() {
         acceptedRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
         reconcileOwnRequest();
       },
-      (err) => console.error('own accepted stopRequests snapshot error', err),
+      (err) => console.error('own active stopRequests snapshot error', err),
     );
 
     const unsubPending = onSnapshot(
@@ -595,8 +596,7 @@ export default function MapScreen() {
     );
 
     return () => {
-      unsubAccepted();
-      unsubPending();
+      unsubOwnActive();
     };
   }, [studentUid]);
 
