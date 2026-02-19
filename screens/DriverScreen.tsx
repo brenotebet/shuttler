@@ -199,6 +199,7 @@ export default function DriverScreen() {
   const [requests, setRequests] = useState<any[]>([]);
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const pendingRequestsRef = useRef<any[]>([]);
+  const assignedRequestsRef = useRef<any[]>([]);
 
   // 3) Route polyline coordinates & ETA string
   const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
@@ -637,6 +638,27 @@ export default function DriverScreen() {
         },
       );
 
+      const reconcileRequests = () => {
+        const assigned = assignedRequestsRef.current;
+        const pending = pendingRequestsRef.current;
+        const merged = dedupeRequestsById([...assigned, ...pending]);
+        setRequests(merged);
+
+        const selected = assigned[0] || pending[0] || null;
+        if (selected) {
+          setRequest(selected);
+          setRequestId(selected.id);
+          return;
+        }
+
+        setRequest(null);
+        setRequestId(null);
+        setRouteCoords([]);
+        fullRouteRef.current = [];
+        setEta(null);
+        notifiedRef.current = false;
+      };
+
       // (c) Subscribe to stops assigned to this driver
       unsubAssigned = onSnapshot(
         query(
@@ -656,20 +678,8 @@ export default function DriverScreen() {
               return tb - ta;
             });
 
-          const selected = assigned[0] || pendingRequestsRef.current[0] || null;
-          setRequests(dedupeRequestsById([...assigned, ...pendingRequestsRef.current]));
-
-          if (selected) {
-            setRequest(selected);
-            setRequestId(selected.id);
-          } else {
-            setRequest(null);
-            setRequestId(null);
-            setRouteCoords([]);
-            fullRouteRef.current = [];
-            setEta(null);
-            notifiedRef.current = false;
-          }
+          assignedRequestsRef.current = assigned;
+          reconcileRequests();
         },
         (err) => {
           console.error('❌ onSnapshot(stopRequests) permission error', {
@@ -715,22 +725,7 @@ export default function DriverScreen() {
 
           setPendingRequests(sorted);
           pendingRequestsRef.current = sorted;
-          setRequests((prev) => {
-            const assigned = prev.filter(
-              (r) => (r.driverUid || r.driverId) === driverId && isActiveStopStatus(r.status),
-            );
-            return dedupeRequestsById([...assigned, ...sorted]);
-          });
-
-          setRequest((curr: any) => {
-            const keepCurrentAssigned =
-              !!curr &&
-              (curr.driverUid || curr.driverId) === driverId &&
-              isActiveStopStatus(curr.status);
-            const next = keepCurrentAssigned ? curr : sorted[0] || null;
-            setRequestId(next?.id ?? null);
-            return next;
-          });
+          reconcileRequests();
         },
         (err) => {
           console.error('❌ onSnapshot(pending stopRequests) permission error', {
