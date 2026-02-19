@@ -543,12 +543,22 @@ export default function MapScreen() {
     };
   }, [INITIAL_REGION, STOPS_BOUNDS]);
 
-  // ✅ subscribe to student's accepted/pending
+  // ✅ subscribe to student's accepted/pending requests without race flicker
   useEffect(() => {
     if (!studentUid) {
       setOwnRequest(null);
       return;
     }
+
+    let acceptedRequest: any = null;
+    let pendingRequest: any = null;
+    let acceptedReady = false;
+    let pendingReady = false;
+
+    const reconcileOwnRequest = () => {
+      if (!acceptedReady || !pendingReady) return;
+      setOwnRequest(acceptedRequest || pendingRequest || null);
+    };
 
     const qAccepted = query(
       collection(db, 'stopRequests'),
@@ -563,17 +573,13 @@ export default function MapScreen() {
       where('status', '==', 'pending'),
       limit(1),
     );
+
     const unsubAccepted = onSnapshot(
       qAccepted,
       (snap) => {
-        if (!snap.empty) {
-          const d = snap.docs[0];
-          setOwnRequest({ id: d.id, ...(d.data() as any) });
-        } else {
-          setOwnRequest((current: any) =>
-            current?.status === 'accepted' || current?.status === 'pending' ? null : current,
-          );
-        }
+        acceptedReady = true;
+        acceptedRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
+        reconcileOwnRequest();
       },
       (err) => console.error('own accepted stopRequests snapshot error', err),
     );
@@ -581,17 +587,13 @@ export default function MapScreen() {
     const unsubPending = onSnapshot(
       qPending,
       (snap) => {
-        setOwnRequest((current: any) => {
-          if (current?.status === 'accepted') return current;
-          if (!snap.empty) {
-            const d = snap.docs[0];
-            return { id: d.id, ...(d.data() as any) };
-          }
-          return current?.status === 'pending' ? null : current;
-        });
+        pendingReady = true;
+        pendingRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
+        reconcileOwnRequest();
       },
       (err) => console.error('own pending stopRequests snapshot error', err),
     );
+
     return () => {
       unsubAccepted();
       unsubPending();
@@ -984,9 +986,9 @@ export default function MapScreen() {
   }
 
   const cardLift = Math.min(bottomCardHeight, 260) + 10;
-  const buttonsBottom = slideAnim.interpolate({
+  const buttonsLift = slideAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [96, 96 + cardLift],
+    outputRange: [0, cardLift],
   });
   const topOverlay = insets.top + 12;
 
@@ -1177,7 +1179,7 @@ export default function MapScreen() {
         {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}
       </MapView>
 
-      <Animated.View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { bottom: buttonsBottom }]}>
+      <Animated.View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { transform: [{ translateY: Animated.multiply(buttonsLift, -1) }] }]}>
         <TouchableOpacity style={styles.fab} onPress={centerOnUser} activeOpacity={0.9}>
           <Icon name="my-location" size={22} color="#111" />
         </TouchableOpacity>
