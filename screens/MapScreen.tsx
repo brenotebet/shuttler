@@ -543,58 +543,35 @@ export default function MapScreen() {
     };
   }, [INITIAL_REGION, STOPS_BOUNDS]);
 
-  // ✅ subscribe to student's accepted/pending
+  // ✅ subscribe to student's active request without race-induced flicker
   useEffect(() => {
     if (!studentUid) {
       setOwnRequest(null);
       return;
     }
 
-    const qAccepted = query(
+    const qOwnActive = query(
       collection(db, 'stopRequests'),
       where('studentUid', '==', studentUid),
-      where('status', '==', 'accepted'),
+      where('status', 'in', ['pending', 'accepted']),
+      orderBy('createdAt', 'desc'),
       limit(1),
     );
-
-    const qPending = query(
-      collection(db, 'stopRequests'),
-      where('studentUid', '==', studentUid),
-      where('status', '==', 'pending'),
-      limit(1),
-    );
-    const unsubAccepted = onSnapshot(
-      qAccepted,
+    const unsubOwnActive = onSnapshot(
+      qOwnActive,
       (snap) => {
         if (!snap.empty) {
           const d = snap.docs[0];
           setOwnRequest({ id: d.id, ...(d.data() as any) });
         } else {
-          setOwnRequest((current: any) =>
-            current?.status === 'accepted' || current?.status === 'pending' ? null : current,
-          );
+          setOwnRequest(null);
         }
       },
-      (err) => console.error('own accepted stopRequests snapshot error', err),
+      (err) => console.error('own active stopRequests snapshot error', err),
     );
 
-    const unsubPending = onSnapshot(
-      qPending,
-      (snap) => {
-        setOwnRequest((current: any) => {
-          if (current?.status === 'accepted') return current;
-          if (!snap.empty) {
-            const d = snap.docs[0];
-            return { id: d.id, ...(d.data() as any) };
-          }
-          return current?.status === 'pending' ? null : current;
-        });
-      },
-      (err) => console.error('own pending stopRequests snapshot error', err),
-    );
     return () => {
-      unsubAccepted();
-      unsubPending();
+      unsubOwnActive();
     };
   }, [studentUid]);
 
