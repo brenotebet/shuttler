@@ -159,6 +159,8 @@ export default function MapScreen() {
   const [requestId, setRequestId] = useState<string | null>(null);
   const [ownRequest, setOwnRequest] = useState<any>(null);
 
+  const [ownRequestReady, setOwnRequestReady] = useState(false);
+
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [eta, setEta] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
@@ -202,7 +204,6 @@ export default function MapScreen() {
 
   const busIcon = require('../assets/bus-icon.png');
 
-  // ✅ FIX: force marker image to render on Android (otherwise it may only appear after tapping)
   const [forceBusTracks, setForceBusTracks] = useState(true);
   const forceTracksTimerRef = useRef<NodeJS.Timeout | null>(null);
   const bumpBusTracks = () => {
@@ -211,7 +212,6 @@ export default function MapScreen() {
     forceTracksTimerRef.current = setTimeout(() => setForceBusTracks(false), 900);
   };
 
-  // ☁️ Cloud animation
   const cloudAnim = useRef(new Animated.Value(0)).current;
 
   const markUserInteraction = () => {
@@ -264,7 +264,11 @@ export default function MapScreen() {
       const snap = await getDoc(doc(db, 'users', uid));
       const data = (snap.data() as any) || {};
       const firstName =
-        data.firstName || data.firstname || data.givenName || data.displayName?.split?.(' ')?.[0] || 'Driver';
+        data.firstName ||
+        data.firstname ||
+        data.givenName ||
+        data.displayName?.split?.(' ')?.[0] ||
+        'Driver';
       setDriverFirstNames((prev) => ({ ...prev, [uid]: firstName }));
       return firstName;
     } catch {
@@ -272,11 +276,31 @@ export default function MapScreen() {
     }
   };
 
-  // ✅ Hide browsing UI when ride exists (pending/accepted)
   const rideActive = !!request && (request.status === 'pending' || request.status === 'accepted');
 
-  // Cache last known user location for ETA-to-you in the cloud
+  // ✅ NEW: for “hide only destination stop marker while active”
+  const destinationStopId = request?.stop?.id ?? request?.stopId ?? null;
+
   const userLocRef = useRef<{ latitude: number; longitude: number } | null>(null);
+
+  // Map padding so “fit” respects the bottom card
+  const mapBottomPadding = insets.bottom + (request ? bottomCardHeight : 0) + 18;
+  const mapPadding = useMemo(
+    () => ({
+      top: insets.top + 12,
+      right: 18,
+      bottom: mapBottomPadding,
+      left: 18,
+    }),
+    [insets.top, mapBottomPadding],
+  );
+
+  const getEdgePadding = () => ({
+    top: insets.top + 120,
+    right: 70,
+    bottom: mapBottomPadding + 80,
+    left: 70,
+  });
 
   const centerOnUser = async () => {
     try {
@@ -307,11 +331,15 @@ export default function MapScreen() {
     }
   };
 
+  // Fit campus using fitToCoordinates + edgePadding
   const fitStops = () => {
     markProgrammaticMove();
     setCameraMode('followUser');
+
+    const points = LOCATIONS.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
+    mapRef.current?.fitToCoordinates(points, { edgePadding: getEdgePadding(), animated: true });
+
     const r = INITIAL_REGION;
-    mapRef.current?.animateToRegion(r, 550);
     setRegion(r);
   };
 
@@ -329,21 +357,31 @@ export default function MapScreen() {
     markProgrammaticMove();
     setCameraMode('overview');
     mapRef.current?.fitToCoordinates(points, {
-      edgePadding: { top: 120, right: 70, bottom: 320, left: 70 },
+      edgePadding: getEdgePadding(),
       animated: true,
     });
   };
 
-  // ✅ Track auth
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setStudentUid(u?.uid ?? null);
       setStudentEmail(u?.email ?? null);
+
+      setOwnRequestReady(false);
+      setOwnRequest(null);
+      setRequest(null);
+      setRequestId(null);
+      setRouteCoords([]);
+      fullRouteRef.current = [];
+      setEta(null);
+      setDriverId(null);
+      notifiedRef.current = false;
+      closeSelectedBus();
     });
     return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Init + buses
   useEffect(() => {
     let unsubBus: (() => void) | undefined;
     let locationSub: Location.LocationSubscription | null = null;
@@ -359,10 +397,13 @@ export default function MapScreen() {
         didInitialFitRef.current = true;
         setRegion(INITIAL_REGION);
         markProgrammaticMove();
-        setTimeout(() => mapRef.current?.animateToRegion(INITIAL_REGION, 450), 10);
+
+        setTimeout(() => {
+          const points = LOCATIONS.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
+          mapRef.current?.fitToCoordinates(points, { edgePadding: getEdgePadding(), animated: true });
+        }, 10);
       }
 
-      // keep updating userLocRef so cloud ETA can refresh
       locationSub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation },
         (pos) => {
@@ -383,17 +424,14 @@ export default function MapScreen() {
             const d = v.toDate();
             return d instanceof Date && !isNaN(d.getTime()) ? d : null;
           }
-
           if (typeof v === 'number') {
             const d = new Date(v);
             return !isNaN(d.getTime()) ? d : null;
           }
-
           if (typeof v === 'string') {
             const d = new Date(v);
             return !isNaN(d.getTime()) ? d : null;
           }
-
           return null;
         };
 
@@ -514,8 +552,6 @@ export default function MapScreen() {
         const recentIds = visibleBuses.map((b: any) => b.id);
         setActiveBusIds(recentIds);
 
-        // ✅ IMPORTANT: whenever buses update, briefly allow Marker to track view changes
-        // so the <Image> inside MarkerAnimated renders immediately (prevents “only shows when tapped”).
         bumpBusTracks();
 
         Object.keys(busRegions.current).forEach((key) => {
@@ -541,12 +577,15 @@ export default function MapScreen() {
       if (locationSub) locationSub.remove();
       if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);
     };
-  }, [INITIAL_REGION, STOPS_BOUNDS]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [INITIAL_REGION, STOPS_BOUNDS, bottomCardHeight, insets.top, insets.bottom]);
 
-  // ✅ subscribe to student's accepted/pending requests without race flicker
   useEffect(() => {
+    setOwnRequestReady(false);
+
     if (!studentUid) {
       setOwnRequest(null);
+      setOwnRequestReady(true);
       return;
     }
 
@@ -558,6 +597,7 @@ export default function MapScreen() {
     const reconcileOwnRequest = () => {
       if (!acceptedReady || !pendingReady) return;
       setOwnRequest(acceptedRequest || pendingRequest || null);
+      setOwnRequestReady(true);
     };
 
     const qAccepted = query(
@@ -582,7 +622,11 @@ export default function MapScreen() {
         acceptedRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
         reconcileOwnRequest();
       },
-      (err) => console.error('own active stopRequests snapshot error', err),
+      (err) => {
+        acceptedReady = true;
+        console.error('own active stopRequests snapshot error', err);
+        reconcileOwnRequest();
+      },
     );
 
     const unsubPending = onSnapshot(
@@ -592,16 +636,22 @@ export default function MapScreen() {
         pendingRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
         reconcileOwnRequest();
       },
-      (err) => console.error('own pending stopRequests snapshot error', err),
+      (err) => {
+        pendingReady = true;
+        console.error('own pending stopRequests snapshot error', err);
+        reconcileOwnRequest();
+      },
     );
 
     return () => {
-      unsubOwnActive();
+      unsubAccepted();
+      unsubPending();
     };
   }, [studentUid]);
 
-  // ✅ consolidate
   useEffect(() => {
+    if (!ownRequestReady) return;
+
     if (ownRequest) {
       setRequest(ownRequest);
       setRequestId(ownRequest.id);
@@ -620,9 +670,8 @@ export default function MapScreen() {
 
     closeSelectedBus();
     setShowLocationList(false);
-  }, [ownRequest]);
+  }, [ownRequest, ownRequestReady]);
 
-  // ✅ route/ETA for ACTIVE RIDE (accepted)
   const fetchRoute = async () => {
     if (!request || !driverId) {
       setRouteCoords([]);
@@ -710,15 +759,13 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driverId, request?.status, driverOnline, busLocations[driverId ?? '']]);
 
-  // ✅ Auto-fit when accepted
   useEffect(() => {
     if (request?.status !== 'accepted') return;
     if (cameraMode === 'free' || recentlyInteracted(2500)) return;
     fitActiveRide();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request?.status, driverId]);
+  }, [request?.status, driverId, bottomCardHeight]);
 
-  // ✅ Notifications
   useEffect(() => {
     if (request?.status === 'accepted') {
       Notifications.scheduleNotificationAsync({
@@ -733,7 +780,6 @@ export default function MapScreen() {
     }
   }, [request?.status]);
 
-  // ✅ Arrival alert
   useEffect(() => {
     if (
       request?.status === 'accepted' &&
@@ -756,7 +802,6 @@ export default function MapScreen() {
     }
   }, [request, driverId, activeBusIds]);
 
-  // ✅ Animate bottom card
   useEffect(() => {
     if (request) {
       Animated.timing(slideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
@@ -765,7 +810,6 @@ export default function MapScreen() {
     }
   }, [request, slideAnim]);
 
-  // ✅ Keep "last seen" fresh for the selected bus
   useEffect(() => {
     if (!selectedBusId) return;
     const loc = busLocations[selectedBusId];
@@ -779,7 +823,6 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusId, busLocations[selectedBusId ?? '']]);
 
-  // ✅ Live update ETA-to-you for selected bus while it moves
   const selectedEtaTimerRef = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
     if (selectedEtaTimerRef.current) clearInterval(selectedEtaTimerRef.current as any);
@@ -804,9 +847,7 @@ export default function MapScreen() {
           lastSeenText: prev?.lastSeenText ?? null,
           driverName: prev?.driverName ?? null,
         }));
-      } catch {
-        // ignore transient failures
-      }
+      } catch {}
     };
 
     tick();
@@ -861,9 +902,7 @@ export default function MapScreen() {
         const userLoc = await Location.getCurrentPositionAsync({});
         userLocRef.current = { latitude: userLoc.coords.latitude, longitude: userLoc.coords.longitude };
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     const latDelta = region ? region.latitudeDelta / 1.5 : 0.008;
     const lonDelta = region ? region.longitudeDelta / 1.5 : 0.008;
@@ -977,10 +1016,13 @@ export default function MapScreen() {
     }
   };
 
-  if (!region) {
+  if (!region || !ownRequestReady) {
     return (
       <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.center}>
         <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+        {!ownRequestReady ? (
+          <Text style={{ marginTop: 10, color: '#666' }}>Syncing your ride…</Text>
+        ) : null}
       </SafeAreaView>
     );
   }
@@ -995,6 +1037,8 @@ export default function MapScreen() {
   const cloudScale = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] });
   const cloudOpacity = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
   const cloudTranslateY = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
+
+  const fabBottom = insets.bottom + 18;
 
   return (
     <SafeAreaView edges={['left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
@@ -1050,6 +1094,7 @@ export default function MapScreen() {
         provider={PROVIDER_GOOGLE}
         style={styles.map}
         region={region}
+        mapPadding={mapPadding}
         showsUserLocation
         showsMyLocationButton={false}
         showsCompass={false}
@@ -1085,19 +1130,18 @@ export default function MapScreen() {
           }
         }}
       >
-        {!rideActive &&
-          LOCATIONS.map((stop) => (
-            <Marker
-              description={stop.name}
-              key={stop.id}
-              coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
-              anchor={{ x: 0.5, y: 1 }}
-            >
-              <MapMarker icon="location-on" />
-            </Marker>
-          ))}
+        {/* ✅ UPDATED: Campus stops always visible, but hide the destination stop marker while ride is active */}
+        {LOCATIONS.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
+          <Marker
+            description={stop.name}
+            key={stop.id}
+            coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <MapMarker icon="location-on" />
+          </Marker>
+        ))}
 
-        {/* Bus markers ALWAYS visible + cloud on selected */}
         {activeBusIds.map((id) => {
           const loc = busLocations[id];
           if (!loc) return null;
@@ -1113,8 +1157,6 @@ export default function MapScreen() {
                 rotation={loc.heading}
                 anchor={{ x: 0.5, y: 0.5 }}
                 onPress={() => handleBusPress(id)}
-                // ✅ FIX: this is the real reason you only “see it when you tap”
-                // Image markers on Android often render only after interaction unless tracksViewChanges is true briefly.
                 tracksViewChanges={isSelected || forceBusTracks}
               >
                 <Image
@@ -1163,7 +1205,8 @@ export default function MapScreen() {
           );
         })}
 
-        {request?.stop && (
+        {/* ✅ UPDATED: Destination pin only while ride is active */}
+        {rideActive && request?.stop && (
           <Marker
             coordinate={{
               latitude: request.stop.latitude,
@@ -1179,7 +1222,16 @@ export default function MapScreen() {
         {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}
       </MapView>
 
-      <Animated.View pointerEvents="box-none" style={[styles.fabWrapBottomLeft, { transform: [{ translateY: Animated.multiply(buttonsLift, -1) }] }]}>
+      <Animated.View
+        pointerEvents="box-none"
+        style={[
+          styles.fabWrapBottomLeft,
+          {
+            bottom: fabBottom,
+            transform: [{ translateY: Animated.multiply(buttonsLift, -1) }],
+          },
+        ]}
+      >
         <TouchableOpacity style={styles.fab} onPress={centerOnUser} activeOpacity={0.9}>
           <Icon name="my-location" size={22} color="#111" />
         </TouchableOpacity>
@@ -1194,7 +1246,6 @@ export default function MapScreen() {
             <Text style={styles.fabPrimaryText}>Fit</Text>
           </TouchableOpacity>
         )}
-
       </Animated.View>
 
       {selectedBusId && (
@@ -1215,7 +1266,9 @@ export default function MapScreen() {
       >
         {request ? (
           <>
-            <Text style={styles.cardTitle}>Stop Status: {request.status === 'accepted' ? 'In transit' : request.status}</Text>
+            <Text style={styles.cardTitle}>
+              Stop Status: {request.status === 'accepted' ? 'In transit' : request.status}
+            </Text>
             <Text style={styles.cardSubtitle}>{request.status === 'accepted' ? 'In transit' : 'Waiting'}</Text>
 
             {request.stop?.name && <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>}
@@ -1343,6 +1396,7 @@ const styles = StyleSheet.create({
     elevation: 7,
   },
   fabPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
   bottomCard: {
     position: 'absolute',
     left: 0,

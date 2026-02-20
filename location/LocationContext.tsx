@@ -21,6 +21,10 @@ const LocationContext = createContext<LocationContextType>({
 const WRITE_MIN_INTERVAL_MS = 4000;
 const WRITE_MIN_DISTANCE_M = 8;
 
+// If the driver app restarts and the bus doc says "online:true" but it hasn't updated in a while,
+// we treat that as stale and force offline.
+const STARTUP_STALE_OFFLINE_MS = 2 * 60 * 1000; // 2 minutes
+
 function distanceMeters(
   a: { latitude: number; longitude: number },
   b: { latitude: number; longitude: number },
@@ -73,27 +77,15 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const lastWrittenAt = useRef<number>(0);
   const lastWrittenCoords = useRef<{ latitude: number; longitude: number } | null>(null);
 
-  useEffect(() => {
-    const notify = () => {
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Location Still On',
-          body: "Location sharing is active. If you're done with your shift, please stop sharing before closing the app.",
-        },
-        trigger: null,
-      });
-    };
-
-    const onChange = (state: AppStateStatus) => {
-      if (state !== 'active' && isSharing) notify();
-    };
-
-    const sub = AppState.addEventListener('change', onChange);
-    return () => {
-      sub.remove();
-      if (isSharing) notify();
-    };
-  }, [isSharing]);
+  const notifyStillOn = () => {
+    Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Location Still On',
+        body: "Location sharing is active. If you're done with your shift, please stop sharing before closing the app.",
+      },
+      trigger: null,
+    });
+  };
 
   const writeBusDoc = async (uid: string, coords: { latitude: number; longitude: number }) => {
     await setDoc(
@@ -109,6 +101,105 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       { merge: true },
     );
   };
+
+  const markOffline = async (uid: string) => {
+    // delete is forbidden by rules; set online=false instead
+    await setDoc(
+      doc(db, 'buses', uid),
+      {
+        online: false,
+        lastSeen: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  };
+
+  // ✅ Startup reconciliation:
+  // If Firestore still says online=true but lastSeen/updatedAt is stale, force online=false.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
+
+        const snap = await getDoc(doc(db, 'buses', uid));
+        if (!snap.exists()) return;
+
+        const data: any = snap.data() || {};
+        if (data?.online !== true) return;
+
+        const ts =
+          data?.updatedAt?.toDate?.() ||
+          data?.lastSeen?.toDate?.() ||
+          (typeof data?.updatedAt === 'string' ? new Date(data.updatedAt) : null) ||
+          (typeof data?.lastSeen === 'string' ? new Date(data.lastSeen) : null) ||
+          null;
+
+        if (!ts || isNaN(ts.getTime())) return;
+
+        const ageMs = Date.now() - ts.getTime();
+        if (ageMs > STARTUP_STALE_OFFLINE_MS) {
+          if (cancelled) return;
+          await markOffline(uid);
+        }
+      } catch (err) {
+        // best-effort only
+        console.warn('LocationProvider startup reconcile skipped:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // run once per mount
+  }, []);
+
+  // ✅ AppState cleanup: if app goes inactive/background, stop watcher + mark offline + reset UI state
+  useEffect(() => {
+    const onChange = async (state: AppStateStatus) => {
+      if (state === 'active') return;
+
+      if (!isSharing) return;
+
+      // Keep your existing warning UX
+      notifyStillOn();
+
+      const uid = currentUid.current;
+      try {
+        if (uid) await markOffline(uid);
+      } catch (err) {
+        console.error('markOffline on background failed:', err);
+      }
+
+      try {
+        if (watchSub.current) {
+          watchSub.current.remove();
+          watchSub.current = null;
+        }
+      } catch {}
+
+      currentUid.current = null;
+      lastWrittenAt.current = 0;
+      lastWrittenCoords.current = null;
+      setIsSharing(false);
+    };
+
+    const sub = AppState.addEventListener('change', onChange);
+
+    return () => {
+      sub.remove();
+
+      // Provider unmount cleanup (best-effort)
+      const uid = currentUid.current;
+      if (uid && isSharing) {
+        notifyStillOn();
+        markOffline(uid).catch(() => {});
+      }
+    };
+  }, [isSharing]);
 
   const startSharing = async () => {
     if (isSharing || watchSub.current) return;
@@ -186,12 +277,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         watchSub.current = null;
       }
 
-      // delete is forbidden by rules; set online=false instead
-    await setDoc(
-      doc(db, 'buses', uid),
-      { online: false },
-      { merge: true },
-    );
+      await markOffline(uid);
     } catch (err) {
       console.error('Error during stopSharing:', {
         code: (err as any)?.code,
