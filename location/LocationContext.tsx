@@ -3,7 +3,17 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { AppState, AppStateStatus } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 
 type LocationContextType = {
@@ -66,6 +76,39 @@ async function assertDriverRole(uid: string) {
   } catch (e: any) {
     throw new Error(`Cannot verify driver role for /users/${uid}. ${e?.message ?? e}`);
   }
+}
+
+async function cancelActiveStopRequestsForDriver(uid: string) {
+  const byDriverUid = await getDocs(query(collection(db, 'stopRequests'), where('driverUid', '==', uid)));
+  const byDriverId = await getDocs(query(collection(db, 'stopRequests'), where('driverId', '==', uid)));
+
+  const merged = [...byDriverUid.docs, ...byDriverId.docs];
+  const seen = new Set<string>();
+
+  const active = merged.filter((snap) => {
+    if (seen.has(snap.id)) return false;
+    seen.add(snap.id);
+
+    const status = (snap.data() as any)?.status;
+    return status === 'pending' || status === 'accepted';
+  });
+
+  if (active.length === 0) return;
+
+  const batch = writeBatch(db);
+  active.forEach((snap) => {
+    batch.set(
+      doc(db, 'stopRequests', snap.id),
+      {
+        status: 'cancelled',
+        cancelledAt: serverTimestamp(),
+        cancelledReason: 'driver_offline',
+      },
+      { merge: true },
+    );
+  });
+
+  await batch.commit();
 }
 
 export const LocationProvider = ({ children }: { children: React.ReactNode }) => {
@@ -169,7 +212,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
       const uid = currentUid.current;
       try {
-        if (uid) await markOffline(uid);
+        if (uid) {
+          await markOffline(uid);
+          await cancelActiveStopRequestsForDriver(uid);
+        }
       } catch (err) {
         console.error('markOffline on background failed:', err);
       }
@@ -278,6 +324,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       }
 
       await markOffline(uid);
+      await cancelActiveStopRequestsForDriver(uid);
     } catch (err) {
       console.error('Error during stopSharing:', {
         code: (err as any)?.code,
