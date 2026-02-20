@@ -25,6 +25,7 @@ import InfoBanner from '../components/InfoBanner';
 
 // ===== DEBUG HELPERS =====
 const RS_DEBUG = true;
+const STUDENT_REQUEST_TTL_MS = 2 * 60 * 1000;
 
 function rsLog(tag: string, data?: any) {
   if (!RS_DEBUG) return;
@@ -294,6 +295,7 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
         driverUid: null,
         acceptedAt: null,
         createdAt: serverTimestamp(),
+        expiresAtMs: Date.now() + STUDENT_REQUEST_TTL_MS,
       };
 
       rsLog('phase3:createRequest:payload', payload);

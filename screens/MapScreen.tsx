@@ -11,6 +11,8 @@ import {
   Image,
   FlatList,
   TouchableWithoutFeedback,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import MapView, {
   PROVIDER_GOOGLE,
@@ -53,6 +55,7 @@ import InfoBanner from '../components/InfoBanner';
 
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
+const STUDENT_REQUEST_TTL_MS = 2 * 60 * 1000;
 
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -860,6 +863,63 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusId, busLocations[selectedBusId ?? '']]);
 
+  useEffect(() => {
+    const cancelActiveStudentRequest = async () => {
+      if (!requestId || !studentUid) return;
+      if (!request || (request.status !== 'pending' && request.status !== 'accepted')) return;
+      if (request.studentUid !== studentUid) return;
+
+      try {
+        await updateDoc(doc(db, 'stopRequests', requestId), {
+          status: 'cancelled',
+          cancelledAt: serverTimestamp(),
+          cancelledReason: 'student_inactive',
+        });
+      } catch (err) {
+        console.error('Failed to cancel inactive student request', err);
+      }
+    };
+
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') return;
+      cancelActiveStudentRequest();
+    });
+
+    return () => sub.remove();
+  }, [request, requestId, studentUid]);
+
+  useEffect(() => {
+    if (!requestId || !request) return;
+    if (request.status !== 'pending' && request.status !== 'accepted') return;
+
+    const createdAtMs = request?.createdAt?.toMillis?.() ?? null;
+    if (!createdAtMs) return;
+
+    const ageMs = Date.now() - createdAtMs;
+    if (ageMs >= STUDENT_REQUEST_TTL_MS) {
+      updateDoc(doc(db, 'stopRequests', requestId), {
+        status: 'cancelled',
+        cancelledAt: serverTimestamp(),
+        cancelledReason: 'student_request_expired',
+      }).catch((err) => {
+        console.error('Failed to expire stale student request', err);
+      });
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      updateDoc(doc(db, 'stopRequests', requestId), {
+        status: 'cancelled',
+        cancelledAt: serverTimestamp(),
+        cancelledReason: 'student_request_expired',
+      }).catch((err) => {
+        console.error('Failed to expire timed student request', err);
+      });
+    }, STUDENT_REQUEST_TTL_MS - ageMs);
+
+    return () => clearTimeout(timeout);
+  }, [request, requestId]);
+
   const handleBusPress = async (id: string) => {
     const loc = busLocations[id];
     if (!loc) return;
@@ -991,6 +1051,7 @@ export default function MapScreen() {
         driverUid: null,
         acceptedAt: null,
         createdAt: serverTimestamp(),
+        expiresAtMs: Date.now() + STUDENT_REQUEST_TTL_MS,
       });
 
       console.log('[MapScreen][handleRequest] created stopRequest', ref.id);

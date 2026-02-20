@@ -53,6 +53,7 @@ const DEFAULT_REGION: Region = {
 
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
+const STUDENT_REQUEST_TTL_MS = 2 * 60 * 1000;
 
 type StopRequestStatus = 'pending' | 'accepted' | 'completed' | 'cancelled';
 
@@ -66,6 +67,15 @@ function isDriverRole(role: any) {
 function isActiveStopStatus(status: any): status is 'pending' | 'accepted' {
   return status === 'pending' || status === 'accepted';
 }
+function isExpiredRequest(r: any) {
+  const expiresAtMs = typeof r?.expiresAtMs === 'number' ? r.expiresAtMs : null;
+  if (expiresAtMs) return Date.now() >= expiresAtMs;
+
+  const createdAtMs = r?.createdAt?.toMillis?.() ?? null;
+  if (!createdAtMs) return false;
+  return Date.now() - createdAtMs >= STUDENT_REQUEST_TTL_MS;
+}
+
 function dedupeRequestsById(items: any[]) {
   const seen = new Set<string>();
   const out: any[] = [];
@@ -602,6 +612,20 @@ export default function DriverScreen() {
         },
       );
 
+      const expireRequestIfNeeded = async (item: any) => {
+        if (!item?.id || !isExpiredRequest(item)) return;
+
+        try {
+          await updateDoc(doc(db, 'stopRequests', item.id), {
+            status: 'cancelled',
+            cancelledAt: serverTimestamp(),
+            cancelledReason: 'student_request_expired',
+          });
+        } catch (err) {
+          console.error('Failed to expire request on driver feed', err);
+        }
+      };
+
       const reconcileRequests = () => {
         const assigned = assignedRequestsRef.current;
         const pending = pendingRequestsRef.current;
@@ -644,6 +668,11 @@ export default function DriverScreen() {
           const assigned = snapshot.docs
             .map((d) => ({ id: d.id, ...(d.data() as any) }))
             .filter((r: any) => isActiveStopStatus(r.status))
+            .filter((r: any) => {
+              const expired = isExpiredRequest(r);
+              if (expired) expireRequestIfNeeded(r);
+              return !expired;
+            })
             .sort((a, b) => {
               const ta = a.createdAt?.toMillis?.() ?? 0;
               const tb = b.createdAt?.toMillis?.() ?? 0;
@@ -669,7 +698,12 @@ export default function DriverScreen() {
         (snapshot) => {
           const unassigned = snapshot.docs
             .map((d) => ({ id: d.id, ...(d.data() as any) }))
-            .filter((r: any) => !r.driverUid && !r.driverId);
+            .filter((r: any) => !r.driverUid && !r.driverId)
+            .filter((r: any) => {
+              const expired = isExpiredRequest(r);
+              if (expired) expireRequestIfNeeded(r);
+              return !expired;
+            });
 
           const me = busLocationsRef.current[driverId] || lastCoords.current[driverId];
           const sorted = me
