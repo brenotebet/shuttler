@@ -7,6 +7,14 @@ import { SAML_TOKEN_EXCHANGE_URL } from '../../config';
 
 const SAML_HANDOFF_STORAGE_KEY = 'samlHandoffToken';
 
+function isInvalidOrExpiredTokenError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return (
+    message.includes('Invalid or expired SAML handoff token') ||
+    message.includes('Missing SAML handoff token')
+  );
+}
+
 function extractTokenFromUrl(url?: string | null): string | null {
   if (!url) return null;
   const parsed = Linking.parse(url);
@@ -77,6 +85,7 @@ export async function trySamlHandoffLogin(urlFromEvent?: string | null) {
   const initialUrl = urlFromEvent ? null : await Linking.getInitialURL();
   const initialToken = eventToken ?? extractTokenFromUrl(initialUrl);
 
+  const usingCachedToken = !initialToken;
   let tokenToUse = initialToken;
   if (!tokenToUse) {
     tokenToUse = await SecureStore.getItemAsync(SAML_HANDOFF_STORAGE_KEY);
@@ -86,7 +95,18 @@ export async function trySamlHandoffLogin(urlFromEvent?: string | null) {
     return false;
   }
 
-  await exchangeAndSignIn(tokenToUse);
+  try {
+    await exchangeAndSignIn(tokenToUse);
+  } catch (error) {
+    // Cached tokens can legitimately expire between launches. If that happens,
+    // clear the stale token so users can start a fresh SSO flow.
+    if (usingCachedToken && isInvalidOrExpiredTokenError(error)) {
+      await SecureStore.deleteItemAsync(SAML_HANDOFF_STORAGE_KEY);
+      return false;
+    }
+    throw error;
+  }
+
   await SecureStore.deleteItemAsync(SAML_HANDOFF_STORAGE_KEY);
   return true;
 }

@@ -36,3 +36,7 @@ Use this when switching the mobile app + backend from one Firebase project to an
 
 ## 7) Observe improved client-side error detail
 The app now includes status code and backend error message in the thrown exchange error (instead of a single generic message). This helps pinpoint whether failure is from token expiry, backend credentials, or endpoint mismatch.
+
+## 8) Stale token auto-recovery behavior
+- If the app attempts login from a previously cached token and backend returns token invalid/expired, the app now clears that cached value and falls back to a fresh SSO start.
+- If the failure comes from a brand-new redirect token, the app still surfaces the backend error so the server/IdP issue can be fixed.
