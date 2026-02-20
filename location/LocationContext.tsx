@@ -200,10 +200,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     // run once per mount
   }, []);
 
-  // ✅ AppState cleanup: if app goes inactive/background, stop watcher + mark offline + reset UI state
+  // ✅ AppState cleanup: if app goes to background, stop watcher + mark offline + reset UI state
   useEffect(() => {
     const onChange = async (state: AppStateStatus) => {
-      if (state === 'active') return;
+      if (state === 'active' || state === 'inactive') return;
 
       if (!isSharing) return;
 

@@ -274,6 +274,7 @@ export default function DriverScreen() {
 
   const baseFloatingBottom = 20 + ((showRequestCard || showBoardingCard) ? maxBottomCardHeight + 10 : 0);
   const mapControlsBottom = baseFloatingBottom + (isSharing && !showBoardingCard ? 70 : 0);
+  const mapBottomInset = insets.bottom + ((showRequestCard || showBoardingCard) ? maxBottomCardHeight + 12 : 12);
 
   const centerOnMe = async () => {
     try {
@@ -323,7 +324,12 @@ export default function DriverScreen() {
     setCameraMode('overview');
     markProgrammaticMove();
     mapRef.current?.fitToCoordinates(points, {
-      edgePadding: { top: 120, right: 70, bottom: maxBottomCardHeight + 220, left: 70 },
+      edgePadding: {
+        top: insets.top + 72,
+        right: 56,
+        bottom: Math.min(mapBottomInset + 84, 320),
+        left: 56,
+      },
       animated: true,
     });
   };
@@ -1000,6 +1006,12 @@ export default function DriverScreen() {
         rotateEnabled={false}
         pitchEnabled={false}
         customMapStyle={grayscaleMapStyle}
+        mapPadding={{
+          top: insets.top + 8,
+          right: 0,
+          bottom: Math.min(mapBottomInset, 360),
+          left: 0,
+        }}
         onPanDrag={markUserInteraction}
         onTouchStart={markUserInteraction}
         onTouchEnd={() => {
