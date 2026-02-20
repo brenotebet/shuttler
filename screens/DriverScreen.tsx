@@ -169,7 +169,7 @@ export default function DriverScreen() {
     return expandBounds(tight, 0.75); // tweak 0.45–0.75 if you want more/less leniency
   }, []);
 
-  const INITIAL_REGION = useMemo(() => boundsRegion(STOPS_BOUNDS, 0.25), [STOPS_BOUNDS]); // 25% padding
+  const INITIAL_REGION = useMemo(() => boundsRegion(STOPS_BOUNDS, 0.50), [STOPS_BOUNDS]); // 25% padding
 
   // 1) Map region (controlled)
   const [region, setRegion] = useState<Region>(DEFAULT_REGION);

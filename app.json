@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "config": {
-        "googleMapsApiKey": "AIzaSyDwGsJH6urDO1c1LYUqnQeprYNesmNSBFs"
+        "googleMapsApiKey": "AIzaSyBYT2BQOYAfECInFsBtysKvuFUXSnUZoCU"
       },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Allow BogeyBus to access your location while using the app.",
@@ -29,7 +29,7 @@
     "android": {
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyDwGsJH6urDO1c1LYUqnQeprYNesmNSBFs"
+          "apiKey": "AIzaSyBYT2BQOYAfECInFsBtysKvuFUXSnUZoCU"
         }
       },
       "adaptiveIcon": {

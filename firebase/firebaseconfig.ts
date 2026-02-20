@@ -6,13 +6,13 @@ import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 
 // Your config is fine
 const firebaseConfig = {
-  apiKey: "AIzaSyAlFY4PQBbgRAVx0H-USoz-cPQShWsd-Ow",
-  authDomain: "mck-transport.firebaseapp.com",
-  projectId: "mck-transport",
-  storageBucket: "mck-transport.appspot.com",
-  messagingSenderId: "493336542072",
-  appId: "1:493336542072:web:b2b1bf60318c695a96e68d",
-  measurementId: "G-VMRX369RMD",
+  apiKey: "AIzaSyCFSRvElVpTPnFPShpbUwYzamLgtqw1EmQ",
+  authDomain: "bogey-bus-tracker.firebaseapp.com",
+  projectId: "bogey-bus-tracker",
+  storageBucket: "bogey-bus-tracker.firebasestorage.app",
+  messagingSenderId: "654162335695",
+  appId: "1:654162335695:web:32110715f48005e4a0e4ba",
+  measurementId: "G-9VMB81C9KE"
 };
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
