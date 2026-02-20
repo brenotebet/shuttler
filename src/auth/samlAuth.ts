@@ -30,10 +30,30 @@ async function exchangeAndSignIn(token: string) {
   });
 
   if (!response.ok) {
-    throw new Error('Failed to exchange SAML handoff token');
+    let serverError: string | undefined;
+    try {
+      const body = await response.json();
+      if (body?.error) {
+        serverError = String(body.error);
+      } else if (body?.details) {
+        serverError = String(body.details);
+      }
+    } catch {
+      // ignore JSON parse failures and preserve generic fallback below
+    }
+
+    throw new Error(
+      `Failed to exchange SAML handoff token (${response.status}${
+        serverError ? `: ${serverError}` : ''
+      })`,
+    );
   }
 
   const { firebaseToken } = await response.json();
+  if (!firebaseToken) {
+    throw new Error('SAML exchange succeeded but firebaseToken was missing in response');
+  }
+
   await signInWithCustomToken(auth, firebaseToken);
 }
 
