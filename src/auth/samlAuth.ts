@@ -62,7 +62,22 @@ async function exchangeAndSignIn(token: string) {
     throw new Error('SAML exchange succeeded but firebaseToken was missing in response');
   }
 
-  await signInWithCustomToken(auth, firebaseToken);
+  try {
+    await signInWithCustomToken(auth, firebaseToken);
+  } catch (error: any) {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    if (code === 'auth/custom-token-mismatch') {
+      throw new Error(
+        'Firebase sign-in failed (auth/custom-token-mismatch). The backend is minting custom tokens for a different Firebase project than this app is configured to use.',
+      );
+    }
+
+    const message =
+      typeof error?.message === 'string' && error.message.trim()
+        ? error.message
+        : 'Unknown Firebase sign-in error';
+    throw new Error(`Firebase sign-in failed (${code || 'no-code'}): ${message}`);
+  }
 }
 
 /**

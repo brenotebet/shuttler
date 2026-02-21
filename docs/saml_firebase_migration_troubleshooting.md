@@ -40,3 +40,9 @@ The app now includes status code and backend error message in the thrown exchang
 ## 8) Stale token auto-recovery behavior
 - If the app attempts login from a previously cached token and backend returns token invalid/expired, the app now clears that cached value and falls back to a fresh SSO start.
 - If the failure comes from a brand-new redirect token, the app still surfaces the backend error so the server/IdP issue can be fixed.
+
+## 9) If you now see `auth/custom-token-mismatch`
+- This means the `/saml/exchange` endpoint returned a Firebase custom token, but that token was minted for a different Firebase project than the app's `firebaseConfig`.
+- Verify backend Admin SDK project (`project_id` in service-account JSON) exactly matches app project (`projectId` in `firebase/firebaseconfig.ts`).
+- Verify backend is not loading an old service-account file via env var or process manager cache.
+- Verify the app bundle you are running actually contains the new Firebase config (clean reinstall/rebuild after config switch).
