@@ -3,6 +3,7 @@
     "name": "bogey-bus",
     "slug": "bogey-bus",
     "version": "1.0.0",
+    "owner": "brenotebet",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,6 +15,8 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "buildNumber": "1",
+      "bundleIdentifier": "edu.mckendree.shuttle",
       "supportsTablet": true,
       "config": {
         "googleMapsApiKey": "AIzaSyBYT2BQOYAfECInFsBtysKvuFUXSnUZoCU"
@@ -49,6 +52,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d4918883-aab8-4ed5-9e35-3514f0d33295"
+      }
     }
   }
 }

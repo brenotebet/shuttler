@@ -22,6 +22,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     backgroundColor: '#ffffff',
   },
   ios: {
+    bundleIdentifier: 'edu.mckendree.shuttle',
     supportsTablet: true,
     config: {
       googleMapsApiKey,

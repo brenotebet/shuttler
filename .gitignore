@@ -39,3 +39,7 @@ yarn-error.*
 *.tsbuildinfo
 
 .env*
+
+keys
+
+asc-api-key.json
