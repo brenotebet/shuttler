@@ -11,8 +11,6 @@ import {
   Image,
   FlatList,
   TouchableWithoutFeedback,
-  AppState,
-  AppStateStatus,
 } from 'react-native';
 import MapView, {
   PROVIDER_GOOGLE,
@@ -949,30 +947,6 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusId, busLocations[selectedBusId ?? '']]);
 
-  useEffect(() => {
-    const cancelActiveStudentRequest = async () => {
-      if (!requestId || !studentUid) return;
-      if (!request || (request.status !== 'pending' && request.status !== 'accepted')) return;
-      if (request.studentUid !== studentUid) return;
-
-      try {
-        await updateDoc(doc(db, 'stopRequests', requestId), {
-          status: 'cancelled',
-          cancelledAt: serverTimestamp(),
-          cancelledReason: 'student_inactive',
-        });
-      } catch (err) {
-        console.error('Failed to cancel inactive student request', err);
-      }
-    };
-
-    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active') return;
-      cancelActiveStudentRequest();
-    });
-
-    return () => sub.remove();
-  }, [request, requestId, studentUid]);
 
   useEffect(() => {
     if (!requestId || !request) return;
