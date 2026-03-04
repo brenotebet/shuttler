@@ -130,7 +130,7 @@ async function cancelActiveStopRequestsForDriver(uid: string) {
 }
 
 
-async function cancelAllActiveStopRequestsIfNoBusesOnline(excludedUid: string) {
+async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string) {
   const busesSnap = await getDocs(collection(db, 'buses'));
 
   const hasAnotherOnlineBus = busesSnap.docs.some((snap) => {
@@ -148,16 +148,17 @@ async function cancelAllActiveStopRequestsIfNoBusesOnline(excludedUid: string) {
   if (hasAnotherOnlineBus) return;
 
   const pendingSnap = await getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'pending')));
-  const acceptedSnap = await getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'accepted')));
 
-  const active = [...pendingSnap.docs, ...acceptedSnap.docs];
-  if (active.length === 0) return;
+  if (pendingSnap.empty) return;
 
   const batch = writeBatch(db);
-  active.forEach((snap) => {
+  pendingSnap.docs.forEach((snap) => {
+    // Firestore rules require driver updates to keep driverUid == request.auth.uid.
+    // For pending requests that were not yet assigned, claim-then-cancel in one write.
     batch.set(
       doc(db, 'stopRequests', snap.id),
       {
+        driverUid: excludedUid,
         status: 'cancelled',
         cancelledAt: serverTimestamp(),
         cancelledReason: 'no_buses_online',
@@ -361,7 +362,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
       await markOffline(uid);
       await cancelActiveStopRequestsForDriver(uid);
-      await cancelAllActiveStopRequestsIfNoBusesOnline(uid);
+      await cancelPendingStopRequestsIfNoBusesOnline(uid);
     } catch (err) {
       console.error('Error during stopSharing:', {
         code: (err as any)?.code,
