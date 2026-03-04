@@ -35,6 +35,24 @@ const WRITE_MIN_DISTANCE_M = 8;
 // we treat that as stale and force offline.
 const STARTUP_STALE_OFFLINE_MS = 2 * 60 * 1000; // 2 minutes
 
+const ONLINE_BUS_STALE_MS = 90 * 1000;
+
+function getTimestampMs(data: any): number | null {
+  const updatedAtMs = typeof data?.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : null;
+  if (updatedAtMs !== null && !Number.isNaN(updatedAtMs)) return updatedAtMs;
+
+  const lastSeenMs = typeof data?.lastSeen?.toMillis === 'function' ? data.lastSeen.toMillis() : null;
+  if (lastSeenMs !== null && !Number.isNaN(lastSeenMs)) return lastSeenMs;
+
+  const updatedAtDateMs = typeof data?.updatedAt === 'string' ? new Date(data.updatedAt).getTime() : null;
+  if (updatedAtDateMs !== null && !Number.isNaN(updatedAtDateMs)) return updatedAtDateMs;
+
+  const lastSeenDateMs = typeof data?.lastSeen === 'string' ? new Date(data.lastSeen).getTime() : null;
+  if (lastSeenDateMs !== null && !Number.isNaN(lastSeenDateMs)) return lastSeenDateMs;
+
+  return null;
+}
+
 function distanceMeters(
   a: { latitude: number; longitude: number },
   b: { latitude: number; longitude: number },
@@ -103,6 +121,46 @@ async function cancelActiveStopRequestsForDriver(uid: string) {
         status: 'cancelled',
         cancelledAt: serverTimestamp(),
         cancelledReason: 'driver_offline',
+      },
+      { merge: true },
+    );
+  });
+
+  await batch.commit();
+}
+
+
+async function cancelAllActiveStopRequestsIfNoBusesOnline(excludedUid: string) {
+  const busesSnap = await getDocs(collection(db, 'buses'));
+
+  const hasAnotherOnlineBus = busesSnap.docs.some((snap) => {
+    if (snap.id === excludedUid) return false;
+
+    const data: any = snap.data();
+    if (data?.online !== true) return false;
+
+    const tsMs = getTimestampMs(data);
+    if (tsMs === null) return false;
+
+    return Date.now() - tsMs <= ONLINE_BUS_STALE_MS;
+  });
+
+  if (hasAnotherOnlineBus) return;
+
+  const pendingSnap = await getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'pending')));
+  const acceptedSnap = await getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'accepted')));
+
+  const active = [...pendingSnap.docs, ...acceptedSnap.docs];
+  if (active.length === 0) return;
+
+  const batch = writeBatch(db);
+  active.forEach((snap) => {
+    batch.set(
+      doc(db, 'stopRequests', snap.id),
+      {
+        status: 'cancelled',
+        cancelledAt: serverTimestamp(),
+        cancelledReason: 'no_buses_online',
       },
       { merge: true },
     );
@@ -303,6 +361,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
       await markOffline(uid);
       await cancelActiveStopRequestsForDriver(uid);
+      await cancelAllActiveStopRequestsIfNoBusesOnline(uid);
     } catch (err) {
       console.error('Error during stopSharing:', {
         code: (err as any)?.code,
