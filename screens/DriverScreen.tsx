@@ -11,12 +11,12 @@ import {
   where,
   onSnapshot,
   doc,
-  updateDoc,
   serverTimestamp,
   limit,
   getDoc,
   writeBatch,
   orderBy,
+  runTransaction,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -27,6 +27,18 @@ import { LOCATIONS } from './RequestStopScreen';
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
 const STUDENT_REQUEST_TTL_MS = 15 * 60 * 1000;
+const ARRIVE_RADIUS_FT = 75;
+const EXIT_RADIUS_FT = 180;
+const DWELL_SECONDS = 30;
+const PROXIMITY_POLL_MS = 5000;
+const TTL_SWEEP_MS = 30000;
+
+function feetToMeters(feet: number) {
+  return feet * 0.3048;
+}
+
+const ARRIVE_RADIUS_M = feetToMeters(ARRIVE_RADIUS_FT);
+const EXIT_RADIUS_M = feetToMeters(EXIT_RADIUS_FT);
 
 function isActiveStopStatus(status: unknown): status is 'pending' | 'accepted' {
   return status === 'pending' || status === 'accepted';
@@ -39,6 +51,15 @@ function isExpiredRequest(r: any) {
   const createdAtMs = r?.createdAt?.toMillis?.() ?? null;
   if (!createdAtMs) return false;
   return Date.now() - createdAtMs >= STUDENT_REQUEST_TTL_MS;
+}
+
+function isExpiredRequestAt(r: any, nowMs: number) {
+  const expiresAtMs = typeof r?.expiresAtMs === 'number' ? r.expiresAtMs : null;
+  if (expiresAtMs !== null) return nowMs >= expiresAtMs;
+
+  const createdAtMs = r?.createdAt?.toMillis?.() ?? null;
+  if (!createdAtMs) return false;
+  return nowMs - createdAtMs >= STUDENT_REQUEST_TTL_MS;
 }
 
 function formatTimeAgo(inputMs: number) {
@@ -125,6 +146,19 @@ export default function DriverScreen() {
     };
   }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
+  const proximityStateRef = useRef<
+    Record<
+      string,
+      {
+        arrivalStartMs: number | null;
+        servicedReady: boolean;
+        arrivedAtWritten: boolean;
+      }
+    >
+  >({});
+  const arrivalWritesInFlightRef = useRef<Set<string>>(new Set());
+  const completionWritesInFlightRef = useRef<Set<string>>(new Set());
+  const expiryWritesInFlightRef = useRef<Set<string>>(new Set());
 
   const driverCoords = driverId ? (busLocationsRef.current[driverId] ?? null) : null;
 
@@ -280,16 +314,29 @@ export default function DriverScreen() {
       );
 
       const expireRequestIfNeeded = async (item: any) => {
-        if (!item?.id || !isExpiredRequest(item)) return;
+        if (!item?.id || !isExpiredRequest(item) || expiryWritesInFlightRef.current.has(item.id)) return;
 
+        expiryWritesInFlightRef.current.add(item.id);
         try {
-          await updateDoc(doc(db, 'stopRequests', item.id), {
-            status: 'cancelled',
-            cancelledAt: serverTimestamp(),
-            cancelledReason: 'student_request_expired',
+          await runTransaction(db, async (tx) => {
+            const ref = doc(db, 'stopRequests', item.id);
+            const snap = await tx.get(ref);
+            if (!snap.exists()) return;
+
+            const current = snap.data() as any;
+            if (!isActiveStopStatus(current?.status)) return;
+            if (!isExpiredRequestAt(current, Date.now())) return;
+
+            tx.update(ref, {
+              status: 'cancelled',
+              cancelledAt: serverTimestamp(),
+              cancelledReason: 'ttl_expired_15m',
+            });
           });
         } catch (err) {
           console.error('Failed to expire request on driver feed', err);
+        } finally {
+          expiryWritesInFlightRef.current.delete(item.id);
         }
       };
 
@@ -319,6 +366,173 @@ export default function DriverScreen() {
       if (unsubRequests) unsubRequests();
     };
   }, [driverId, loading]);
+
+  useEffect(() => {
+    const activeIds = new Set(activeRequests.map((r) => r.id));
+    Object.keys(proximityStateRef.current).forEach((id) => {
+      if (!activeIds.has(id)) delete proximityStateRef.current[id];
+    });
+  }, [activeRequests]);
+
+  useEffect(() => {
+    if (!isSharing || !driverId) return;
+
+    const markArrivedIfNeeded = async (requestId: string) => {
+      if (arrivalWritesInFlightRef.current.has(requestId)) return;
+      arrivalWritesInFlightRef.current.add(requestId);
+
+      try {
+        await runTransaction(db, async (tx) => {
+          const ref = doc(db, 'stopRequests', requestId);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          const current = snap.data() as any;
+          if (!isActiveStopStatus(current?.status)) return;
+          if (isExpiredRequestAt(current, Date.now())) return;
+          if (current?.arrivedAt) return;
+          tx.update(ref, { arrivedAt: serverTimestamp() });
+        });
+      } catch (err) {
+        console.error('Failed to set arrivedAt on stop request', err);
+      } finally {
+        arrivalWritesInFlightRef.current.delete(requestId);
+      }
+    };
+
+    const completeRequestIfEligible = async (requestId: string, driverUid: string) => {
+      if (completionWritesInFlightRef.current.has(requestId)) return;
+      completionWritesInFlightRef.current.add(requestId);
+
+      try {
+        await runTransaction(db, async (tx) => {
+          const ref = doc(db, 'stopRequests', requestId);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          const current = snap.data() as any;
+          if (!isActiveStopStatus(current?.status)) return;
+          if (isExpiredRequestAt(current, Date.now())) return;
+
+          tx.update(ref, {
+            status: 'completed',
+            completedAt: serverTimestamp(),
+            completedReason: 'proximity_drive_by',
+            driverUid: current?.driverUid ?? current?.driverId ?? driverUid,
+          });
+        });
+      } catch (err) {
+        console.error('Failed to complete stop request from proximity', err);
+      } finally {
+        completionWritesInFlightRef.current.delete(requestId);
+      }
+    };
+
+    const tick = () => {
+      const driverLoc = busLocationsRef.current[driverId] ?? lastCoords.current[driverId];
+      if (!driverLoc) return;
+      const nowMs = Date.now();
+
+      activeRequests.forEach((req) => {
+        if (!req?.id || !isActiveStopStatus(req?.status)) return;
+
+        if (isExpiredRequestAt(req, nowMs)) {
+          if (!expiryWritesInFlightRef.current.has(req.id)) {
+            expiryWritesInFlightRef.current.add(req.id);
+            void runTransaction(db, async (tx) => {
+              const ref = doc(db, 'stopRequests', req.id);
+              const snap = await tx.get(ref);
+              if (!snap.exists()) return;
+              const current = snap.data() as any;
+              if (!isActiveStopStatus(current?.status)) return;
+              if (!isExpiredRequestAt(current, Date.now())) return;
+              tx.update(ref, {
+                status: 'cancelled',
+                cancelledAt: serverTimestamp(),
+                cancelledReason: 'ttl_expired_15m',
+              });
+            })
+              .catch((err) => {
+                console.error('Failed to expire request from proximity loop', err);
+              })
+              .finally(() => {
+                expiryWritesInFlightRef.current.delete(req.id);
+              });
+          }
+          delete proximityStateRef.current[req.id];
+          return;
+        }
+
+        const stopLat = req?.stop?.latitude;
+        const stopLon = req?.stop?.longitude;
+        if (typeof stopLat !== 'number' || typeof stopLon !== 'number') return;
+
+        const distanceM = getDistanceInMeters(driverLoc.latitude, driverLoc.longitude, stopLat, stopLon);
+        const withinArrive = distanceM <= ARRIVE_RADIUS_M;
+        const beyondExit = distanceM >= EXIT_RADIUS_M;
+
+        const state =
+          proximityStateRef.current[req.id] ??
+          { arrivalStartMs: null, servicedReady: false, arrivedAtWritten: Boolean(req?.arrivedAt) };
+        let nextState = { ...state };
+
+        if (withinArrive) {
+          if (nextState.arrivalStartMs === null) nextState.arrivalStartMs = nowMs;
+          if (!nextState.arrivedAtWritten && !req?.arrivedAt) {
+            nextState.arrivedAtWritten = true;
+            void markArrivedIfNeeded(req.id);
+          }
+
+          if (nextState.arrivalStartMs !== null && nowMs - nextState.arrivalStartMs >= DWELL_SECONDS * 1000) {
+            nextState.servicedReady = true;
+          }
+        } else if (nextState.arrivalStartMs !== null) {
+          nextState.arrivalStartMs = null;
+        }
+
+        if (beyondExit && nextState.servicedReady) {
+          void completeRequestIfEligible(req.id, driverId);
+          delete proximityStateRef.current[req.id];
+          return;
+        }
+
+        proximityStateRef.current[req.id] = nextState;
+      });
+    };
+
+    tick();
+    const interval = setInterval(tick, PROXIMITY_POLL_MS);
+    return () => clearInterval(interval);
+  }, [activeRequests, driverId, isSharing]);
+
+  useEffect(() => {
+    if (!driverId) return;
+    const timer = setInterval(() => {
+      activeRequests.forEach((item) => {
+        if (!item?.id || !isExpiredRequest(item) || expiryWritesInFlightRef.current.has(item.id)) return;
+        expiryWritesInFlightRef.current.add(item.id);
+        void runTransaction(db, async (tx) => {
+          const ref = doc(db, 'stopRequests', item.id);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          const current = snap.data() as any;
+          if (!isActiveStopStatus(current?.status)) return;
+          if (!isExpiredRequestAt(current, Date.now())) return;
+          tx.update(ref, {
+            status: 'cancelled',
+            cancelledAt: serverTimestamp(),
+            cancelledReason: 'ttl_expired_15m',
+          });
+        })
+          .catch((err) => {
+            console.error('Failed to expire request from timer', err);
+          })
+          .finally(() => {
+            expiryWritesInFlightRef.current.delete(item.id);
+          });
+      });
+    }, TTL_SWEEP_MS);
+
+    return () => clearInterval(timer);
+  }, [activeRequests, driverId]);
 
   useEffect(() => {
     if (!showBoardingCard) {

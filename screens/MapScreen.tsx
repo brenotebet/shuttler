@@ -54,7 +54,7 @@ import InfoBanner from '../components/InfoBanner';
 
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
-const STUDENT_REQUEST_TTL_MS = 2 * 60 * 1000;
+const STUDENT_REQUEST_TTL_MS = 15 * 60 * 1000;
 
 export const LOCATIONS = [
   { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
@@ -648,18 +648,18 @@ export default function MapScreen() {
       return;
     }
 
-    let acceptedRequest: any = null;
-    let pendingRequest: any = null;
-    let acceptedReady = false;
-    let pendingReady = false;
+    let activeRequest: any = null;
+    let expiredRequest: any = null;
+    let activeReady = false;
+    let expiredReady = false;
 
     const reconcileOwnRequest = () => {
-      if (!acceptedReady || !pendingReady) return;
-      setOwnRequest(acceptedRequest || pendingRequest || null);
+      if (!activeReady || !expiredReady) return;
+      setOwnRequest(activeRequest || expiredRequest || null);
       setOwnRequestReady(true);
     };
 
-    const qAccepted = query(
+    const qActive = query(
       collection(db, 'stopRequests'),
       where('studentUid', '==', studentUid),
       where('status', 'in', ['pending', 'accepted']),
@@ -667,44 +667,46 @@ export default function MapScreen() {
       limit(1),
     );
 
-    const qPending = query(
+    const qExpiredCancelled = query(
       collection(db, 'stopRequests'),
       where('studentUid', '==', studentUid),
-      where('status', '==', 'pending'),
+      where('status', '==', 'cancelled'),
+      where('cancelledReason', '==', 'ttl_expired_15m'),
+      orderBy('cancelledAt', 'desc'),
       limit(1),
     );
 
-    const unsubAccepted = onSnapshot(
-      qAccepted,
+    const unsubActive = onSnapshot(
+      qActive,
       (snap) => {
-        acceptedReady = true;
-        acceptedRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
+        activeReady = true;
+        activeRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
         reconcileOwnRequest();
       },
       (err) => {
-        acceptedReady = true;
+        activeReady = true;
         console.error('own active stopRequests snapshot error', err);
         reconcileOwnRequest();
       },
     );
 
-    const unsubPending = onSnapshot(
-      qPending,
+    const unsubExpired = onSnapshot(
+      qExpiredCancelled,
       (snap) => {
-        pendingReady = true;
-        pendingRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
+        expiredReady = true;
+        expiredRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
         reconcileOwnRequest();
       },
       (err) => {
-        pendingReady = true;
-        console.error('own pending stopRequests snapshot error', err);
+        expiredReady = true;
+        console.error('own expired stopRequests snapshot error', err);
         reconcileOwnRequest();
       },
     );
 
     return () => {
-      unsubAccepted();
-      unsubPending();
+      unsubActive();
+      unsubExpired();
     };
   }, [studentUid]);
 
@@ -955,28 +957,25 @@ export default function MapScreen() {
     const createdAtMs = request?.createdAt?.toMillis?.() ?? null;
     if (!createdAtMs) return;
 
-    const ageMs = Date.now() - createdAtMs;
-    if (ageMs >= STUDENT_REQUEST_TTL_MS) {
-      updateDoc(doc(db, 'stopRequests', requestId), {
-        status: 'cancelled',
-        cancelledAt: serverTimestamp(),
-        cancelledReason: 'student_request_expired',
-      }).catch((err) => {
-        console.error('Failed to expire stale student request', err);
-      });
-      return;
-    }
+    const expiresAtMs = typeof request?.expiresAtMs === 'number' ? request.expiresAtMs : createdAtMs + STUDENT_REQUEST_TTL_MS;
+    const remainingMs = expiresAtMs - Date.now();
 
-    const timeout = setTimeout(() => {
+    const expireRequest = () => {
       updateDoc(doc(db, 'stopRequests', requestId), {
         status: 'cancelled',
         cancelledAt: serverTimestamp(),
-        cancelledReason: 'student_request_expired',
+        cancelledReason: 'ttl_expired_15m',
       }).catch((err) => {
         console.error('Failed to expire timed student request', err);
       });
-    }, STUDENT_REQUEST_TTL_MS - ageMs);
+    };
 
+    if (remainingMs <= 0) {
+      expireRequest();
+      return;
+    }
+
+    const timeout = setTimeout(expireRequest, remainingMs);
     return () => clearTimeout(timeout);
   }, [request, requestId]);
 
@@ -1409,9 +1408,20 @@ const handleRequest = async (index: number) => {
         {request ? (
           <>
             <Text style={styles.cardTitle}>
-              Stop Status: {request.status === 'accepted' ? 'In transit' : request.status}
+              Stop Status:{' '}
+              {request.status === 'accepted'
+                ? 'In transit'
+                : request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
+                  ? 'Expired — request again.'
+                  : request.status}
             </Text>
-            <Text style={styles.cardSubtitle}>{request.status === 'accepted' ? 'In transit' : 'Waiting'}</Text>
+            <Text style={styles.cardSubtitle}>
+              {request.status === 'accepted'
+                ? 'In transit'
+                : request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
+                  ? 'Your request timed out after 15 minutes.'
+                  : 'Waiting'}
+            </Text>
 
             {request.stop?.name && <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>}
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
