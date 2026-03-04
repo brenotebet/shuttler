@@ -168,6 +168,7 @@ export default function MapScreen() {
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [eta, setEta] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
+  const [stopsBefore, setStopsBefore] = useState<number | null>(null);
   const [busOnline, setBusOnline] = useState<boolean>(false);
 
   const [busLocations, setBusLocations] = useState<{
@@ -302,6 +303,36 @@ export default function MapScreen() {
 
   const rideActive = !!request && (request.status === 'pending' || request.status === 'accepted');
 
+  const resolvedDriverId = useMemo(() => {
+    if (!request?.stop) return driverId;
+
+    if (driverId && (busLocations[driverId] || lastCoords.current[driverId])) {
+      return driverId;
+    }
+
+    let bestId: string | null = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+
+    for (const id of activeBusIds) {
+      const loc = busLocations[id] || lastCoords.current[id];
+      if (!loc) continue;
+
+      const dist = getDistanceInMeters(
+        loc.latitude,
+        loc.longitude,
+        request.stop.latitude,
+        request.stop.longitude,
+      );
+
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestId = id;
+      }
+    }
+
+    return bestId;
+  }, [activeBusIds, busLocations, driverId, request?.stop]);
+
   // ✅ NEW: for “hide only destination stop marker while active”
   const destinationStopId = request?.stop?.id ?? request?.stopId ?? null;
 
@@ -403,6 +434,7 @@ export default function MapScreen() {
       setRouteCoords([]);
       fullRouteRef.current = [];
       setEta(null);
+      setStopsBefore(null);
       setDriverId(null);
       notifiedRef.current = false;
       closeSelectedBus();
@@ -694,6 +726,7 @@ export default function MapScreen() {
     setRouteCoords([]);
     fullRouteRef.current = [];
     setEta(null);
+    setStopsBefore(null);
     setDriverId(null);
     notifiedRef.current = false;
 
@@ -702,22 +735,25 @@ export default function MapScreen() {
   }, [ownRequest, ownRequestReady]);
 
   const fetchRoute = async () => {
-    if (!request || !driverId) {
+    if (!request || !resolvedDriverId || !request.stop) {
       setRouteCoords([]);
       setEta(null);
+      setStopsBefore(null);
       return;
     }
 
-    const assigned = busLocations[driverId] || lastCoords.current[driverId];
+    const assigned = busLocations[resolvedDriverId] || lastCoords.current[resolvedDriverId];
     if (!assigned) {
       setRouteCoords([]);
       setEta(null);
+      setStopsBefore(null);
       return;
     }
 
-    if (request.status !== 'accepted') {
+    if (request.status !== 'accepted' && request.status !== 'pending') {
       setRouteCoords([]);
       setEta(null);
+      setStopsBefore(null);
       return;
     }
 
@@ -726,24 +762,48 @@ export default function MapScreen() {
       fullRouteRef.current = coords;
       setRouteCoords(coords);
       setEta(etaText);
+
+      const getNearestStopIndex = (lat: number, lon: number) => {
+        let nearestIdx = 0;
+        let minDist = Number.MAX_VALUE;
+        LOCATIONS.forEach((stop, idx) => {
+          const d = getDistanceInMeters(lat, lon, stop.latitude, stop.longitude);
+          if (d < minDist) {
+            minDist = d;
+            nearestIdx = idx;
+          }
+        });
+        return nearestIdx;
+      };
+
+      const busStopIdx = getNearestStopIndex(assigned.latitude, assigned.longitude);
+      const requestedStopIdx = LOCATIONS.findIndex((stop) => stop.id === request.stop.id);
+
+      if (requestedStopIdx < 0) {
+        setStopsBefore(null);
+      } else {
+        const rawDiff = (requestedStopIdx - busStopIdx + LOCATIONS.length) % LOCATIONS.length;
+        setStopsBefore(Math.max(0, rawDiff - 1));
+      }
     } catch (error) {
       console.error('Failed to fetch route:', error);
       setRouteCoords([]);
       setEta(null);
+      setStopsBefore(null);
     }
   };
 
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
-  const driverOnline = activeBusIds.includes(driverId || '');
+  const driverOnline = activeBusIds.includes(resolvedDriverId || '');
 
   useEffect(() => {
-    if (!driverId) return;
-    if (!request || request.status !== 'accepted') return;
+    if (!resolvedDriverId) return;
+    if (!request || (request.status !== 'accepted' && request.status !== 'pending')) return;
     if (!driverOnline) return;
 
     if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
 
-    const busLoc = busLocations[driverId] || lastCoords.current[driverId];
+    const busLoc = busLocations[resolvedDriverId] || lastCoords.current[resolvedDriverId];
     if (!busLoc) return;
 
     const full = fullRouteRef.current;
@@ -786,7 +846,7 @@ export default function MapScreen() {
       if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [driverId, request?.status, driverOnline, busLocations[driverId ?? '']]);
+  }, [resolvedDriverId, request?.status, driverOnline, busLocations[resolvedDriverId ?? '']]);
 
   useEffect(() => {
     if (request?.status !== 'accepted') return;
@@ -1381,6 +1441,7 @@ const handleRequest = async (index: number) => {
 
             {request.stop?.name && <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>}
             {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
+            {stopsBefore !== null && <Text style={styles.cardSubtitle}>Stops before you: {stopsBefore}</Text>}
 
             {request.studentUid === studentUid && request.status === 'pending' && (
               <TouchableOpacity
@@ -1395,6 +1456,7 @@ const handleRequest = async (index: number) => {
                   setRouteCoords([]);
                   fullRouteRef.current = [];
                   setEta(null);
+                  setStopsBefore(null);
                   showAlert('Stop request canceled.');
                 }}
               >

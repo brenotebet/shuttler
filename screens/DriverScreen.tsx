@@ -105,6 +105,7 @@ export default function DriverScreen() {
   const [busOnline, setBusOnline] = useState(false);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
+  const [clockTick, setClockTick] = useState(Date.now());
 
   const [boardingCount, setBoardingCount] = useState(0);
   const [showBoardingCard, setShowBoardingCard] = useState(false);
@@ -136,7 +137,7 @@ export default function DriverScreen() {
 
   const activeRequests = useMemo(
     () => requests.filter((req) => isActiveStopStatus(req?.status)).filter((req) => !isExpiredRequest(req)),
-    [requests],
+    [requests, clockTick],
   );
 
   const countsByStopId = useMemo(() => {
@@ -179,6 +180,12 @@ export default function DriverScreen() {
       })
       .slice(0, 30);
   }, [activeRequests]);
+
+
+  useEffect(() => {
+    const timer = setInterval(() => setClockTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (loading || !driverId) return;
