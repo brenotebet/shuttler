@@ -44,6 +44,7 @@ import {
   orderBy,
   limit,
   getDoc,
+  setDoc, // ✅ ADDED
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase/firebaseconfig';
@@ -259,19 +260,39 @@ export default function MapScreen() {
     return `${Math.round(seconds / 3600)}h ago`;
   };
 
+  // ✅ NEW: ensure /publicUsers/{uid} exists for this signed-in user
+  const ensurePublicUserProfile = async (uid: string, email: string | null) => {
+    try {
+      // Prefer auth displayName if present; fallback to email prefix; else "Student"
+      const authName = auth.currentUser?.displayName ?? null;
+      const emailPrefix = email?.split?.('@')?.[0] ?? null;
+      const displayName = (authName || emailPrefix || 'Student').trim();
+
+      await setDoc(
+        doc(db, 'publicUsers', uid),
+        {
+          displayName,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (err) {
+      // Don't block app if this fails; feed will fall back to uid/email
+      console.error('Failed to ensure public user profile', err);
+    }
+  };
+
+  // ✅ UPDATED: driver name lookup now uses /publicUsers because /users is private
   const getDriverFirstName = async (uid: string) => {
     if (!uid) return 'Driver';
     if (driverFirstNames[uid]) return driverFirstNames[uid];
 
     try {
-      const snap = await getDoc(doc(db, 'users', uid));
+      const snap = await getDoc(doc(db, 'publicUsers', uid));
       const data = (snap.data() as any) || {};
-      const firstName =
-        data.firstName ||
-        data.firstname ||
-        data.givenName ||
-        data.displayName?.split?.(' ')?.[0] ||
-        'Driver';
+      const displayName = typeof data?.displayName === 'string' ? data.displayName : 'Driver';
+      const firstName = displayName?.split?.(' ')?.[0] || 'Driver';
+
       setDriverFirstNames((prev) => ({ ...prev, [uid]: firstName }));
       return firstName;
     } catch {
@@ -369,6 +390,11 @@ export default function MapScreen() {
     const unsub = onAuthStateChanged(auth, (u) => {
       setStudentUid(u?.uid ?? null);
       setStudentEmail(u?.email ?? null);
+
+      // ✅ Ensure public profile exists for this user
+      if (u?.uid) {
+        void ensurePublicUserProfile(u.uid, u.email ?? null);
+      }
 
       setOwnRequestReady(false);
       setOwnRequest(null);
@@ -982,61 +1008,80 @@ export default function MapScreen() {
     );
   };
 
-  const handleRequest = async (index: number) => {
-    if (!busOnline) {
-      showAlert('No buses are currently online. Please try again later.');
-      return;
-    }
-    if (!studentUid) {
-      showAlert('You must be logged in to request a stop.');
-      return;
-    }
+const handleRequest = async (index: number) => {
+  if (!busOnline) {
+    showAlert('No buses are currently online. Please try again later.');
+    return;
+  }
+  if (!studentUid) {
+    showAlert('You must be logged in to request a stop.');
+    return;
+  }
 
-    const selectedStop = LOCATIONS[index];
+  const selectedStop = LOCATIONS[index];
 
+  try {
+    console.log('[handleRequest] auth.uid =', auth.currentUser?.uid, 'studentUid =', studentUid);
+
+    // (A) Check existing
+    let existing;
     try {
-      const [existing, acceptedForStop] = await Promise.all([
-        getDocs(
-          query(
-            collection(db, 'stopRequests'),
-            where('studentUid', '==', studentUid),
-            where('status', 'in', ['pending', 'accepted']),
-            limit(1),
-          ),
+      existing = await getDocs(
+        query(
+          collection(db, 'stopRequests'),
+          where('studentUid', '==', studentUid),
+          where('status', 'in', ['pending', 'accepted']),
+          limit(1),
         ),
-        getDocs(
-          query(
-            collection(db, 'stopRequests'),
-            where('status', '==', 'accepted'),
-            where('stopId', '==', selectedStop.id),
-            orderBy('createdAt', 'desc'),
-            limit(1),
-          ),
+      );
+      console.log('[handleRequest] existing ok, empty?', existing.empty);
+    } catch (e: any) {
+      console.error('[handleRequest] existing query FAILED', e?.code, e?.message);
+      throw e;
+    }
+
+    // (B) Check accepted-for-stop
+    let acceptedForStop;
+    try {
+      acceptedForStop = await getDocs(
+        query(
+          collection(db, 'stopRequests'),
+          where('status', '==', 'accepted'),
+          where('stopId', '==', selectedStop.id),
+          orderBy('createdAt', 'desc'),
+          limit(1),
         ),
-      ]);
+      );
+      console.log('[handleRequest] acceptedForStop ok, empty?', acceptedForStop.empty);
+    } catch (e: any) {
+      console.error('[handleRequest] acceptedForStop query FAILED', e?.code, e?.message);
+      throw e;
+    }
 
-      if (!existing.empty) {
-        showAlert('You already have a stop in progress.');
-        setShowLocationList(false);
-        setSelectedStopIndex(null);
-        return;
-      }
+    if (!existing.empty) {
+      showAlert('You already have a stop in progress.');
+      setShowLocationList(false);
+      setSelectedStopIndex(null);
+      return;
+    }
 
-      if (!acceptedForStop.empty) {
-        const docSnap = acceptedForStop.docs[0];
-        const data = { id: docSnap.id, ...(docSnap.data() as any) };
+    if (!acceptedForStop.empty) {
+      const docSnap = acceptedForStop.docs[0];
+      const data = { id: docSnap.id, ...(docSnap.data() as any) };
 
-        setOwnRequest(null);
-        setRequest(data);
-        setRequestId(data.id);
-        setDriverId(data.driverUid || data.driverId || null);
+      setOwnRequest(null);
+      setRequest(data);
+      setRequestId(data.id);
+      setDriverId(data.driverUid || data.driverId || null);
 
-        showAlert('A bus is already headed to this stop. Showing the current ride.');
-        setShowLocationList(false);
-        setSelectedStopIndex(index);
-        return;
-      }
+      showAlert('A bus is already headed to this stop. Showing the current ride.');
+      setShowLocationList(false);
+      setSelectedStopIndex(index);
+      return;
+    }
 
+    // (C) Create request
+    try {
       const ref = await addDoc(collection(db, 'stopRequests'), {
         studentUid,
         studentEmail: studentEmail ?? null,
@@ -1054,36 +1099,38 @@ export default function MapScreen() {
         expiresAtMs: Date.now() + STUDENT_REQUEST_TTL_MS,
       });
 
-      console.log('[MapScreen][handleRequest] created stopRequest', ref.id);
-
-      showAlert('Stop requested successfully!');
-      setShowLocationList(false);
-      setSelectedStopIndex(null);
-    } catch (err: any) {
-      console.error('[MapScreen][handleRequest] FAILED', {
-        code: err?.code,
-        message: err?.message,
-        err,
-      });
-
-      const code = err?.code ?? '';
-      if (String(code).includes('failed-precondition')) {
-        showAlert('Firestore index missing for this query. Check console for index link.', 'Index required');
-      } else if (String(code).includes('permission-denied')) {
-        showAlert('Permission denied. Firestore rules blocked the operation.', 'Permission denied');
-      } else {
-        showAlert(err?.message ?? 'Error requesting stop', 'Error requesting stop');
-      }
+      console.log('[handleRequest] created stopRequest', ref.id);
+    } catch (e: any) {
+      console.error('[handleRequest] addDoc FAILED', e?.code, e?.message);
+      throw e;
     }
-  };
+
+    showAlert('Stop requested successfully!');
+    setShowLocationList(false);
+    setSelectedStopIndex(null);
+  } catch (err: any) {
+    console.error('[MapScreen][handleRequest] FAILED', {
+      code: err?.code,
+      message: err?.message,
+      err,
+    });
+
+    const code = err?.code ?? '';
+    if (String(code).includes('failed-precondition')) {
+      showAlert('Firestore index missing for this query. Check console for index link.', 'Index required');
+    } else if (String(code).includes('permission-denied')) {
+      showAlert('Permission denied. Firestore rules blocked the operation.', 'Permission denied');
+    } else {
+      showAlert(err?.message ?? 'Error requesting stop', 'Error requesting stop');
+    }
+  }
+};
 
   if (!region || !ownRequestReady) {
     return (
       <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.center}>
         <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-        {!ownRequestReady ? (
-          <Text style={{ marginTop: 10, color: '#666' }}>Syncing your ride…</Text>
-        ) : null}
+        {!ownRequestReady ? <Text style={{ marginTop: 10, color: '#666' }}>Syncing your ride…</Text> : null}
       </SafeAreaView>
     );
   }
@@ -1191,7 +1238,7 @@ export default function MapScreen() {
           }
         }}
       >
-        {/* ✅ UPDATED: Campus stops always visible, but hide the destination stop marker while ride is active */}
+        {/* ✅ Campus stops always visible, but hide the destination stop marker while ride is active */}
         {LOCATIONS.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
           <Marker
             description={stop.name}
@@ -1266,7 +1313,7 @@ export default function MapScreen() {
           );
         })}
 
-        {/* ✅ UPDATED: Destination pin only while ride is active */}
+        {/* ✅ Destination pin only while ride is active */}
         {rideActive && request?.stop && (
           <Marker
             coordinate={{

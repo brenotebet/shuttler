@@ -1,12 +1,7 @@
 // src/screens/LoginScreen.tsx
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  View,
-  StyleSheet,
-  Image,
-  ActivityIndicator,
-} from 'react-native';
+import { View, StyleSheet, Image, ActivityIndicator } from 'react-native';
 import { type User } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
@@ -29,23 +24,49 @@ function normalizeRole(value: unknown): UserRole | null {
   return null;
 }
 
+function deriveDisplayName(user: User) {
+  const fromAuth = (user.displayName ?? '').trim();
+  if (fromAuth) return fromAuth;
+
+  const email = (user.email ?? '').trim();
+  if (email.includes('@')) {
+    const prefix = email.split('@')[0]?.trim();
+    if (prefix) return prefix;
+  }
+
+  return 'Student';
+}
+
+// ✅ Updated: upserts BOTH /users and /publicUsers
 async function upsertUserProfile(user: User, fallbackRole: UserRole) {
   const userRef = doc(db, 'users', user.uid);
   const existing = await getDoc(userRef);
   const existingRole = normalizeRole(existing.data()?.role);
   const roleToPersist = existingRole ?? fallbackRole;
 
-  // NOTE: merge:true so we never wipe existing fields
+  const displayName = deriveDisplayName(user);
+
+  // 1) Private user profile (role lives here)
   await setDoc(
     userRef,
     {
       uid: user.uid,
       email: user.email ?? null,
       role: roleToPersist,
+      displayName, // optional, fine to keep here too (private)
       lastLoginAt: serverTimestamp(),
-      // createdAt only set on first create by using merge + checking not possible in client rules;
-      // fine to always send; serverTimestamp will just overwrite, but that's okay for now.
       createdAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  // 2) Public profile (safe fields only; readable by drivers)
+  await setDoc(
+    doc(db, 'publicUsers', user.uid),
+    {
+      displayName,
+      // You can add other safe fields later if needed (e.g., firstName only)
+      updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
@@ -61,6 +82,7 @@ export default function LoginScreen() {
 
   const handleSchoolSso = useCallback(async () => {
     if (isSubmitting) return;
+
     try {
       setIsSubmitting(true);
 
@@ -73,9 +95,7 @@ export default function LoginScreen() {
       }
 
       const redirectUrl = await startSamlLogin();
-      if (!redirectUrl) {
-        return;
-      }
+      if (!redirectUrl) return;
 
       await persistSamlHandoffFromUrl(redirectUrl);
       const signedInFromRedirect = await trySamlHandoffLogin(redirectUrl);
@@ -141,11 +161,7 @@ export default function LoginScreen() {
     <ScreenContainer>
       <View style={styles.content}>
         <View style={styles.hero}>
-          <Image
-            source={require('../assets/mck.avif')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
+          <Image source={require('../assets/mck.avif')} style={styles.logo} resizeMode="contain" />
         </View>
 
         <InfoBanner

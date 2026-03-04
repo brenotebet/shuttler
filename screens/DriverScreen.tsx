@@ -1,10 +1,23 @@
+// DriverScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView } from 'react-native';
 import * as Location from 'expo-location';
 import { useLocationSharing } from '../location/LocationContext';
 import { useDriver } from '../drivercontext/DriverContext';
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, limit, getDoc, writeBatch, orderBy } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  updateDoc,
+  serverTimestamp,
+  limit,
+  getDoc,
+  writeBatch,
+  orderBy,
+} from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
@@ -54,7 +67,9 @@ function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: num
   const R = 6371000;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
@@ -100,7 +115,13 @@ export default function DriverScreen() {
   const userLookupInFlightRef = useRef<Set<string>>(new Set());
 
   const busLocationsRef = useRef<{
-    [id: string]: { latitude: number; longitude: number; lastUpdated: Date; isFresh: boolean; secondsAgo: number };
+    [id: string]: {
+      latitude: number;
+      longitude: number;
+      lastUpdated: Date;
+      isFresh: boolean;
+      secondsAgo: number;
+    };
   }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
 
@@ -216,12 +237,20 @@ export default function DriverScreen() {
             });
 
           const freshBuses = buses.filter((bus) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
-          const visibleBuses = buses.filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS).filter((bus) => bus.id === driverId);
+          const visibleBuses = buses
+            .filter((bus) => bus.secondsAgo < STALE_WINDOW_SECONDS)
+            .filter((bus) => bus.id === driverId);
 
           setBusOnline(freshBuses.some((bus) => bus.id === driverId));
 
           const nextLocations: {
-            [id: string]: { latitude: number; longitude: number; lastUpdated: Date; isFresh: boolean; secondsAgo: number };
+            [id: string]: {
+              latitude: number;
+              longitude: number;
+              lastUpdated: Date;
+              isFresh: boolean;
+              secondsAgo: number;
+            };
           } = {};
 
           visibleBuses.forEach((bus) => {
@@ -258,7 +287,12 @@ export default function DriverScreen() {
       };
 
       unsubRequests = onSnapshot(
-        query(collection(db, 'stopRequests'), where('status', 'in', ['pending', 'accepted']), orderBy('createdAt', 'desc'), limit(200)),
+        query(
+          collection(db, 'stopRequests'),
+          where('status', 'in', ['pending', 'accepted']),
+          orderBy('createdAt', 'desc'),
+          limit(200),
+        ),
         (snapshot) => {
           const rows = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
           rows.forEach((row) => {
@@ -287,14 +321,19 @@ export default function DriverScreen() {
     Animated.timing(boardingSlideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   }, [showBoardingCard, boardingSlideAnim]);
 
+  // ✅ UPDATED: Load names from /publicUsers instead of /users
   useEffect(() => {
     const missingUids = recentFeed
       .map((req) => req?.studentUid)
-      .filter((uid): uid is string => Boolean(uid) && !userNameByUid[uid] && !userLookupInFlightRef.current.has(uid));
+      .filter(
+        (uid): uid is string =>
+          Boolean(uid) && !userNameByUid[uid] && !userLookupInFlightRef.current.has(uid),
+      );
 
     missingUids.forEach((uid) => {
       userLookupInFlightRef.current.add(uid);
-      void getDoc(doc(db, 'users', uid))
+
+      void getDoc(doc(db, 'publicUsers', uid))
         .then((snap) => {
           if (!snap.exists()) return;
           const data = snap.data() as any;
@@ -303,7 +342,7 @@ export default function DriverScreen() {
           setUserNameByUid((prev) => ({ ...prev, [uid]: displayName }));
         })
         .catch((err) => {
-          console.error('Failed to load user profile for feed', err);
+          console.error('Failed to load public user profile for feed', err);
         })
         .finally(() => {
           userLookupInFlightRef.current.delete(uid);
@@ -360,7 +399,7 @@ export default function DriverScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}> 
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.headerTitle}>Driver Dashboard</Text>
         <TouchableOpacity
           style={styles.shareButton}
@@ -383,7 +422,7 @@ export default function DriverScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + 12, paddingBottom: 140 }]}> 
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + 12, paddingBottom: 140 }]}>
         {!isSharing && hasLocationPermission && (
           <View style={styles.banner}>
             <Text style={styles.bannerText}>Not sharing location. Tap Start Sharing to go online.</Text>
@@ -412,12 +451,7 @@ export default function DriverScreen() {
               : 'Oldest: — • Latest: —'}
           </Text>
 
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => {
-              setShowBoardingCard(true);
-            }}
-          >
+          <TouchableOpacity style={styles.actionButton} onPress={() => setShowBoardingCard(true)}>
             <Text style={styles.actionButtonText}>Add Students</Text>
           </TouchableOpacity>
         </View>
@@ -473,9 +507,7 @@ export default function DriverScreen() {
           })}
         </View>
 
-        {isSharing && !busOnline && (
-          <Text style={styles.onlineHint}>Waiting for fresh driver GPS ping…</Text>
-        )}
+        {isSharing && !busOnline && <Text style={styles.onlineHint}>Waiting for fresh driver GPS ping…</Text>}
       </ScrollView>
 
       {showBoardingCard && (
@@ -484,7 +516,14 @@ export default function DriverScreen() {
           style={[
             styles.bottomCard,
             {
-              transform: [{ translateY: boardingSlideAnim.interpolate({ inputRange: [0, 1], outputRange: [boardingCardHeight, 0] }) }],
+              transform: [
+                {
+                  translateY: boardingSlideAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [boardingCardHeight, 0],
+                  }),
+                },
+              ],
               opacity: boardingSlideAnim,
             },
           ]}
