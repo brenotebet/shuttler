@@ -1,12 +1,13 @@
 // src/screens/AdminDriverScreen.tsx
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Text, FlatList, StyleSheet, ActivityIndicator, View } from 'react-native';
 import { db } from '../firebase/firebaseconfig';
 import {
   collection,
   onSnapshot,
   doc,
+  getDoc,
   query,
   where,
   serverTimestamp,
@@ -26,6 +27,8 @@ export default function AdminDriverScreen() {
   const { driverId } = useDriver();
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
+  const lookupInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!driverId) {
@@ -61,6 +64,30 @@ export default function AdminDriverScreen() {
 
     return () => unsub();
   }, [driverId]);
+
+  // Fetch display names for student UIDs in the request list
+  useEffect(() => {
+    const missingUids = requests
+      .map((r) => r?.studentUid)
+      .filter(
+        (uid): uid is string =>
+          Boolean(uid) && !userNameByUid[uid] && !lookupInFlightRef.current.has(uid),
+      );
+
+    missingUids.forEach((uid) => {
+      lookupInFlightRef.current.add(uid);
+      void getDoc(doc(db, 'publicUsers', uid))
+        .then((snap) => {
+          if (!snap.exists()) return;
+          const displayName = (snap.data() as any)?.displayName;
+          if (typeof displayName === 'string') {
+            setUserNameByUid((prev) => ({ ...prev, [uid]: displayName }));
+          }
+        })
+        .catch((err) => console.error('Failed to load public user profile', err))
+        .finally(() => lookupInFlightRef.current.delete(uid));
+    });
+  }, [requests, userNameByUid]);
 
   // Accept / Complete logic
   const updateStatus = async (id: string, newStatus: string) => {
@@ -112,7 +139,12 @@ export default function AdminDriverScreen() {
   };
 
   const renderItem = ({ item }: { item: any }) => (
-    <StopRequestCard item={item} driverId={driverId} updateStatus={updateStatus} />
+    <StopRequestCard
+      item={item}
+      driverId={driverId}
+      updateStatus={updateStatus}
+      studentName={item.studentUid ? userNameByUid[item.studentUid] : undefined}
+    />
   );
 
   if (loading) {

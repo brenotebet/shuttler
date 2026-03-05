@@ -1,0 +1,146 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function hasUserDoc(uid) {
+      return exists(userPath(uid));
+    }
+
+    function myRole() {
+      return signedIn() && hasUserDoc(request.auth.uid)
+        ? get(userPath(request.auth.uid)).data.role
+        : null;
+    }
+
+    function isDriver() {
+      return myRole() == "driver" || myRole() == "admin";
+    }
+
+    function isAdmin() {
+      return myRole() == "admin";
+    }
+
+    // ----------------------------
+    // Users (roles live here) - PRIVATE
+    // ----------------------------
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid;
+
+      // User may update their own profile EXCEPT role
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role;
+
+      allow delete: if false;
+    }
+
+    // ----------------------------
+    // Public user profile (safe fields only)
+    // ----------------------------
+    match /publicUsers/{uid} {
+      // Any logged-in user can read displayName for the feed
+      allow read: if signedIn();
+
+      // User can create/update only their own public profile
+      allow create, update: if signedIn() && request.auth.uid == uid;
+
+      allow delete: if false;
+    }
+
+    // ----------------------------
+    // Bus locations
+    // ----------------------------
+    match /buses/{busId} {
+      // Any logged-in user can see buses
+      allow read: if signedIn();
+
+      // Only the authenticated driver may write their bus (docId must be uid)
+      allow create, update: if signedIn()
+        && isDriver()
+        && request.auth.uid == busId;
+
+      allow delete: if false;
+    }
+
+    // ----------------------------
+    // Stop requests
+    // ----------------------------
+    match /stopRequests/{requestId} {
+
+      // READ:
+      // - Drivers/admins can read all
+      // - Students can read their own requests
+      // - Any logged-in user can read accepted requests (to show bus is coming)
+      allow read: if signedIn() && (
+        isDriver()
+        || resource.data.studentUid == request.auth.uid
+        || resource.data.status == "accepted"
+      );
+
+      // CREATE:
+      // Student creates their own pending request
+      allow create: if signedIn()
+        && request.resource.data.studentUid == request.auth.uid
+        && request.resource.data.status == "pending"
+        && request.resource.data.stopId is string;
+
+      // UPDATE:
+      // - Student may cancel their own pending request
+      // - Driver may accept a request only if no driver has claimed it yet
+      // - Driver may complete/cancel only their OWN accepted request
+      allow update: if signedIn() && (
+        (
+          // Student cancels their own pending request
+          resource.data.studentUid == request.auth.uid
+          && resource.data.status == "pending"
+          && request.resource.data.status in ["pending", "cancelled"]
+        )
+        ||
+        (
+          // Driver accepts an unclaimed request
+          isDriver()
+          && resource.data.status == "pending"
+          && resource.data.driverUid == null
+          && request.resource.data.status == "accepted"
+          && request.resource.data.driverUid == request.auth.uid
+        )
+        ||
+        (
+          // Driver completes or cancels their OWN accepted request
+          isDriver()
+          && resource.data.status == "accepted"
+          && resource.data.driverUid == request.auth.uid
+          && request.resource.data.status in ["completed", "cancelled"]
+          && request.resource.data.driverUid == request.auth.uid
+        )
+      );
+
+      allow delete: if false;
+    }
+
+    // ----------------------------
+    // Boarding counts (driver only)
+    // ----------------------------
+    match /boardingCounts/{id} {
+      allow create: if signedIn() && isDriver();
+      allow read: if signedIn() && (isAdmin() || isDriver());
+      allow update, delete: if false;
+    }
+
+    // ----------------------------
+    // Default deny
+    // ----------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

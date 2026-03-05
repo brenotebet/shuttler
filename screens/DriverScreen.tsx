@@ -22,11 +22,10 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
-import { LOCATIONS } from './RequestStopScreen';
+import { LOCATIONS, STUDENT_REQUEST_TTL_MS } from '../src/constants/stops';
 
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
-const STUDENT_REQUEST_TTL_MS = 15 * 60 * 1000;
 const ARRIVE_RADIUS_FT = 75;
 const EXIT_RADIUS_FT = 180;
 const DWELL_SECONDS = 30;
@@ -173,6 +172,12 @@ export default function DriverScreen() {
     () => requests.filter((req) => isActiveStopStatus(req?.status)).filter((req) => !isExpiredRequest(req)),
     [requests, clockTick],
   );
+
+  // Ref so interval callbacks always see the latest list without restarting every second.
+  const activeRequestsRef = useRef(activeRequests);
+  useEffect(() => {
+    activeRequestsRef.current = activeRequests;
+  }, [activeRequests]);
 
   const countsByStopId = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -431,7 +436,7 @@ export default function DriverScreen() {
       if (!driverLoc) return;
       const nowMs = Date.now();
 
-      activeRequests.forEach((req) => {
+      activeRequestsRef.current.forEach((req) => {
         if (!req?.id || !isActiveStopStatus(req?.status)) return;
 
         if (isExpiredRequestAt(req, nowMs)) {
@@ -501,12 +506,12 @@ export default function DriverScreen() {
     tick();
     const interval = setInterval(tick, PROXIMITY_POLL_MS);
     return () => clearInterval(interval);
-  }, [activeRequests, driverId, isSharing]);
+  }, [driverId, isSharing]);
 
   useEffect(() => {
     if (!driverId) return;
     const timer = setInterval(() => {
-      activeRequests.forEach((item) => {
+      activeRequestsRef.current.forEach((item) => {
         if (!item?.id || !isExpiredRequest(item) || expiryWritesInFlightRef.current.has(item.id)) return;
         expiryWritesInFlightRef.current.add(item.id);
         void runTransaction(db, async (tx) => {
@@ -532,7 +537,7 @@ export default function DriverScreen() {
     }, TTL_SWEEP_MS);
 
     return () => clearInterval(timer);
-  }, [activeRequests, driverId]);
+  }, [driverId]);
 
   useEffect(() => {
     if (!showBoardingCard) {

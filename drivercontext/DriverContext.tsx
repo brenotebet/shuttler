@@ -1,10 +1,11 @@
 // drivercontext/DriverContext.tsx
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
+import React, { createContext, useContext, useMemo } from 'react';
+import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
+import { useAuth } from '../src/auth/AuthProvider';
 
 type DriverContextType = {
-  driverId: string | null;     // keep name to minimize refactors; this now equals auth.uid
+  driverId: string | null;
   loading: boolean;
   logout: () => Promise<void>;
 };
@@ -18,23 +19,16 @@ const DriverContext = createContext<DriverContextType>({
 export const useDriver = () => useContext(DriverContext);
 
 export const DriverProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [driverId, setDriverId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      setDriverId(user?.uid ?? null); // ✅ ONLY source of truth
-      setLoading(false);
-    });
-    return () => unsub();
-  }, []);
+  const { user, initializing } = useAuth();
 
   const logout = async () => {
-    await signOut(auth); // ✅ clears auth + token
-    // state will reset via onAuthStateChanged
+    await signOut(auth);
   };
 
-  const value = useMemo(() => ({ driverId, loading, logout }), [driverId, loading]);
+  const value = useMemo(
+    () => ({ driverId: user?.uid ?? null, loading: initializing, logout }),
+    [user, initializing],
+  );
 
   return <DriverContext.Provider value={value}>{children}</DriverContext.Provider>;
 };

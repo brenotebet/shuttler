@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, StyleSheet, Image, ActivityIndicator } from 'react-native';
 import { type User } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 
 import { showAlert } from '../src/utils/alerts';
@@ -46,14 +46,17 @@ async function upsertUserProfile(user: User, fallbackRole: UserRole) {
 
   const displayName = deriveDisplayName(user);
 
+  // Write both docs atomically so they're never out of sync.
+  const batch = writeBatch(db);
+
   // 1) Private user profile (role lives here)
-  await setDoc(
+  batch.set(
     userRef,
     {
       uid: user.uid,
       email: user.email ?? null,
       role: roleToPersist,
-      displayName, // optional, fine to keep here too (private)
+      displayName,
       lastLoginAt: serverTimestamp(),
       createdAt: serverTimestamp(),
     },
@@ -61,15 +64,16 @@ async function upsertUserProfile(user: User, fallbackRole: UserRole) {
   );
 
   // 2) Public profile (safe fields only; readable by drivers)
-  await setDoc(
+  batch.set(
     doc(db, 'publicUsers', user.uid),
     {
       displayName,
-      // You can add other safe fields later if needed (e.g., firstName only)
       updatedAt: serverTimestamp(),
     },
     { merge: true }
   );
+
+  await batch.commit();
 }
 
 export default function LoginScreen() {

@@ -40,7 +40,6 @@ export default function AppButton({
         style={[
           styles.text,
           variant === 'secondary' && styles.secondaryText,
-          disabled && styles.disabledText,
         ]}
       >
         {label}
@@ -77,8 +76,5 @@ const styles = StyleSheet.create({
   disabled: {
     opacity: 0.6,
     shadowOpacity: 0.04,
-  },
-  disabledText: {
-    color: '#b1b1b1',
   },
 });

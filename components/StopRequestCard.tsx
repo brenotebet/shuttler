@@ -8,7 +8,8 @@ import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 type StopRequest = {
   id: string;
-  studentEmail: string;
+  studentUid?: string;
+  studentEmail?: string;
   driverUid?: string;
   driverId?: string;
   status: string;
@@ -19,15 +20,18 @@ type Props = {
   item: StopRequest;
   driverId: string | null;
   updateStatus: (id: string, status: string) => void;
+  studentName?: string;
 };
 
-function StopRequestCard({ item, driverId, updateStatus }: Props) {
+function StopRequestCard({ item, driverId, updateStatus, studentName }: Props) {
   const handleAccept = useCallback(() => updateStatus(item.id, 'accepted'), [item.id, updateStatus]);
   const handleComplete = useCallback(() => updateStatus(item.id, 'completed'), [item.id, updateStatus]);
 
+  const studentLabel = studentName ?? item.studentEmail ?? item.studentUid ?? 'Unknown student';
+
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>Student: {item.studentEmail}</Text>
+      <Text style={styles.title}>Student: {studentLabel}</Text>
       <Text style={styles.detail}>Stop: {item.stop?.name || 'Unknown'}</Text>
       <MapView
         provider={PROVIDER_GOOGLE}
@@ -57,7 +61,7 @@ function StopRequestCard({ item, driverId, updateStatus }: Props) {
         </TouchableOpacity>
       )}
 
-      {item.status === 'accepted' && (item.driverUid || item.driverId) === driverId && (
+      {item.status === 'accepted' && (item.driverUid === driverId || item.driverId === driverId) && (
         <TouchableOpacity style={styles.button} onPress={handleComplete} activeOpacity={0.85}>
           <Text style={styles.buttonText}>Stop Completed</Text>
         </TouchableOpacity>

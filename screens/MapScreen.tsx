@@ -51,18 +51,10 @@ import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
+import { LOCATIONS, STUDENT_REQUEST_TTL_MS } from '../src/constants/stops';
 
 const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
-const STUDENT_REQUEST_TTL_MS = 15 * 60 * 1000;
-
-export const LOCATIONS = [
-  { id: 'stop1', name: 'MPCC', latitude: 38.61071, longitude: -89.81481 },
-  { id: 'stop2', name: 'PAC', latitude: 38.6079, longitude: -89.81561 },
-  { id: 'stop3', name: 'Performance Center', latitude: 38.59875, longitude: -89.82447 },
-  { id: 'stop4', name: 'Carnegie Hall', latitude: 38.60699, longitude: -89.81709 },
-  { id: 'stop5', name: 'McKendree West Clubhouse', latitude: 38.60573, longitude: -89.82468 },
-];
 
 function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -1054,7 +1046,7 @@ const handleRequest = async (index: number) => {
   const selectedStop = LOCATIONS[index];
 
   try {
-    console.log('[handleRequest] auth.uid =', auth.currentUser?.uid, 'studentUid =', studentUid);
+    if (__DEV__) console.log('[handleRequest] auth.uid =', auth.currentUser?.uid, 'studentUid =', studentUid);
 
     // (A) Check existing
     let existing;
@@ -1067,7 +1059,7 @@ const handleRequest = async (index: number) => {
           limit(1),
         ),
       );
-      console.log('[handleRequest] existing ok, empty?', existing.empty);
+      if (__DEV__) console.log('[handleRequest] existing ok, empty?', existing.empty);
     } catch (e: any) {
       console.error('[handleRequest] existing query FAILED', e?.code, e?.message);
       throw e;
@@ -1085,7 +1077,7 @@ const handleRequest = async (index: number) => {
           limit(1),
         ),
       );
-      console.log('[handleRequest] acceptedForStop ok, empty?', acceptedForStop.empty);
+      if (__DEV__) console.log('[handleRequest] acceptedForStop ok, empty?', acceptedForStop.empty);
     } catch (e: any) {
       console.error('[handleRequest] acceptedForStop query FAILED', e?.code, e?.message);
       throw e;
@@ -1132,7 +1124,7 @@ const handleRequest = async (index: number) => {
         expiresAtMs: Date.now() + STUDENT_REQUEST_TTL_MS,
       });
 
-      console.log('[handleRequest] created stopRequest', ref.id);
+      if (__DEV__) console.log('[handleRequest] created stopRequest', ref.id);
     } catch (e: any) {
       console.error('[handleRequest] addDoc FAILED', e?.code, e?.message);
       throw e;

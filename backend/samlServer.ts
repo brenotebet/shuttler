@@ -20,6 +20,14 @@ import 'dotenv/config';
  */
 
 // ---------- ENV (match your .env names) ----------
+
+// Restrict SAML-authenticated users to this email domain (e.g. 'mckendree.edu').
+// Set ALLOWED_EMAIL_DOMAIN in .env. Leave empty only for local testing.
+const ALLOWED_EMAIL_DOMAIN = (process.env.ALLOWED_EMAIL_DOMAIN || 'mckendree.edu').trim().toLowerCase();
+
+// URL schemes/prefixes allowed in RelayState — prevents open redirects via forged SAML responses.
+const ALLOWED_RELAY_PREFIXES = ['bogeybus://'];
+
 const SAML_SP_ENTITY_ID = (
   process.env.EXPO_PUBLIC_SAML_SP_ENTITY_ID ||
   process.env.SAML_SP_ENTITY_ID ||
@@ -174,6 +182,23 @@ function consumeHandoffToken(token: string): HandoffTokenPayload | null {
   return payload;
 }
 
+// ---------- Simple rate limiter for /saml/exchange ----------
+// Allows at most MAX_EXCHANGE_REQUESTS per IP in EXCHANGE_WINDOW_MS.
+const EXCHANGE_WINDOW_MS = 60_000;
+const MAX_EXCHANGE_REQUESTS = 10;
+const exchangeRateMap = new Map<string, { count: number; windowStart: number }>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = exchangeRateMap.get(ip);
+  if (!entry || now - entry.windowStart > EXCHANGE_WINDOW_MS) {
+    exchangeRateMap.set(ip, { count: 1, windowStart: now });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > MAX_EXCHANGE_REQUESTS;
+}
+
 // ---------- Express app ----------
 const app = express();
 
@@ -265,7 +290,12 @@ app.post('/saml/acs', async (req: Request, res: Response) => {
     const returnTo = relayState || RETURN_TO_DEFAULT;
 
     if (returnTo) {
-      // Append samlToken to returnTo safely
+      // Validate returnTo against the allowlist to prevent open redirects.
+      const allowed = ALLOWED_RELAY_PREFIXES.some((prefix) => returnTo.startsWith(prefix));
+      if (!allowed) {
+        logAssertionFailure('relay_state_rejected', { returnTo, ip: req.ip });
+        return res.status(400).json({ error: 'RelayState destination is not permitted' });
+      }
       const joiner = returnTo.includes('?') ? '&' : '?';
       return res.redirect(`${returnTo}${joiner}samlToken=${encodeURIComponent(samlToken)}`);
     }
@@ -292,6 +322,11 @@ app.get('/saml/exchange', (_req: Request, res: Response) => {
 });
 
 app.post('/saml/exchange', async (req: Request, res: Response) => {
+  const clientIp = req.ip ?? 'unknown';
+  if (isRateLimited(clientIp)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
   const samlToken = (req.body as any)?.samlToken;
   if (!samlToken) {
     return res.status(400).json({ error: 'Missing SAML handoff token' });
@@ -311,6 +346,15 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
       normalizeString((attributes as any).email) ||
       normalizeString((attributes as any).mail) ||
       undefined;
+
+    // Enforce institutional email domain before minting a Firebase token.
+    if (ALLOWED_EMAIL_DOMAIN && email) {
+      const domain = email.split('@')[1]?.toLowerCase() ?? '';
+      if (domain !== ALLOWED_EMAIL_DOMAIN) {
+        console.error('SAML exchange rejected: email domain not allowed', { domain, ip: clientIp });
+        return res.status(403).json({ error: 'Email domain not permitted' });
+      }
+    }
 
     const givenName =
       normalizeString((attributes as any).givenName) ||

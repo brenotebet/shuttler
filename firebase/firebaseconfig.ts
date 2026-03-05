@@ -2,9 +2,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
+import { initializeAuth, getAuth, getReactNativePersistence, Auth } from 'firebase/auth';
 
-// Your config is fine
 const firebaseConfig = {
   apiKey: "AIzaSyCFSRvElVpTPnFPShpbUwYzamLgtqw1EmQ",
   authDomain: "bogey-bus-tracker.firebaseapp.com",
@@ -17,9 +16,16 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(AsyncStorage),
-});
+// initializeAuth throws if called on an already-initialized app (e.g. on hot reload).
+// Try to initialize with AsyncStorage persistence; fall back to the existing auth instance.
+let auth: Auth;
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
+} catch {
+  auth = getAuth(app);
+}
 
 const db = getFirestore(app);
 

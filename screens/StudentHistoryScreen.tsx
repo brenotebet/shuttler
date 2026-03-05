@@ -22,10 +22,16 @@ export default function StudentHistoryScreen() {
       where('status', '==', 'completed'),
       orderBy('completedAt', 'desc')
     );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setStops(data);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        setStops(data);
+      },
+      (err) => {
+        console.error('Failed to fetch student history', err);
+      },
+    );
     return () => unsub();
   }, []);
 

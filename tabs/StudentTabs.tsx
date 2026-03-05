@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import MapScreen from '../screens/MapScreen';
 import StudentMenuScreen from '../screens/StudentMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 
 export type StudentTabParamList = {
   Map: undefined;
@@ -17,7 +18,7 @@ export default function StudentTabs() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarShowLabel: false,
-        tabBarActiveTintColor: '#4B2E83',
+        tabBarActiveTintColor: PRIMARY_COLOR,
         tabBarInactiveTintColor: '#888',
         tabBarStyle: {
           backgroundColor: '#fff',
@@ -29,9 +30,7 @@ export default function StudentTabs() {
         tabBarIcon: ({ color, size }) => {
           let iconName: string = 'map';
 
-          if (route.name === 'Map') {
-            iconName = 'map';
-          } else if (route.name === 'Menu') {
+          if (route.name === 'Menu') {
             iconName = 'menu';
           }
 

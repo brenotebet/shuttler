@@ -51,7 +51,12 @@ export async function signInWithQuickLaunch() {
     throw new Error('Failed to exchange QuickLaunch token');
   }
 
-  const { firebaseToken } = await exchangeRes.json();
+  const body = await exchangeRes.json();
+  const firebaseToken = body?.firebaseToken;
+
+  if (typeof firebaseToken !== 'string' || !firebaseToken) {
+    throw new Error('Token exchange returned an invalid Firebase token');
+  }
 
   await signInWithCustomToken(auth, firebaseToken);
 }

@@ -1,18 +1,20 @@
 // src/screens/DriverHistoryScreen.tsx
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, Dimensions } from 'react-native';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
 import { db } from '../firebase/firebaseconfig';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, doc, getDoc, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
 import ScreenContainer from '../components/ScreenContainer';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 export default function DriverHistoryScreen() {
   const [stops, setStops] = useState<any[]>([]);
+  const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
+  const lookupInFlightRef = useRef<Set<string>>(new Set());
   const { driverId } = useDriver();
   const screenWidth = Dimensions.get('window').width;
   const chartWidth = screenWidth - spacing.screenPadding * 2;
@@ -43,6 +45,30 @@ export default function DriverHistoryScreen() {
 
     return () => unsub();
   }, [driverId]);
+
+  // Fetch display names for all unique student UIDs in the history list.
+  useEffect(() => {
+    const missingUids = stops
+      .map((r) => r?.studentUid)
+      .filter(
+        (uid): uid is string =>
+          Boolean(uid) && !userNameByUid[uid] && !lookupInFlightRef.current.has(uid),
+      );
+
+    missingUids.forEach((uid) => {
+      lookupInFlightRef.current.add(uid);
+      void getDoc(doc(db, 'publicUsers', uid))
+        .then((snap) => {
+          if (!snap.exists()) return;
+          const displayName = (snap.data() as any)?.displayName;
+          if (typeof displayName === 'string') {
+            setUserNameByUid((prev) => ({ ...prev, [uid]: displayName }));
+          }
+        })
+        .catch((err) => console.error('Failed to load public user profile', err))
+        .finally(() => lookupInFlightRef.current.delete(uid));
+    });
+  }, [stops, userNameByUid]);
 
   const totalStops = stops.length;
   const totalDistance = stops.reduce((acc, r) => acc + (r.distance || 0), 0);
@@ -94,9 +120,12 @@ export default function DriverHistoryScreen() {
       <FlatList
         data={stops}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          const displayName = item.studentUid ? userNameByUid[item.studentUid] : null;
+          const studentLabel = displayName ?? item.studentEmail ?? item.studentUid ?? 'Unknown student';
+          return (
           <View style={styles.card}>
-            <Text style={styles.cardStudent}>Student: {item.studentEmail}</Text>
+            <Text style={styles.cardStudent}>Student: {studentLabel}</Text>
             <Text style={styles.cardText}>Stop: {item.stop?.name}</Text>
             <Text style={styles.cardTimestamp}>
               {(
@@ -106,7 +135,8 @@ export default function DriverHistoryScreen() {
               )?.toLocaleString() || 'No timestamp'}
             </Text>
           </View>
-        )}
+          );
+        }}
         ListEmptyComponent={<Text style={styles.emptyText}>No completed rides yet.</Text>}
         ListHeaderComponent={
           <View style={styles.headerContent}>
@@ -132,6 +162,7 @@ export default function DriverHistoryScreen() {
                   accessor="count"
                   chartConfig={chartConfig}
                   backgroundColor="transparent"
+                  paddingLeft="15"
                 />
               </View>
             )}

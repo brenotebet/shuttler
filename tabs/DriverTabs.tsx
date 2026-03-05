@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import DriverScreen from '../screens/DriverScreen';
 import DriverMenuScreen from '../screens/DriverMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 
 const Tab = createBottomTabNavigator();
 
@@ -30,7 +31,7 @@ export default function DriverTabs() {
           }
           return <Icon name={iconName} size={28} color={color} />;
         },
-        tabBarActiveTintColor: '#4B2E83',
+        tabBarActiveTintColor: PRIMARY_COLOR,
         tabBarInactiveTintColor: '#aaa',
       })}
     >
