@@ -26,7 +26,12 @@ import 'dotenv/config';
 const ALLOWED_EMAIL_DOMAIN = (process.env.ALLOWED_EMAIL_DOMAIN || 'mckendree.edu').trim().toLowerCase();
 
 // URL schemes/prefixes allowed in RelayState — prevents open redirects via forged SAML responses.
-const ALLOWED_RELAY_PREFIXES = ['bogeybus://'];
+// Override via SAML_ALLOWED_RELAY_PREFIXES in .env as a comma-separated list.
+// Example: SAML_ALLOWED_RELAY_PREFIXES=bogeybus://,exp://
+const ALLOWED_RELAY_PREFIXES = (process.env.SAML_ALLOWED_RELAY_PREFIXES || 'bogeybus://')
+  .split(',')
+  .map((s: string) => s.trim())
+  .filter(Boolean) as string[];
 
 const SAML_SP_ENTITY_ID = (
   process.env.EXPO_PUBLIC_SAML_SP_ENTITY_ID ||
@@ -118,6 +123,11 @@ const sp = saml.ServiceProvider({
     },
   ],
   wantAssertionsSigned: true,
+  // samlify v2.x uses clockDrifts: [notBeforeDriftMs, notOnOrAfterDriftMs]
+  // Negative notBeforeDrift allows IdP's NotBefore to be up to 5 min ahead of server clock.
+  // Positive notOnOrAfterDrift allows assertions expired up to 5 min ago.
+  // ERR_SUBJECT_UNCONFIRMED on Windows is caused by NotBefore landing slightly in the future.
+  ...({ clockDrifts: [-300000, 300000] } as any),
 });
 
 // ---------- Firebase Admin init (optional but recommended) ----------
@@ -255,6 +265,11 @@ app.post('/saml/acs', async (req: Request, res: Response) => {
   const samlResponse = (req.body as any)?.SAMLResponse;
   if (!samlResponse) {
     return res.status(400).json({ error: 'Missing SAMLResponse payload' });
+  }
+
+  if (!IDP_SIGNING_CERT) {
+    console.error('SAML ACS: IDP signing cert not configured (EXPO_PUBLIC_SAML_IDP_CERT_FINGERPRINT is empty)');
+    return res.status(500).json({ error: 'Server misconfiguration: IDP signing cert not loaded' });
   }
 
   try {
@@ -400,6 +415,9 @@ app.listen(PORT, () => {
   console.log(`SP Entity ID: ${SAML_SP_ENTITY_ID}`);
   console.log(`ACS URL: ${SAML_SP_ACS_URL}`);
   console.log(`Login URL: ${SAML_SP_ENTITY_ID.replace(/\/$/, '')}/saml/login (via IIS host)`);
+  console.log(`IDP Entity ID: ${IDP_ENTITY_ID || 'WARNING: NOT SET'}`);
+  console.log(`IDP SSO URL: ${IDP_SSO_URL || 'WARNING: NOT SET'}`);
+  console.log(`IDP Signing Cert: ${IDP_SIGNING_CERT ? 'loaded' : 'WARNING: NOT SET -- assertion verification will fail'}`);
 });
 
 // ---------- helpers ----------
@@ -435,10 +453,13 @@ function enforceAudienceAndRecipient(extract: any, samlContent: string) {
   const audienceValues = normalizeAudience(extract?.audience);
   const responseDestination = extract?.response?.destination as string | undefined;
 
+  // localPath must start with 'Response' because samlContent is the full SAML Response XML.
+  // samlify builds the XPath as /*[local-name(.)='Response']/*[local-name(.)='Assertion']/...
+  // (Fields that use shortcut:assertion start from the Assertion root instead.)
   const recipientExtract = saml.Extractor.extract(samlContent, [
     {
       key: 'recipient',
-      localPath: ['Assertion', 'Subject', 'SubjectConfirmation', 'SubjectConfirmationData'],
+      localPath: ['Response', 'Assertion', 'Subject', 'SubjectConfirmation', 'SubjectConfirmationData'],
       attributes: ['Recipient'],
     },
   ]);
@@ -466,7 +487,9 @@ function enforceAudienceAndRecipient(extract: any, samlContent: string) {
     throw error;
   }
 
-  if (!recipientValue || recipientValue !== expectedRecipient) {
+  // Only reject if Recipient is present but wrong. If absent (some IdPs omit it),
+  // the Destination check above already covers this security boundary.
+  if (recipientValue && recipientValue !== expectedRecipient) {
     const error = new Error('ERR_SAML_RECIPIENT_MISMATCH');
     logAssertionFailure('recipient_mismatch', {
       audience: audienceValues,
