@@ -19,7 +19,7 @@ export default function StudentTabs() {
         headerShown: false,
         tabBarShowLabel: false,
         tabBarActiveTintColor: PRIMARY_COLOR,
-        tabBarInactiveTintColor: '#888',
+        tabBarInactiveTintColor: '#aaa',
         tabBarStyle: {
           backgroundColor: '#fff',
           borderTopWidth: 0,

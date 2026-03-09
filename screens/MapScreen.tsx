@@ -11,7 +11,10 @@ import {
   Image,
   FlatList,
   TouchableWithoutFeedback,
+  Dimensions,
 } from 'react-native';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
 import MapView, {
   PROVIDER_GOOGLE,
   MarkerAnimated,
@@ -389,7 +392,7 @@ export default function MapScreen() {
   };
 
   const fitActiveRide = () => {
-    if (!request || request.status !== 'accepted' || !driverId || !request.stop) return;
+    if (!request || (request.status !== 'accepted' && request.status !== 'pending') || !driverId || !request.stop) return;
 
     const d = busLocations[driverId] || lastCoords.current[driverId];
     if (!d) return;
@@ -398,6 +401,10 @@ export default function MapScreen() {
       { latitude: d.latitude, longitude: d.longitude },
       { latitude: request.stop.latitude, longitude: request.stop.longitude },
     ];
+
+    if (userLocRef.current) {
+      points.push(userLocRef.current);
+    }
 
     markProgrammaticMove();
     setCameraMode('overview');
@@ -841,19 +848,14 @@ export default function MapScreen() {
   }, [resolvedDriverId, request?.status, driverOnline, busLocations[resolvedDriverId ?? '']]);
 
   useEffect(() => {
-    if (request?.status !== 'accepted') return;
+    if (!rideActive) return;
     if (cameraMode === 'free' || recentlyInteracted(2500)) return;
     fitActiveRide();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.status, driverId, bottomCardHeight]);
 
   useEffect(() => {
-    if (request?.status === 'accepted') {
-      Notifications.scheduleNotificationAsync({
-        content: { title: 'Your stop has been accepted! 🎉', body: 'A bus is on the way to you.' },
-        trigger: null,
-      });
-    } else if (request?.status === 'completed') {
+    if (request?.status === 'completed') {
       Notifications.scheduleNotificationAsync({
         content: { title: 'Bus has arrived!', body: 'Your stop request has been completed.' },
         trigger: null,
@@ -863,7 +865,7 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (
-      request?.status === 'accepted' &&
+      rideActive &&
       driverId &&
       request.stop &&
       lastCoords.current[driverId] &&
@@ -1065,24 +1067,6 @@ const handleRequest = async (index: number) => {
       throw e;
     }
 
-    // (B) Check accepted-for-stop
-    let acceptedForStop;
-    try {
-      acceptedForStop = await getDocs(
-        query(
-          collection(db, 'stopRequests'),
-          where('status', '==', 'accepted'),
-          where('stopId', '==', selectedStop.id),
-          orderBy('createdAt', 'desc'),
-          limit(1),
-        ),
-      );
-      if (__DEV__) console.log('[handleRequest] acceptedForStop ok, empty?', acceptedForStop.empty);
-    } catch (e: any) {
-      console.error('[handleRequest] acceptedForStop query FAILED', e?.code, e?.message);
-      throw e;
-    }
-
     if (!existing.empty) {
       showAlert('You already have a stop in progress.');
       setShowLocationList(false);
@@ -1090,22 +1074,7 @@ const handleRequest = async (index: number) => {
       return;
     }
 
-    if (!acceptedForStop.empty) {
-      const docSnap = acceptedForStop.docs[0];
-      const data = { id: docSnap.id, ...(docSnap.data() as any) };
-
-      setOwnRequest(null);
-      setRequest(data);
-      setRequestId(data.id);
-      setDriverId(data.driverUid || data.driverId || null);
-
-      showAlert('A bus is already headed to this stop. Showing the current ride.');
-      setShowLocationList(false);
-      setSelectedStopIndex(index);
-      return;
-    }
-
-    // (C) Create request
+    // Create request
     try {
       const ref = await addDoc(collection(db, 'stopRequests'), {
         studentUid,
@@ -1294,7 +1263,7 @@ const handleRequest = async (index: number) => {
               >
                 <Image
                   source={busIcon}
-                  style={{ width: 120, height: 120, opacity: loc.isFresh ? 1 : 0.55 }}
+                  style={{ width: 54, height: 54, opacity: loc.isFresh ? 1 : 0.55 }}
                   resizeMode="contain"
                 />
               </MarkerAnimated>
@@ -1314,7 +1283,12 @@ const handleRequest = async (index: number) => {
                   >
                     <View style={styles.busCloud}>
                       <View style={styles.busCloudInner}>
-                        <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
+                        <View style={styles.busCloudHeader}>
+                          <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
+                          <TouchableOpacity onPress={closeSelectedBus} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                            <Icon name="close" size={18} color="#9CA3AF" />
+                          </TouchableOpacity>
+                        </View>
 
                         {selectedBusPopup?.etaToYou ? (
                           <Text style={styles.busCloudText}>ETA to you: {selectedBusPopup.etaToYou}</Text>
@@ -1338,21 +1312,40 @@ const handleRequest = async (index: number) => {
           );
         })}
 
-        {/* ✅ Destination pin only while ride is active */}
+        {/* Destination pin only while ride is active */}
         {rideActive && request?.stop && (
           <Marker
             coordinate={{
               latitude: request.stop.latitude,
               longitude: request.stop.longitude,
             }}
-            pinColor={PRIMARY_COLOR}
-            title="Requested stop"
-            description={request.stop.name ?? 'Requested stop'}
+            anchor={{ x: 0.5, y: 1 }}
             tracksViewChanges={false}
-          />
+          >
+            <MapMarker icon="flag" label={request.stop.name} />
+          </Marker>
         )}
 
-        {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={PRIMARY_COLOR} />}
+        {routeCoords.length > 0 && (
+          <>
+            <Polyline
+              coordinates={routeCoords}
+              strokeWidth={2}
+              strokeColor={PRIMARY_COLOR + '40'}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={1}
+            />
+            <Polyline
+              coordinates={routeCoords}
+              strokeWidth={5}
+              strokeColor={PRIMARY_COLOR}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={2}
+            />
+          </>
+        )}
       </MapView>
 
       <Animated.View
@@ -1373,7 +1366,7 @@ const handleRequest = async (index: number) => {
           <Icon name="map" size={22} color="#111" />
         </TouchableOpacity>
 
-        {request?.status === 'accepted' && (
+        {rideActive && (
           <TouchableOpacity style={styles.fabPrimary} onPress={fitActiveRide} activeOpacity={0.9}>
             <Icon name="alt-route" size={22} color="#fff" />
             <Text style={styles.fabPrimaryText}>Fit</Text>
@@ -1399,25 +1392,47 @@ const handleRequest = async (index: number) => {
       >
         {request ? (
           <>
-            <Text style={styles.cardTitle}>
-              Stop Status:{' '}
-              {request.status === 'accepted'
-                ? 'In transit'
-                : request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
-                  ? 'Expired — request again.'
-                  : request.status}
-            </Text>
+            <View style={styles.cardHandle} />
+
+            <View style={styles.cardRow}>
+              {request.stop?.name ? (
+                <Text style={styles.cardStopName}>{request.stop.name}</Text>
+              ) : null}
+              <View style={[
+                styles.cardBadge,
+                request.status === 'completed'
+                  ? styles.cardBadgeDone
+                  : request.status === 'cancelled'
+                    ? styles.cardBadgeExpired
+                    : styles.cardBadgeActive,
+              ]}>
+                <Text style={styles.cardBadgeText}>
+                  {request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
+                    ? 'Expired'
+                    : request.status === 'completed'
+                      ? 'Completed'
+                      : 'Active'}
+                </Text>
+              </View>
+            </View>
+
             <Text style={styles.cardSubtitle}>
-              {request.status === 'accepted'
-                ? 'In transit'
-                : request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
-                  ? 'Your request timed out after 15 minutes.'
-                  : 'Waiting'}
+              {request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
+                ? 'Your request timed out after 15 minutes.'
+                : request.status === 'completed'
+                  ? 'The bus has passed your stop.'
+                  : 'Your stop is confirmed. The bus will pick you up.'}
             </Text>
 
-            {request.stop?.name && <Text style={styles.cardSubtitle}>Pickup: {request.stop.name}</Text>}
-            {eta && <Text style={styles.etaText}>ETA: {eta}</Text>}
-            {stopsBefore !== null && <Text style={styles.cardSubtitle}>Stops before you: {stopsBefore}</Text>}
+            {(eta || stopsBefore !== null) && (
+              <View style={styles.cardInfoRow}>
+                {eta ? <Text style={styles.etaText}>{eta} away</Text> : null}
+                {eta && stopsBefore !== null ? <Text style={styles.cardInfoDot}> · </Text> : null}
+                {stopsBefore !== null ? (
+                  <Text style={styles.cardInfoMeta}>{stopsBefore} stop{stopsBefore !== 1 ? 's' : ''} before you</Text>
+                ) : null}
+              </View>
+            )}
 
             {request.studentUid === studentUid && request.status === 'pending' && (
               <TouchableOpacity
@@ -1559,21 +1574,49 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 10,
   },
+  cardHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  cardStopName: { fontSize: 20, fontWeight: '700', color: '#111', flex: 1, marginRight: 10 },
+  cardBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  cardBadgeActive: { backgroundColor: '#D1FAE5' },
+  cardBadgeDone: { backgroundColor: '#E5E7EB' },
+  cardBadgeExpired: { backgroundColor: '#FEE2E2' },
+  cardBadgeText: { fontSize: 12, fontWeight: '600', color: '#111' },
   cardTitle: { fontSize: 18, fontWeight: '600', marginBottom: 6 },
   cardSubtitle: { fontSize: 14, color: '#555', marginBottom: 4 },
-  etaText: { fontSize: 14, fontWeight: '500', color: PRIMARY_COLOR, marginBottom: 12 },
+  cardInfoRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 },
+  etaText: { fontSize: 15, fontWeight: '700', color: PRIMARY_COLOR },
+  cardInfoDot: { fontSize: 14, color: '#9CA3AF' },
+  cardInfoMeta: { fontSize: 14, color: '#6B7280' },
   cancelButton: {
-    backgroundColor: PRIMARY_COLOR,
+    borderWidth: 1.5,
+    borderColor: '#DC2626',
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 14,
   },
-  cancelButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
+  cancelButtonText: { color: '#DC2626', fontSize: 15, fontWeight: '600' },
   noRideText: { fontSize: 16, color: '#888', textAlign: 'center' },
 
   busCloud: {
-    width: 260,
+    width: Math.min(260, SCREEN_WIDTH - 40),
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'visible',
@@ -1603,11 +1646,17 @@ const styles = StyleSheet.create({
     marginTop: -1,
     alignSelf: 'center',
   },
+  busCloudHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   busCloudTitle: {
     fontSize: 17,
     fontWeight: '800',
     color: '#111',
-    marginBottom: 8,
+    flex: 1,
   },
   busCloudText: {
     fontSize: 16,

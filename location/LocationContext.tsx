@@ -31,6 +31,11 @@ const LocationContext = createContext<LocationContextType>({
 const WRITE_MIN_INTERVAL_MS = 4000;
 const WRITE_MIN_DISTANCE_M = 8;
 
+// Ignore GPS readings with accuracy worse than this (meters)
+const GPS_ACCURACY_MAX_M = 50;
+// EMA smoothing factor (0 = max smooth/lag, 1 = no smoothing)
+const EMA_ALPHA = 0.4;
+
 // If the driver app restarts and the bus doc says "online:true" but it hasn't updated in a while,
 // we treat that as stale and force offline.
 const STARTUP_STALE_OFFLINE_MS = 2 * 60 * 1000; // 2 minutes
@@ -178,6 +183,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
   const lastWrittenAt = useRef<number>(0);
   const lastWrittenCoords = useRef<{ latitude: number; longitude: number } | null>(null);
+  const smoothedCoords = useRef<{ latitude: number; longitude: number } | null>(null);
 
   const notifyStillOn = () => {
     Notifications.scheduleNotificationAsync({
@@ -296,10 +302,15 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     const fg = await Location.requestForegroundPermissionsAsync();
     if (fg.status !== 'granted') return;
 
+    // Request background permission so watchPositionAsync keeps running when app is backgrounded.
+    // This is best-effort - sharing still works foreground-only if denied.
+    await Location.requestBackgroundPermissionsAsync().catch(() => {});
+
     // ✅ Single initial write attempt (no duplicates)
     try {
-      const loc = await Location.getCurrentPositionAsync({});
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      smoothedCoords.current = coords;
       await writeBusDoc(uid, coords);
       lastWrittenAt.current = Date.now();
       lastWrittenCoords.current = coords;
@@ -311,12 +322,12 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         uid,
       });
       currentUid.current = null;
-      return; // don’t start watch if we can’t write
+      return; // don't start watch if we can't write
     }
 
     watchSub.current = await Location.watchPositionAsync(
       {
-        accuracy: Location.Accuracy.Balanced,
+        accuracy: Location.Accuracy.High,
         timeInterval: 1000,
         distanceInterval: 2,
       },
@@ -325,7 +336,22 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
           const id = currentUid.current;
           if (!id) return;
 
-          const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+          // Skip readings with poor GPS accuracy to reduce off-road drift
+          const gpsAccuracy = loc.coords.accuracy;
+          if (gpsAccuracy !== null && gpsAccuracy > GPS_ACCURACY_MAX_M) return;
+
+          const raw = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+
+          // Apply EMA smoothing to reduce jitter / off-road spikes
+          const prev = smoothedCoords.current;
+          const coords = prev
+            ? {
+                latitude: EMA_ALPHA * raw.latitude + (1 - EMA_ALPHA) * prev.latitude,
+                longitude: EMA_ALPHA * raw.longitude + (1 - EMA_ALPHA) * prev.longitude,
+              }
+            : raw;
+          smoothedCoords.current = coords;
+
           const now = Date.now();
 
           const tooSoon = now - lastWrittenAt.current < WRITE_MIN_INTERVAL_MS;
@@ -373,6 +399,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       currentUid.current = null;
       lastWrittenAt.current = 0;
       lastWrittenCoords.current = null;
+      smoothedCoords.current = null;
       setIsSharing(false);
     }
   };

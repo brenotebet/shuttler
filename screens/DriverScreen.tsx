@@ -677,7 +677,16 @@ export default function DriverScreen() {
               : 'Oldest: — • Latest: —'}
           </Text>
 
-          <TouchableOpacity style={styles.actionButton} onPress={() => setShowBoardingCard(true)}>
+          <TouchableOpacity
+            style={[styles.actionButton, !isSharing && styles.actionButtonDisabled]}
+            onPress={() => {
+              if (!isSharing) {
+                showAlert('Turn on location sharing before adding students.', 'Location required');
+                return;
+              }
+              setShowBoardingCard(true);
+            }}
+          >
             <Text style={styles.actionButtonText}>Add Students</Text>
           </TouchableOpacity>
         </View>
@@ -850,9 +859,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   actionButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  feedWrap: {
-    maxHeight: 280,
-  },
+  actionButtonDisabled: { opacity: 0.45 },
+  feedWrap: {},
   feedRow: {
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,

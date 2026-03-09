@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -13,6 +14,7 @@ export type HeaderBarProps = {
 
 function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   const handleBack = useCallback(() => {
     if (onBack) onBack();
@@ -20,7 +22,7 @@ function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
   }, [onBack, navigation]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
       {showBack ? (
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <MaterialIcons name="arrow-back" size={24} color="#fff" />
@@ -42,7 +44,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'ios' ? 50 : 20,
     paddingBottom: 10,
     paddingHorizontal: 16,
   },

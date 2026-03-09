@@ -82,6 +82,14 @@ async function exchangeAndSignIn(token: string) {
 }
 
 /**
+ * Clear any persisted SAML handoff token. Call this during logout so a stale
+ * token cannot be replayed on the next login attempt on the same device.
+ */
+export async function clearSamlSession() {
+  await SecureStore.deleteItemAsync(SAML_HANDOFF_STORAGE_KEY);
+}
+
+/**
  * Store a token from a deep link so it can be consumed after the app is ready.
  */
 export async function persistSamlHandoffFromUrl(url?: string | null) {

@@ -1,7 +1,7 @@
 // src/screens/DriverMenuScreen.tsx
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -10,6 +10,7 @@ import { useDriver } from '../drivercontext/DriverContext';
 import { useLocationSharing } from '../location/LocationContext';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
+import { clearSamlSession } from '../src/auth/samlAuth';
 
 import MenuItem from '../components/MenuItem';
 import ScreenContainer from '../components/ScreenContainer';
@@ -21,7 +22,18 @@ export default function DriverMenuScreen() {
   const { logout: clearDriverContext } = useDriver();
   const { stopSharing, isSharing } = useLocationSharing();
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    Alert.alert(
+      'Log out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Log out', style: 'destructive', onPress: confirmLogout },
+      ],
+    );
+  };
+
+  const confirmLogout = async () => {
     try {
       // 1️⃣ Stop location sharing FIRST
       if (isSharing) {
@@ -31,7 +43,10 @@ export default function DriverMenuScreen() {
       // 2️⃣ Clear local driver UI state
       clearDriverContext();
 
-      // 3️⃣ Sign out of Firebase Auth
+      // 3️⃣ Clear SAML session so the next login prompts for fresh credentials
+      await clearSamlSession();
+
+      // 4️⃣ Sign out of Firebase Auth
       await signOut(auth);
 
       // ❌ DO NOT navigate manually

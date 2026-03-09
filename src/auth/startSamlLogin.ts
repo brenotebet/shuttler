@@ -17,7 +17,11 @@ export async function startSamlLogin(): Promise<string | null> {
   const loginUrl = `${SAML_LOGIN_URL}${joiner}returnTo=${encodeURIComponent(returnTo)}`;
 
   // Use auth-session mode so the browser closes when redirected to the app scheme.
-  const result = await WebBrowser.openAuthSessionAsync(loginUrl, returnTo);
+  // preferEphemeralSession: true ensures no IdP session cookies carry over between
+  // users on the same device — critical for driver account switching.
+  const result = await WebBrowser.openAuthSessionAsync(loginUrl, returnTo, {
+    preferEphemeralSession: true,
+  });
 
   if (result.type === 'success') {
     return result.url;

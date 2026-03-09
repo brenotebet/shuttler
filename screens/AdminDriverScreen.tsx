@@ -10,8 +10,6 @@ import {
   getDoc,
   query,
   where,
-  serverTimestamp,
-  runTransaction,
 } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
 import StopRequestCard from '../components/StopRequestCard';
@@ -89,60 +87,9 @@ export default function AdminDriverScreen() {
     });
   }, [requests, userNameByUid]);
 
-  // Accept / Complete logic
-  const updateStatus = async (id: string, newStatus: string) => {
-    try {
-      if (!driverId) throw new Error('Driver ID missing');
-
-      await runTransaction(db, async (tx) => {
-        const ref = doc(db, 'stopRequests', id);
-        const snap = await tx.get(ref);
-        if (!snap.exists()) throw new Error('Stop request not found');
-
-        const curr = snap.data() as any;
-        const assignedDriver = curr.driverUid || curr.driverId;
-
-        if (newStatus === 'accepted') {
-          if (curr.status !== 'pending') throw new Error('This stop is no longer pending.');
-          if (assignedDriver && assignedDriver !== driverId) {
-            throw new Error('This stop is already assigned to another driver.');
-          }
-
-          tx.update(ref, {
-            status: 'accepted',
-            driverUid: driverId,
-            acceptedAt: serverTimestamp(),
-            statusUpdatedAt: serverTimestamp(),
-          });
-          return;
-        }
-
-        if (newStatus === 'completed') {
-          if (assignedDriver !== driverId) {
-            throw new Error('Only the assigned driver can complete this stop.');
-          }
-
-          tx.update(ref, {
-            status: 'completed',
-            driverUid: driverId,
-            completedAt: serverTimestamp(),
-            statusUpdatedAt: serverTimestamp(),
-          });
-          return;
-        }
-
-        tx.update(ref, { status: newStatus, statusUpdatedAt: serverTimestamp() });
-      });
-    } catch (err: any) {
-      showAlert(err.message, 'Error');
-    }
-  };
-
   const renderItem = ({ item }: { item: any }) => (
     <StopRequestCard
       item={item}
-      driverId={driverId}
-      updateStatus={updateStatus}
       studentName={item.studentUid ? userNameByUid[item.studentUid] : undefined}
     />
   );

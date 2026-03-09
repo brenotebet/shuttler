@@ -1,7 +1,7 @@
 // src/screens/StudentMenuScreen.tsx
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { signOut } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -9,6 +9,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import ScreenContainer from '../components/ScreenContainer';
 import MenuItem from '../components/MenuItem';
 import { auth } from '../firebase/firebaseconfig';
+import { clearSamlSession } from '../src/auth/samlAuth';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { spacing } from '../src/styles/common';
 import type { RootStackParamList } from '../navigation/StackNavigator';
@@ -16,8 +17,20 @@ import type { RootStackParamList } from '../navigation/StackNavigator';
 export default function StudentMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    Alert.alert(
+      'Log out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Log out', style: 'destructive', onPress: confirmLogout },
+      ],
+    );
+  };
+
+  const confirmLogout = async () => {
     try {
+      await clearSamlSession();
       await signOut(auth);
     } catch (err) {
       console.error('Error signing out', err);
@@ -52,7 +65,7 @@ export default function StudentMenuScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: spacing.section * 5,
+    paddingTop: spacing.section * 7,
     paddingBottom: spacing.section * 2,
   },
   hero: {

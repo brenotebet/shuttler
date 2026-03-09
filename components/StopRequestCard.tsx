@@ -1,5 +1,5 @@
-import React, { useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE, Polygon } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { campusCoords, outerRing, grayscaleMapStyle } from '../src/constants/mapConfig';
@@ -18,15 +18,10 @@ type StopRequest = {
 
 type Props = {
   item: StopRequest;
-  driverId: string | null;
-  updateStatus: (id: string, status: string) => void;
   studentName?: string;
 };
 
-function StopRequestCard({ item, driverId, updateStatus, studentName }: Props) {
-  const handleAccept = useCallback(() => updateStatus(item.id, 'accepted'), [item.id, updateStatus]);
-  const handleComplete = useCallback(() => updateStatus(item.id, 'completed'), [item.id, updateStatus]);
-
+function StopRequestCard({ item, studentName }: Props) {
   const studentLabel = studentName ?? item.studentEmail ?? item.studentUid ?? 'Unknown student';
 
   return (
@@ -55,17 +50,6 @@ function StopRequestCard({ item, driverId, updateStatus, studentName }: Props) {
         </Marker>
       </MapView>
 
-      {item.status === 'pending' && !item.driverUid && !item.driverId && (
-        <TouchableOpacity style={styles.button} onPress={handleAccept} activeOpacity={0.85}>
-          <Text style={styles.buttonText}>Accept Stop</Text>
-        </TouchableOpacity>
-      )}
-
-      {item.status === 'accepted' && (item.driverUid === driverId || item.driverId === driverId) && (
-        <TouchableOpacity style={styles.button} onPress={handleComplete} activeOpacity={0.85}>
-          <Text style={styles.buttonText}>Stop Completed</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
@@ -81,7 +65,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     ...cardShadow,
   },
-  title: { fontWeight: 'bold', marginBottom: 4, color: '#111827' },
+  title: { fontSize: 15, fontWeight: '600', marginBottom: 4, color: '#111827' },
   detail: {
     fontSize: 14,
     color: '#374151',
@@ -91,13 +75,4 @@ const styles = StyleSheet.create({
     width: '100%',
     marginVertical: 8,
   },
-  button: {
-    backgroundColor: PRIMARY_COLOR,
-    borderRadius: borderRadius.md,
-    paddingVertical: 12,
-    marginTop: spacing.item,
-    alignItems: 'center',
-    ...cardShadow,
-  },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

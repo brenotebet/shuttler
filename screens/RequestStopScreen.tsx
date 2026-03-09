@@ -111,23 +111,6 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
         return;
       }
 
-      // Reuse accepted request for THIS stop (do not create a new one)
-      const acceptedForStopSnap = await getDocs(
-        query(
-          collection(db, 'stopRequests'),
-          where('status', '==', 'accepted'),
-          where('stopId', '==', selectedStop.id),
-          orderBy('createdAt', 'desc'),
-          limit(1),
-        ),
-      );
-
-      if (!acceptedForStopSnap.empty) {
-        showAlert('A bus is already headed to this stop. We will show you the current ride.');
-        navigation.goBack();
-        return;
-      }
-
       await addDoc(collection(db, 'stopRequests'), {
         studentUid,
         studentEmail: user.email ?? null,
