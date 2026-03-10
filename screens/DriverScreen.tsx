@@ -1,7 +1,7 @@
 // DriverScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator } from 'react-native';
 import * as Location from 'expo-location';
 import { useLocationSharing } from '../location/LocationContext';
 import { useDriver } from '../drivercontext/DriverContext';
@@ -22,9 +22,8 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
-import { LOCATIONS, STUDENT_REQUEST_TTL_MS } from '../src/constants/stops';
+import { LOCATIONS, STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 
-const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
 const ARRIVE_RADIUS_FT = 75;
 const EXIT_RADIUS_FT = 180;
@@ -121,6 +120,7 @@ export default function DriverScreen() {
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
   const { driverId, loading } = useDriver();
 
+  const [isToggling, setIsToggling] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
   const [busOnline, setBusOnline] = useState(false);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
@@ -222,7 +222,7 @@ export default function DriverScreen() {
 
 
   useEffect(() => {
-    const timer = setInterval(() => setClockTick(Date.now()), 1000);
+    const timer = setInterval(() => setClockTick(Date.now()), 10000);
     return () => clearInterval(timer);
   }, []);
 
@@ -628,23 +628,33 @@ export default function DriverScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.headerTitle}>Driver Dashboard</Text>
         <TouchableOpacity
-          style={styles.shareButton}
+          style={[styles.shareButton, isToggling && styles.shareButtonDisabled]}
+          disabled={isToggling}
           onPress={async () => {
             if (!driverId) {
               showAlert('Driver ID missing');
               return;
             }
+            setIsToggling(true);
             try {
               if (isSharing) await stopSharing();
               else await startSharing();
             } catch (err) {
               console.error(err);
               showAlert('Error toggling location sharing');
+            } finally {
+              setIsToggling(false);
             }
           }}
         >
-          <Icon name={isSharing ? 'gps-off' : 'gps-fixed'} size={22} color="#fff" />
-          <Text style={styles.shareButtonText}>{isSharing ? 'Stop Sharing' : 'Start Sharing'}</Text>
+          {isToggling ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Icon name={isSharing ? 'gps-off' : 'gps-fixed'} size={22} color="#fff" />
+          )}
+          <Text style={styles.shareButtonText}>
+            {isToggling ? (isSharing ? 'Stopping...' : 'Starting...') : isSharing ? 'Stop Sharing' : 'Start Sharing'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -826,6 +836,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 20,
   },
+  shareButtonDisabled: { opacity: 0.65 },
   shareButtonText: {
     color: '#fff',
     fontSize: 14,

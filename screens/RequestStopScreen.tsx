@@ -20,7 +20,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import InfoBanner from '../components/InfoBanner';
-import { LOCATIONS, STUDENT_REQUEST_TTL_MS } from '../src/constants/stops';
+import { LOCATIONS, STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 
 export { LOCATIONS };
 
@@ -56,7 +56,7 @@ export default function RequestStopScreen({ navigation }: { navigation: any }) {
 
           if (lastUpdatedMs === null || Number.isNaN(lastUpdatedMs)) return;
 
-          if ((Date.now() - lastUpdatedMs) / 1000 < 15) {
+          if ((Date.now() - lastUpdatedMs) / 1000 < FRESHNESS_WINDOW_SECONDS) {
             anyBusOnline = true;
           }
         });

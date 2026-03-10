@@ -54,9 +54,8 @@ import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
-import { LOCATIONS, STUDENT_REQUEST_TTL_MS } from '../src/constants/stops';
+import { LOCATIONS, STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 
-const FRESHNESS_WINDOW_SECONDS = 30;
 const STALE_WINDOW_SECONDS = 90;
 
 function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -441,13 +440,14 @@ export default function MapScreen() {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
     let unsubBus: (() => void) | undefined;
     let locationSub: Location.LocationSubscription | null = null;
 
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        showAlert('Permission denied');
+      if (!mounted || status !== 'granted') {
+        if (status !== 'granted') showAlert('Permission denied');
         return;
       }
 
@@ -462,12 +462,14 @@ export default function MapScreen() {
         }, 10);
       }
 
-      locationSub = await Location.watchPositionAsync(
+      const sub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation },
         (pos) => {
           userLocRef.current = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         },
       );
+      if (!mounted) { sub.remove(); return; }
+      locationSub = sub;
     })();
 
     unsubBus = onSnapshot(
@@ -631,6 +633,7 @@ export default function MapScreen() {
     );
 
     return () => {
+      mounted = false;
       if (unsubBus) unsubBus();
       if (locationSub) locationSub.remove();
       if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);
