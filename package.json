@@ -1,5 +1,5 @@
 {
-  "name": "bogey-bus",
+  "name": "shuttler",
   "license": "0BSD",
   "version": "1.0.0",
   "main": "index.ts",
@@ -47,6 +47,7 @@
     "react-native-vector-icons": "^10.2.0",
     "react-navigation": "^5.0.0",
     "samlify": "^2.10.2",
+    "stripe": "^17.7.0",
     "xpath": "0.0.32"
   },
   "devDependencies": {

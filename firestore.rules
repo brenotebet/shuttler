@@ -2,124 +2,159 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ---------- Helpers ----------
+
     function signedIn() {
       return request.auth != null;
     }
 
-    function userPath(uid) {
-      return /databases/$(database)/documents/users/$(uid);
+    function userDocPath(orgId, uid) {
+      return /databases/$(database)/documents/orgs/$(orgId)/users/$(uid);
     }
 
-    function hasUserDoc(uid) {
-      return exists(userPath(uid));
+    function hasUserDoc(orgId, uid) {
+      return exists(userDocPath(orgId, uid));
     }
 
-    function myRole() {
-      return signedIn() && hasUserDoc(request.auth.uid)
-        ? get(userPath(request.auth.uid)).data.role
+    function myRole(orgId) {
+      return signedIn() && hasUserDoc(orgId, request.auth.uid)
+        ? get(userDocPath(orgId, request.auth.uid)).data.role
         : null;
     }
 
-    function isDriver() {
-      return myRole() == "driver" || myRole() == "admin";
+    function isDriver(orgId) {
+      return myRole(orgId) == 'driver' || myRole(orgId) == 'admin';
     }
 
-    function isAdmin() {
-      return myRole() == "admin";
+    function isAdmin(orgId) {
+      return myRole(orgId) == 'admin';
     }
 
-    // ----------------------------
-    // Users (roles live here) - PRIVATE
-    // ----------------------------
-    match /users/{uid} {
+    function isMember(orgId) {
+      return signedIn() && hasUserDoc(orgId, request.auth.uid);
+    }
+
+    function orgIsActive(orgId) {
+      return get(/databases/$(database)/documents/orgs/$(orgId)).data.subscriptionStatus
+        in ['trialing', 'active'];
+    }
+
+    // ---------- Public org slug lookup (org selector screen) ----------
+    // Anyone (unauthenticated) can list orgs to find their school/venue.
+    // Server-side admin SDK writes these — clients cannot.
+    match /orgSlugs/{slug} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ---------- Org invite codes ----------
+    // Only the backend creates invites; users claim them server-side.
+    match /orgInvites/{inviteCode} {
+      allow read, write: if false;
+    }
+
+    // ---------- Org document ----------
+    // Any member can read their org doc (stops, mapCenter, subscriptionStatus, authMethod).
+    // Admins may update a limited set of fields (stops, map, branding, auth).
+    // Billing/subscription fields are server-only via Stripe webhooks.
+    match /orgs/{orgId} {
+      allow read: if isMember(orgId);
+
+      allow update: if signedIn()
+        && isAdmin(orgId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['stops', 'mapCenter', 'mapBoundingBox', 'logoUrl',
+                      'primaryColor', 'name', 'updatedAt']);
+
+      allow create, delete: if false;
+    }
+
+    // ---------- Users ----------
+    match /orgs/{orgId}/users/{uid} {
+      // Users read their own doc only.
       allow read: if signedIn() && request.auth.uid == uid;
-      allow create: if signedIn() && request.auth.uid == uid;
 
-      // User may update their own profile EXCEPT role
+      // Create own profile on first login (orgId field must match path).
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.orgId == orgId;
+
+      // Update own profile but never change role or orgId.
       allow update: if signedIn()
         && request.auth.uid == uid
-        && request.resource.data.role == resource.data.role;
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.orgId == orgId
+        && orgIsActive(orgId);
 
       allow delete: if false;
     }
 
-    // ----------------------------
-    // Public user profile (safe fields only)
-    // ----------------------------
-    match /publicUsers/{uid} {
-      // Any logged-in user can read displayName for the feed
-      allow read: if signedIn();
+    // ---------- Public user profiles ----------
+    match /orgs/{orgId}/publicUsers/{uid} {
+      // Any member of the same org can read (e.g. drivers see student names).
+      allow read: if isMember(orgId);
 
-      // User can create/update only their own public profile
-      allow create, update: if signedIn() && request.auth.uid == uid;
-
-      allow delete: if false;
-    }
-
-    // ----------------------------
-    // Bus locations
-    // ----------------------------
-    match /buses/{busId} {
-      // Any logged-in user can see buses
-      allow read: if signedIn();
-
-      // Only the authenticated driver may write their bus (docId must be uid)
+      // Users manage their own public profile.
       allow create, update: if signedIn()
-        && isDriver()
-        && request.auth.uid == busId;
+        && request.auth.uid == uid
+        && orgIsActive(orgId);
 
       allow delete: if false;
     }
 
-    // ----------------------------
-    // Stop requests
-    // ----------------------------
-    match /stopRequests/{requestId} {
+    // ---------- Bus locations ----------
+    match /orgs/{orgId}/buses/{busId} {
+      // Any org member can read bus locations (students see buses on map).
+      allow read: if isMember(orgId);
 
-      // READ:
-      // - Drivers/admins can read all
-      // - Students can read their own requests
-      // - Any logged-in user can read accepted requests (to show bus is coming)
+      // Only the authenticated driver may write their own bus doc (docId == uid).
+      allow create, update: if signedIn()
+        && isDriver(orgId)
+        && request.auth.uid == busId
+        && orgIsActive(orgId);
+
+      allow delete: if false;
+    }
+
+    // ---------- Stop requests ----------
+    match /orgs/{orgId}/stopRequests/{requestId} {
       allow read: if signedIn() && (
-        isDriver()
+        isDriver(orgId)
         || resource.data.studentUid == request.auth.uid
-        || resource.data.status == "accepted"
+        || resource.data.status == 'accepted'
       );
 
-      // CREATE:
-      // Student creates their own pending request
+      // Student creates their own pending request.
       allow create: if signedIn()
         && request.resource.data.studentUid == request.auth.uid
-        && request.resource.data.status == "pending"
-        && request.resource.data.stopId is string;
+        && request.resource.data.status == 'pending'
+        && request.resource.data.orgId == orgId
+        && request.resource.data.stopId is string
+        && orgIsActive(orgId);
 
-      // UPDATE:
-      // - Student may cancel their own pending request
-      // - Driver may accept a request only if no driver has claimed it yet
-      // - Driver may complete/cancel only their OWN accepted request
       allow update: if signedIn() && (
         (
-          // Student cancels their own pending request
+          // Student cancels their own pending request.
           resource.data.studentUid == request.auth.uid
-          && resource.data.status == "pending"
-          && request.resource.data.status in ["pending", "cancelled"]
+          && resource.data.status == 'pending'
+          && request.resource.data.status in ['pending', 'cancelled']
         )
         ||
         (
-          // Driver accepts an unclaimed request
-          isDriver()
-          && resource.data.status == "pending"
+          // Driver accepts an unclaimed request.
+          isDriver(orgId)
+          && resource.data.status == 'pending'
           && resource.data.driverUid == null
-          && request.resource.data.status == "accepted"
+          && request.resource.data.status == 'accepted'
           && request.resource.data.driverUid == request.auth.uid
         )
         ||
         (
-          // Driver completes or cancels their OWN accepted request
-          isDriver()
-          && resource.data.status == "accepted"
+          // Driver completes or cancels their own accepted request.
+          isDriver(orgId)
+          && resource.data.status == 'accepted'
           && resource.data.driverUid == request.auth.uid
-          && request.resource.data.status in ["completed", "cancelled"]
+          && request.resource.data.status in ['completed', 'cancelled']
           && request.resource.data.driverUid == request.auth.uid
         )
       );
@@ -127,18 +162,14 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // ----------------------------
-    // Boarding counts (driver only)
-    // ----------------------------
-    match /boardingCounts/{id} {
-      allow create: if signedIn() && isDriver();
-      allow read: if signedIn() && (isAdmin() || isDriver());
+    // ---------- Boarding counts ----------
+    match /orgs/{orgId}/boardingCounts/{id} {
+      allow create: if signedIn() && isDriver(orgId) && orgIsActive(orgId);
+      allow read: if signedIn() && (isAdmin(orgId) || isDriver(orgId));
       allow update, delete: if false;
     }
 
-    // ----------------------------
-    // Default deny
-    // ----------------------------
+    // ---------- Default deny ----------
     match /{document=**} {
       allow read, write: if false;
     }

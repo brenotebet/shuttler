@@ -8,6 +8,7 @@ import Constants from 'expo-constants';
 import { DriverProvider } from './drivercontext/DriverContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/auth/AuthProvider';
+import { OrgProvider } from './src/org/OrgContext';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -46,15 +47,17 @@ export default function App() {
   return (
     <ErrorBoundary>
       <SafeAreaProvider>
-        <AuthProvider>
-          <DriverProvider>
-            <LocationProvider>
-              <NavigationContainer>
-                <StackNavigator />
-              </NavigationContainer>
-            </LocationProvider>
-          </DriverProvider>
-        </AuthProvider>
+        <OrgProvider>
+          <AuthProvider>
+            <DriverProvider>
+              <LocationProvider>
+                <NavigationContainer>
+                  <StackNavigator />
+                </NavigationContainer>
+              </LocationProvider>
+            </DriverProvider>
+          </AuthProvider>
+        </OrgProvider>
       </SafeAreaProvider>
     </ErrorBoundary>
   );

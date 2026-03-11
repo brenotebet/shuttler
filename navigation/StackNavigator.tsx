@@ -1,22 +1,27 @@
-// src/navigation/StackNavigator.tsx
+// navigation/StackNavigator.tsx
 
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Text, View, StyleSheet } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-import LoginScreen from '../screens/LoginScreen';
+import OrgSelectorScreen from '../screens/OrgSelectorScreen';
+import AuthScreen from '../screens/AuthScreen';
 import StudentTabs from '../tabs/StudentTabs';
 import DriverTabs from '../tabs/DriverTabs';
 import DriverHistoryScreen from '../screens/DriverHistoryScreen';
 import AdminDriverScreen from '../screens/AdminDriverScreen';
 import StudentHistoryScreen from '../screens/StudentHistoryScreen';
+import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
+import { useOrg } from '../src/org/OrgContext';
+import { PRIMARY_COLOR } from '../src/constants/theme';
 
 export type RootStackParamList = {
-  Login: undefined;
+  OrgSelector: undefined;
+  Auth: { orgId: string };
 
-  // Home stacks
+  // Authenticated stacks
   StudentHome: undefined;
   DriverHome: undefined;
 
@@ -24,6 +29,9 @@ export type RootStackParamList = {
   StudentHistory: undefined;
   DriverHistory: undefined;
   AdminDriver: undefined;
+  AdminOrgSetup: undefined;
+
+  SubscriptionExpired: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -31,29 +39,51 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 function LoadingScreen() {
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <ActivityIndicator size="large" />
+      <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+    </View>
+  );
+}
+
+function SubscriptionExpiredScreen() {
+  return (
+    <View style={styles.expiredContainer}>
+      <Text style={styles.expiredTitle}>Subscription Inactive</Text>
+      <Text style={styles.expiredBody}>
+        Your organization's Shuttler subscription is no longer active.
+        Please contact your administrator to renew the plan.
+      </Text>
     </View>
   );
 }
 
 export default function StackNavigator() {
   const { user, role, initializing } = useAuth();
+  const { org, isLoadingOrg } = useOrg();
 
-  if (initializing) {
+  if (initializing || isLoadingOrg) {
     return <LoadingScreen />;
+  }
+
+  // Authenticated but org subscription lapsed
+  if (user && org && !['trialing', 'active'].includes(org.subscriptionStatus)) {
+    return <SubscriptionExpiredScreen />;
   }
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!user ? (
-        // Logged out
-        <Stack.Screen name="Login" component={LoginScreen} />
+        // Logged out — two-step login flow
+        <>
+          <Stack.Screen name="OrgSelector" component={OrgSelectorScreen} />
+          <Stack.Screen name="Auth" component={AuthScreen} />
+        </>
       ) : role === 'driver' || role === 'admin' ? (
         // Logged in as driver/admin
         <>
           <Stack.Screen name="DriverHome" component={DriverTabs} />
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+          <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
         </>
       ) : (
         // Logged in as student (default)
@@ -65,3 +95,26 @@ export default function StackNavigator() {
     </Stack.Navigator>
   );
 }
+
+const styles = StyleSheet.create({
+  expiredContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+    backgroundColor: '#fff',
+  },
+  expiredTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#e53935',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  expiredBody: {
+    fontSize: 15,
+    color: '#555',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+});

@@ -15,6 +15,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
+import { useOrg } from '../src/org/OrgContext';
 
 type LocationContextType = {
   isSharing: boolean;
@@ -80,30 +81,32 @@ function requireUid(): string {
   return uid;
 }
 
-async function assertDriverRole(uid: string) {
+async function assertDriverRole(uid: string, orgId: string) {
   try {
-    const snap = await getDoc(doc(db, 'users', uid));
+    const path = orgId
+      ? doc(db, 'orgs', orgId, 'users', uid)
+      : doc(db, 'users', uid);
+    const snap = await getDoc(path);
 
     if (!snap.exists()) {
-      throw new Error(
-        `Missing user doc: /users/${uid}. Create it with { role: "driver" } (or "admin").`,
-      );
+      throw new Error(`Missing user doc for uid ${uid} in org ${orgId || '(none)'}.`);
     }
 
     const role = (snap.data() as any)?.role ?? null;
     if (role !== 'driver' && role !== 'admin') {
       throw new Error(
-        `Not allowed: /users/${uid}.role is "${role}". Expected "driver" or "admin".`,
+        `Not allowed: user ${uid} role is "${role}". Expected "driver" or "admin".`,
       );
     }
   } catch (e: any) {
-    throw new Error(`Cannot verify driver role for /users/${uid}. ${e?.message ?? e}`);
+    throw new Error(`Cannot verify driver role for uid ${uid}. ${e?.message ?? e}`);
   }
 }
 
-async function cancelActiveStopRequestsForDriver(uid: string) {
-  const byDriverUid = await getDocs(query(collection(db, 'stopRequests'), where('driverUid', '==', uid)));
-  const byDriverId = await getDocs(query(collection(db, 'stopRequests'), where('driverId', '==', uid)));
+async function cancelActiveStopRequestsForDriver(uid: string, orgId: string) {
+  const reqCol = orgId ? collection(db, 'orgs', orgId, 'stopRequests') : collection(db, 'stopRequests');
+  const byDriverUid = await getDocs(query(reqCol, where('driverUid', '==', uid)));
+  const byDriverId = await getDocs(query(reqCol, where('driverId', '==', uid)));
 
   const merged = [...byDriverUid.docs, ...byDriverId.docs];
   const seen = new Set<string>();
@@ -111,7 +114,6 @@ async function cancelActiveStopRequestsForDriver(uid: string) {
   const active = merged.filter((snap) => {
     if (seen.has(snap.id)) return false;
     seen.add(snap.id);
-
     const status = (snap.data() as any)?.status;
     return status === 'pending' || status === 'accepted';
   });
@@ -120,62 +122,44 @@ async function cancelActiveStopRequestsForDriver(uid: string) {
 
   const batch = writeBatch(db);
   active.forEach((snap) => {
-    batch.set(
-      doc(db, 'stopRequests', snap.id),
-      {
-        status: 'cancelled',
-        cancelledAt: serverTimestamp(),
-        cancelledReason: 'driver_offline',
-      },
-      { merge: true },
-    );
+    batch.set(snap.ref, { status: 'cancelled', cancelledAt: serverTimestamp(), cancelledReason: 'driver_offline' }, { merge: true });
   });
 
   await batch.commit();
 }
 
 
-async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string) {
-  const busesSnap = await getDocs(collection(db, 'buses'));
+async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string, orgId: string) {
+  const busCol = orgId ? collection(db, 'orgs', orgId, 'buses') : collection(db, 'buses');
+  const reqCol = orgId ? collection(db, 'orgs', orgId, 'stopRequests') : collection(db, 'stopRequests');
+
+  const busesSnap = await getDocs(busCol);
 
   const hasAnotherOnlineBus = busesSnap.docs.some((snap) => {
     if (snap.id === excludedUid) return false;
-
     const data: any = snap.data();
     if (data?.online !== true) return false;
-
     const tsMs = getTimestampMs(data);
     if (tsMs === null) return false;
-
     return Date.now() - tsMs <= ONLINE_BUS_STALE_MS;
   });
 
   if (hasAnotherOnlineBus) return;
 
-  const pendingSnap = await getDocs(query(collection(db, 'stopRequests'), where('status', '==', 'pending')));
-
+  const pendingSnap = await getDocs(query(reqCol, where('status', '==', 'pending')));
   if (pendingSnap.empty) return;
 
   const batch = writeBatch(db);
   pendingSnap.docs.forEach((snap) => {
-    // Firestore rules require driver updates to keep driverUid == request.auth.uid.
-    // For pending requests that were not yet assigned, claim-then-cancel in one write.
-    batch.set(
-      doc(db, 'stopRequests', snap.id),
-      {
-        driverUid: excludedUid,
-        status: 'cancelled',
-        cancelledAt: serverTimestamp(),
-        cancelledReason: 'no_buses_online',
-      },
-      { merge: true },
-    );
+    batch.set(snap.ref, { driverUid: excludedUid, status: 'cancelled', cancelledAt: serverTimestamp(), cancelledReason: 'no_buses_online' }, { merge: true });
   });
 
   await batch.commit();
 }
 
 export const LocationProvider = ({ children }: { children: React.ReactNode }) => {
+  const { org } = useOrg();
+  const orgId = org?.orgId ?? '';
   const [isSharing, setIsSharing] = useState(false);
 
   const watchSub = useRef<Location.LocationSubscription | null>(null);
@@ -196,8 +180,9 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   };
 
   const writeBusDoc = async (uid: string, coords: { latitude: number; longitude: number }) => {
+    const busRef = orgId ? doc(db, 'orgs', orgId, 'buses', uid) : doc(db, 'buses', uid);
     await setDoc(
-      doc(db, 'buses', uid),
+      busRef,
       {
         driverUid: uid,
         latitude: coords.latitude,
@@ -212,8 +197,9 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
   const markOffline = async (uid: string) => {
     // delete is forbidden by rules; set online=false instead
+    const busRef = orgId ? doc(db, 'orgs', orgId, 'buses', uid) : doc(db, 'buses', uid);
     await setDoc(
-      doc(db, 'buses', uid),
+      busRef,
       {
         online: false,
         lastSeen: serverTimestamp(),
@@ -233,7 +219,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         const uid = auth.currentUser?.uid;
         if (!uid) return;
 
-        const snap = await getDoc(doc(db, 'buses', uid));
+        const busRef = orgId ? doc(db, 'orgs', orgId, 'buses', uid) : doc(db, 'buses', uid);
+        const snap = await getDoc(busRef);
         if (!snap.exists()) return;
 
         const data: any = snap.data() || {};
@@ -297,7 +284,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     currentUid.current = uid;
 
     // 🔒 Make missing/incorrect role obvious (instead of silent permission-denied)
-    await assertDriverRole(uid);
+    await assertDriverRole(uid, orgId);
 
     const fg = await Location.requestForegroundPermissionsAsync();
     if (fg.status !== 'granted') return;
@@ -387,8 +374,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       }
 
       await markOffline(uid);
-      await cancelActiveStopRequestsForDriver(uid);
-      await cancelPendingStopRequestsIfNoBusesOnline(uid);
+      await cancelActiveStopRequestsForDriver(uid, orgId);
+      await cancelPendingStopRequestsIfNoBusesOnline(uid, orgId);
     } catch (err) {
       console.error('Error during stopSharing:', {
         code: (err as any)?.code,

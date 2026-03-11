@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { signInWithCustomToken } from 'firebase/auth';
 
 import { auth } from '../../firebase/firebaseconfig';
-import { SAML_TOKEN_EXCHANGE_URL } from '../../config';
+import { SHUTTLER_API_URL } from '../../config';
 
 const SAML_HANDOFF_STORAGE_KEY = 'samlHandoffToken';
 
@@ -31,7 +31,7 @@ async function cacheToken(token: string) {
 }
 
 async function exchangeAndSignIn(token: string) {
-  const response = await fetch(SAML_TOKEN_EXCHANGE_URL, {
+  const response = await fetch(`${SHUTTLER_API_URL}/saml/exchange`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ samlToken: token }),

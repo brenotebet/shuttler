@@ -7,10 +7,10 @@ const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
-  name: 'bogey-bus',
-  slug: 'bogey-bus',
+  name: 'Shuttler',
+  slug: 'shuttler',
   version: '1.0.0',
-  scheme: 'bogeybus',
+  scheme: 'shuttler',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'light',
@@ -22,15 +22,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     backgroundColor: '#ffffff',
   },
   ios: {
-    bundleIdentifier: 'edu.mckendree.shuttle',
+    bundleIdentifier: 'com.shuttler.app',
     supportsTablet: true,
     config: {
       googleMapsApiKey,
     },
     infoPlist: {
-      NSLocationWhenInUseUsageDescription: 'Allow BogeyBus to access your location while using the app.',
+      NSLocationWhenInUseUsageDescription: 'Allow Shuttler to access your location while using the app.',
       NSLocationAlwaysAndWhenInUseUsageDescription:
-        'Allow BogeyBus to access your location even when the app is in the background.',
+        'Allow Shuttler to access your location even when the app is in the background.',
       UIBackgroundModes: ['location'],
     },
   },
@@ -42,7 +42,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         action: 'VIEW',
         category: ['BROWSABLE', 'DEFAULT'],
-        data: [{ scheme: 'bogeybus', host: 'sso' }],
+        data: [{ scheme: 'shuttler', host: 'sso' }],
       },
     ],
     adaptiveIcon: {
@@ -58,7 +58,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'ACCESS_COARSE_LOCATION',
       'ACCESS_BACKGROUND_LOCATION',
     ],
-    package: 'com.anonymous.bogeybus',
+    package: 'com.shuttler.app',
   },
   web: {
     favicon: './assets/favicon.png',

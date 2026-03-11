@@ -55,6 +55,8 @@ import { showAlert } from '../src/utils/alerts';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 import { LOCATIONS, STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { useOrg } from '../src/org/OrgContext';
+import { useAuth } from '../src/auth/AuthProvider';
 
 const STALE_WINDOW_SECONDS = 90;
 
@@ -74,7 +76,7 @@ function quantizeBearing(bearing: number) {
 
 type Bounds = { latMin: number; latMax: number; lonMin: number; lonMax: number };
 
-function getStopsBounds(stops = LOCATIONS): Bounds {
+function getStopsBounds(stops = LOCATIONS as typeof LOCATIONS): Bounds {
   let latMin = Infinity,
     latMax = -Infinity,
     lonMin = Infinity,
@@ -140,10 +142,28 @@ export default function MapScreen() {
     >
   >();
 
+  const { org } = useOrg();
+  const { orgId } = useAuth();
+  // Fall back to hardcoded LOCATIONS only in development (no org selected)
+  const stops = org?.stops?.length ? org.stops : LOCATIONS;
+  // Returns a Firestore CollectionReference scoped to the current org
+  const orgCol = (name: string) =>
+    orgId ? collection(db, 'orgs', orgId, name) : collection(db, name);
+
   const insets = useSafeAreaInsets();
 
-  const STOPS_BOUNDS = useMemo(() => getStopsBounds(LOCATIONS), []);
-  const INITIAL_REGION = useMemo(() => boundsRegion(STOPS_BOUNDS, 0.9), [STOPS_BOUNDS]);
+  const STOPS_BOUNDS = useMemo(() => getStopsBounds(stops), [stops]);
+  const INITIAL_REGION = useMemo(() => {
+    if (org?.mapCenter) {
+      return {
+        latitude: org.mapCenter.latitude,
+        longitude: org.mapCenter.longitude,
+        latitudeDelta: 0.021,
+        longitudeDelta: 0.033,
+      };
+    }
+    return boundsRegion(STOPS_BOUNDS, 0.9);
+  }, [org?.mapCenter, STOPS_BOUNDS]);
 
   const [region, setRegion] = useState<Region | null>(null);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
@@ -383,7 +403,7 @@ export default function MapScreen() {
     markProgrammaticMove();
     setCameraMode('followUser');
 
-    const points = LOCATIONS.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
+    const points = stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
     mapRef.current?.fitToCoordinates(points, { edgePadding: getEdgePadding(), animated: true });
 
     const r = INITIAL_REGION;
@@ -457,7 +477,7 @@ export default function MapScreen() {
         markProgrammaticMove();
 
         setTimeout(() => {
-          const points = LOCATIONS.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
+          const points = stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
           mapRef.current?.fitToCoordinates(points, { edgePadding: getEdgePadding(), animated: true });
         }, 10);
       }
@@ -473,7 +493,7 @@ export default function MapScreen() {
     })();
 
     unsubBus = onSnapshot(
-      collection(db, 'buses'),
+      orgCol('buses'),
       (snapshot) => {
         if (snapshot.metadata.hasPendingWrites) return;
 
@@ -662,7 +682,7 @@ export default function MapScreen() {
     };
 
     const qActive = query(
-      collection(db, 'stopRequests'),
+      orgCol('stopRequests'),
       where('studentUid', '==', studentUid),
       where('status', 'in', ['pending', 'accepted']),
       orderBy('createdAt', 'desc'),
@@ -670,7 +690,7 @@ export default function MapScreen() {
     );
 
     const qExpiredCancelled = query(
-      collection(db, 'stopRequests'),
+      orgCol('stopRequests'),
       where('studentUid', '==', studentUid),
       where('status', '==', 'cancelled'),
       where('cancelledReason', '==', 'ttl_expired_15m'),
@@ -768,7 +788,7 @@ export default function MapScreen() {
       const getNearestStopIndex = (lat: number, lon: number) => {
         let nearestIdx = 0;
         let minDist = Number.MAX_VALUE;
-        LOCATIONS.forEach((stop, idx) => {
+        stops.forEach((stop, idx) => {
           const d = getDistanceInMeters(lat, lon, stop.latitude, stop.longitude);
           if (d < minDist) {
             minDist = d;
@@ -779,12 +799,12 @@ export default function MapScreen() {
       };
 
       const busStopIdx = getNearestStopIndex(assigned.latitude, assigned.longitude);
-      const requestedStopIdx = LOCATIONS.findIndex((stop) => stop.id === request.stop.id);
+      const requestedStopIdx = stops.findIndex((stop) => stop.id === request.stop.id);
 
       if (requestedStopIdx < 0) {
         setStopsBefore(null);
       } else {
-        const rawDiff = (requestedStopIdx - busStopIdx + LOCATIONS.length) % LOCATIONS.length;
+        const rawDiff = (requestedStopIdx - busStopIdx + stops.length) % stops.length;
         setStopsBefore(Math.max(0, rawDiff - 1));
       }
     } catch (error) {
@@ -995,15 +1015,15 @@ export default function MapScreen() {
 
     let nearestIdx = 0;
     let minDist = Number.MAX_VALUE;
-    LOCATIONS.forEach((stop, idx) => {
+    stops.forEach((stop, idx) => {
       const d = getDistanceInMeters(loc.latitude, loc.longitude, stop.latitude, stop.longitude);
       if (d < minDist) {
         minDist = d;
         nearestIdx = idx;
       }
     });
-    const nextIdx = (nearestIdx + 1) % LOCATIONS.length;
-    const nextStopName = LOCATIONS[nextIdx].name;
+    const nextIdx = (nearestIdx + 1) % stops.length;
+    const nextStopName = stops[nextIdx]?.name ?? '';
 
     setSelectedBusPopup((prev) => ({
       etaToYou: prev?.etaToYou ?? null,
@@ -1048,7 +1068,7 @@ const handleRequest = async (index: number) => {
     return;
   }
 
-  const selectedStop = LOCATIONS[index];
+  const selectedStop = stops[index];
 
   try {
     if (__DEV__) console.log('[handleRequest] auth.uid =', auth.currentUser?.uid, 'studentUid =', studentUid);
@@ -1058,7 +1078,7 @@ const handleRequest = async (index: number) => {
     try {
       existing = await getDocs(
         query(
-          collection(db, 'stopRequests'),
+          orgCol('stopRequests'),
           where('studentUid', '==', studentUid),
           where('status', 'in', ['pending', 'accepted']),
           limit(1),
@@ -1079,7 +1099,7 @@ const handleRequest = async (index: number) => {
 
     // Create request
     try {
-      const ref = await addDoc(collection(db, 'stopRequests'), {
+      const ref = await addDoc(orgCol('stopRequests'), {
         studentUid,
         studentEmail: studentEmail ?? null,
         stopId: selectedStop.id,
@@ -1154,7 +1174,7 @@ const handleRequest = async (index: number) => {
           activeOpacity={0.8}
         >
           <Text style={styles.searchText}>
-            {selectedStopIndex === null ? 'Request a stop' : LOCATIONS[selectedStopIndex].name}
+            {selectedStopIndex === null ? 'Request a stop' : stops[selectedStopIndex]?.name}
           </Text>
           <Icon name="keyboard-arrow-down" size={24} color="#888" />
         </TouchableOpacity>
@@ -1175,7 +1195,7 @@ const handleRequest = async (index: number) => {
           <View style={styles.overlay}>
             <View style={[styles.locationListContainer, { top: topOverlay + 60 }]}>
               <FlatList
-                data={LOCATIONS}
+                data={stops}
                 keyExtractor={(item) => item.id}
                 renderItem={({ item, index }) => (
                   <TouchableOpacity
@@ -1236,7 +1256,7 @@ const handleRequest = async (index: number) => {
         }}
       >
         {/* ✅ Campus stops always visible, but hide the destination stop marker while ride is active */}
-        {LOCATIONS.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
+        {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
           <Marker
             description={stop.name}
             key={stop.id}

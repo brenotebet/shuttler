@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Bogey Bus",
-    "slug": "bogey-bus",
+    "name": "Shuttler",
+    "slug": "shuttler",
     "version": "1.0.0",
     "owner": "brenotebet",
     "orientation": "portrait",
@@ -16,14 +16,14 @@
     },
     "ios": {
       "buildNumber": "1",
-      "bundleIdentifier": "edu.mckendree.shuttle",
+      "bundleIdentifier": "com.shuttler.app",
       "supportsTablet": true,
       "config": {
         "googleMapsApiKey": "AIzaSyBYT2BQOYAfECInFsBtysKvuFUXSnUZoCU"
       },
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Allow BogeyBus to access your location while using the app.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow BogeyBus to access your location even when the app is in the background.",
+        "NSLocationWhenInUseUsageDescription": "Allow Shuttler to access your location while using the app.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Shuttler to access your location even when the app is in the background.",
         "UIBackgroundModes": [
           "location"
         ]
@@ -45,7 +45,7 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION"
       ],
-      "package": "com.anonymous.bogeybus"
+      "package": "com.shuttler.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
