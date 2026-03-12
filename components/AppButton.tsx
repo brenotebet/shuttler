@@ -61,14 +61,14 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY_COLOR,
   },
   secondary: {
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     borderWidth: 1,
     borderColor: PRIMARY_COLOR,
   },
   text: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#fff',
+    color: '#FFFFFF',
   },
   secondaryText: {
     color: PRIMARY_COLOR,

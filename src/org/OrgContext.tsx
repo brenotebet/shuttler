@@ -6,6 +6,8 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../../config';
 
 export type Stop = {
@@ -13,6 +15,12 @@ export type Stop = {
   name: string;
   latitude: number;
   longitude: number;
+};
+
+export type Route = {
+  id: string;
+  name: string;
+  stopIds: string[]; // ordered stop IDs referencing org.stops
 };
 
 export type AuthMethod = 'saml' | 'email' | 'google' | 'email+google';
@@ -26,6 +34,7 @@ export type OrgConfig = {
   authMethod: AuthMethod;
   allowedEmailDomains?: string[];
   stops: Stop[];
+  routes?: Route[];
   mapCenter: { latitude: number; longitude: number };
   mapBoundingBox?: {
     ne: { latitude: number; longitude: number };
@@ -151,6 +160,30 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await writeCachedOrg(fresh);
     }
   }, [org]);
+
+  // Live Firestore listener — keeps stops, mapCenter, mapBoundingBox fresh
+  // without waiting for the 24-hour cache to expire.
+  useEffect(() => {
+    if (!org?.orgId) return;
+    const unsub = onSnapshot(
+      doc(db, 'orgs', org.orgId),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        setOrg((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            stops: Array.isArray(data.stops) ? data.stops : prev.stops,
+            mapCenter: data.mapCenter ?? prev.mapCenter,
+            mapBoundingBox: data.mapBoundingBox ?? prev.mapBoundingBox,
+          };
+        });
+      },
+      () => {/* silently ignore permission errors on non-member orgs */},
+    );
+    return () => unsub();
+  }, [org?.orgId]);
 
   return (
     <OrgContext.Provider value={{ org, isLoadingOrg, selectOrg, clearOrg, refreshOrg }}>

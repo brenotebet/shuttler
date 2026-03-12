@@ -63,7 +63,7 @@ service cloud.firestore {
       allow update: if signedIn()
         && isAdmin(orgId)
         && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['stops', 'mapCenter', 'mapBoundingBox', 'logoUrl',
+            .hasOnly(['stops', 'routes', 'mapCenter', 'mapBoundingBox', 'logoUrl',
                       'primaryColor', 'name', 'updatedAt']);
 
       allow create, delete: if false;
@@ -74,10 +74,11 @@ service cloud.firestore {
       // Users read their own doc only.
       allow read: if signedIn() && request.auth.uid == uid;
 
-      // Create own profile on first login (orgId field must match path).
+      // Create own profile on first login (role must be student; elevated roles only via backend).
       allow create: if signedIn()
         && request.auth.uid == uid
-        && request.resource.data.orgId == orgId;
+        && request.resource.data.orgId == orgId
+        && request.resource.data.role == 'student';
 
       // Update own profile but never change role or orgId.
       allow update: if signedIn()

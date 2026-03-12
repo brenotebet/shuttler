@@ -12,6 +12,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
+import { useAuth } from '../src/auth/AuthProvider';
 import StopRequestCard from '../components/StopRequestCard';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR } from '../src/constants/theme';
@@ -23,13 +24,14 @@ import { spacing } from '../src/styles/common';
 
 export default function AdminDriverScreen() {
   const { driverId } = useDriver();
+  const { orgId } = useAuth();
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
   const lookupInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!driverId) {
+    if (!driverId || !orgId) {
       setRequests([]);
       setLoading(false);
       return;
@@ -37,7 +39,7 @@ export default function AdminDriverScreen() {
 
     // Fetch all “pending” & “accepted” stop requests
     const q = query(
-      collection(db, 'stopRequests'),
+      collection(db, 'orgs', orgId, 'stopRequests'),
       where('status', 'in', ['pending', 'accepted'])
     );
 
@@ -61,7 +63,7 @@ export default function AdminDriverScreen() {
     });
 
     return () => unsub();
-  }, [driverId]);
+  }, [driverId, orgId]);
 
   // Fetch display names for student UIDs in the request list
   useEffect(() => {
@@ -74,7 +76,7 @@ export default function AdminDriverScreen() {
 
     missingUids.forEach((uid) => {
       lookupInFlightRef.current.add(uid);
-      void getDoc(doc(db, 'publicUsers', uid))
+      void getDoc(doc(db, 'orgs', orgId!, 'publicUsers', uid))
         .then((snap) => {
           if (!snap.exists()) return;
           const displayName = (snap.data() as any)?.displayName;

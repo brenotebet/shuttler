@@ -17,7 +17,7 @@ export default function ScreenContainer({
 }: ScreenContainerProps) {
   return (
     <SafeAreaView
-      edges={['left', 'right', 'bottom']}
+      edges={['top', 'left', 'right', 'bottom']}
       style={[styles.safe, padded ? styles.padded : null, style]}
     >
       {children}

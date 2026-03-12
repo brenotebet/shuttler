@@ -3,7 +3,7 @@
 import React from 'react';
 import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, CARD_BACKGROUND, TEXT_PRIMARY, TEXT_SECONDARY, DANGER_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 export type MenuItemProps = {
@@ -32,7 +32,7 @@ function MenuItem({
       <Icon
         name={icon}
         size={28}
-        color={isDanger ? '#dc2626' : PRIMARY_COLOR}
+        color={isDanger ? DANGER_COLOR : PRIMARY_COLOR}
         style={styles.icon}
       />
 
@@ -54,7 +54,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.item,
     paddingHorizontal: spacing.section,
-    backgroundColor: '#fff',
+    backgroundColor: CARD_BACKGROUND,
     borderRadius: borderRadius.lg,
     marginBottom: spacing.section,
     ...cardShadow,
@@ -68,14 +68,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: TEXT_PRIMARY,
   },
   dangerTitle: {
-    color: '#dc2626',
+    color: DANGER_COLOR,
   },
   description: {
     fontSize: 14,
-    color: '#666',
+    color: TEXT_SECONDARY,
     marginTop: 2,
   },
 });

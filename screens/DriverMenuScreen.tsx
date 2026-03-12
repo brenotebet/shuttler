@@ -8,6 +8,7 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 
 import { useDriver } from '../drivercontext/DriverContext';
 import { useLocationSharing } from '../location/LocationContext';
+import { useAuth } from '../src/auth/AuthProvider';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import { clearSamlSession } from '../src/auth/samlAuth';
@@ -21,6 +22,7 @@ export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout: clearDriverContext } = useDriver();
   const { stopSharing, isSharing } = useLocationSharing();
+  const { role } = useAuth();
 
   const handleLogout = () => {
     Alert.alert(
@@ -77,6 +79,15 @@ export default function DriverMenuScreen() {
           description="View and manage current ride requests"
           onPress={() => navigation.navigate('AdminDriver')}
         />
+
+        {role === 'admin' && (
+          <MenuItem
+            icon="settings"
+            title="Org Setup"
+            description="Manage stops, routes, users and billing"
+            onPress={() => navigation.navigate('AdminOrgSetup')}
+          />
+        )}
 
         <MenuItem
           icon="logout"

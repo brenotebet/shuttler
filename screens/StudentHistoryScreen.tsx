@@ -9,15 +9,17 @@ import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
 import ScreenContainer from '../components/ScreenContainer';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
+import { useAuth } from '../src/auth/AuthProvider';
 
 export default function StudentHistoryScreen() {
   const [stops, setStops] = useState<any[]>([]);
+  const { orgId } = useAuth();
 
   useEffect(() => {
     const studentUid = auth.currentUser?.uid;
-    if (!studentUid) return;
+    if (!studentUid || !orgId) return;
     const q = query(
-      collection(db, 'stopRequests'),
+      collection(db, 'orgs', orgId, 'stopRequests'),
       where('studentUid', '==', studentUid),
       where('status', '==', 'completed'),
       orderBy('completedAt', 'desc')
@@ -29,11 +31,11 @@ export default function StudentHistoryScreen() {
         setStops(data);
       },
       (err) => {
-        console.error('Failed to fetch student history', err);
+        console.error('Failed to fetch stop history', err);
       },
     );
     return () => unsub();
-  }, []);
+  }, [orgId]);
 
   return (
     <ScreenContainer padded={false}>

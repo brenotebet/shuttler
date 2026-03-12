@@ -5,7 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import DriverScreen from '../screens/DriverScreen';
 import DriverMenuScreen from '../screens/DriverMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
 
 const Tab = createBottomTabNavigator();
 
@@ -16,8 +16,9 @@ export default function DriverTabs() {
         headerShown: false,
         tabBarShowLabel: false,
         tabBarStyle: {
-          backgroundColor: '#fff',
-          borderTopWidth: 0,
+          backgroundColor: CARD_BACKGROUND,
+          borderTopWidth: 1,
+          borderTopColor: '#E2E8F0',
           elevation: 8,
           height: 80,
           paddingBottom: 5,
@@ -32,7 +33,7 @@ export default function DriverTabs() {
           return <Icon name={iconName} size={28} color={color} />;
         },
         tabBarActiveTintColor: PRIMARY_COLOR,
-        tabBarInactiveTintColor: '#aaa',
+        tabBarInactiveTintColor: TEXT_SECONDARY,
       })}
     >
       <Tab.Screen name="LiveLocation" component={DriverScreen} />

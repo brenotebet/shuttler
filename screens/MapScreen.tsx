@@ -54,7 +54,7 @@ import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
-import { LOCATIONS, STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 
@@ -76,7 +76,7 @@ function quantizeBearing(bearing: number) {
 
 type Bounds = { latMin: number; latMax: number; lonMin: number; lonMax: number };
 
-function getStopsBounds(stops = LOCATIONS as typeof LOCATIONS): Bounds {
+function getStopsBounds(stops: { latitude: number; longitude: number }[]): Bounds {
   let latMin = Infinity,
     latMax = -Infinity,
     lonMin = Infinity,
@@ -99,6 +99,17 @@ function getStopsBounds(stops = LOCATIONS as typeof LOCATIONS): Bounds {
   }
 
   return { latMin, latMax, lonMin, lonMax };
+}
+
+function padBounds(b: Bounds, factor = 0.3): Bounds {
+  const latPad = (b.latMax - b.latMin) * factor;
+  const lonPad = (b.lonMax - b.lonMin) * factor;
+  return {
+    latMin: b.latMin - latPad,
+    latMax: b.latMax + latPad,
+    lonMin: b.lonMin - lonPad,
+    lonMax: b.lonMax + lonPad,
+  };
 }
 
 function boundsRegion(bounds: Bounds, pad = 0.18): Region {
@@ -144,8 +155,7 @@ export default function MapScreen() {
 
   const { org } = useOrg();
   const { orgId } = useAuth();
-  // Fall back to hardcoded LOCATIONS only in development (no org selected)
-  const stops = org?.stops?.length ? org.stops : LOCATIONS;
+  const stops = org?.stops ?? [];
   // Returns a Firestore CollectionReference scoped to the current org
   const orgCol = (name: string) =>
     orgId ? collection(db, 'orgs', orgId, name) : collection(db, name);
@@ -153,6 +163,7 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
 
   const STOPS_BOUNDS = useMemo(() => getStopsBounds(stops), [stops]);
+  const PADDED_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.3), [STOPS_BOUNDS]);
   const INITIAL_REGION = useMemo(() => {
     if (org?.mapCenter) {
       return {
@@ -281,8 +292,9 @@ export default function MapScreen() {
       const emailPrefix = email?.split?.('@')?.[0] ?? null;
       const displayName = (authName || emailPrefix || 'Student').trim();
 
+      if (!orgId) return;
       await setDoc(
-        doc(db, 'publicUsers', uid),
+        doc(db, 'orgs', orgId, 'publicUsers', uid),
         {
           displayName,
           updatedAt: serverTimestamp(),
@@ -301,7 +313,8 @@ export default function MapScreen() {
     if (driverFirstNames[uid]) return driverFirstNames[uid];
 
     try {
-      const snap = await getDoc(doc(db, 'publicUsers', uid));
+      if (!orgId) return 'Driver';
+      const snap = await getDoc(doc(db, 'orgs', orgId, 'publicUsers', uid));
       const data = (snap.data() as any) || {};
       const displayName = typeof data?.displayName === 'string' ? data.displayName : 'Driver';
       const firstName = displayName?.split?.(' ')?.[0] || 'Driver';
@@ -389,7 +402,7 @@ export default function MapScreen() {
             latitudeDelta: 0.01,
             longitudeDelta: 0.01,
           },
-          STOPS_BOUNDS,
+          PADDED_BOUNDS,
         ),
         500,
       );
@@ -978,7 +991,7 @@ export default function MapScreen() {
     const remainingMs = expiresAtMs - Date.now();
 
     const expireRequest = () => {
-      updateDoc(doc(db, 'stopRequests', requestId), {
+      updateDoc(doc(db, 'orgs', orgId ?? '', 'stopRequests', requestId), {
         status: 'cancelled',
         cancelledAt: serverTimestamp(),
         cancelledReason: 'ttl_expired_15m',
@@ -1052,7 +1065,7 @@ export default function MapScreen() {
           latitudeDelta: latDelta,
           longitudeDelta: lonDelta,
         },
-        STOPS_BOUNDS,
+        PADDED_BOUNDS,
       ),
       650,
     );
@@ -1100,6 +1113,7 @@ const handleRequest = async (index: number) => {
     // Create request
     try {
       const ref = await addDoc(orgCol('stopRequests'), {
+        orgId: orgId ?? '',
         studentUid,
         studentEmail: studentEmail ?? null,
         stopId: selectedStop.id,
@@ -1142,6 +1156,21 @@ const handleRequest = async (index: number) => {
     }
   }
 };
+
+  // Org hasn't configured stops + boundaries yet — show a friendly placeholder
+  const orgReady = !!(org && org.mapBoundingBox && (org.stops?.length ?? 0) >= 2);
+  if (org && !orgReady) {
+    return (
+      <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={styles.notReadyContainer}>
+        <Icon name="directions-bus" size={56} color={PRIMARY_COLOR} style={{ marginBottom: 20 }} />
+        <Text style={styles.notReadyTitle}>Almost there!</Text>
+        <Text style={styles.notReadyBody}>
+          Your administrator hasn't finished setting up stops and routes yet.
+          Check back once the map is configured.
+        </Text>
+      </SafeAreaView>
+    );
+  }
 
   if (!region || !ownRequestReady) {
     return (
@@ -1239,7 +1268,7 @@ const handleRequest = async (index: number) => {
             setCameraMode('free');
           }
 
-          const clamped = clampToBounds(newRegion, STOPS_BOUNDS);
+          const clamped = clampToBounds(newRegion, PADDED_BOUNDS);
 
           const needsAdjustment =
             clamped.latitude !== newRegion.latitude ||
@@ -1463,7 +1492,7 @@ const handleRequest = async (index: number) => {
                 onPress={async () => {
                   if (!requestId) return;
 
-                  await updateDoc(doc(db, 'stopRequests', requestId), { status: 'cancelled' });
+                  await updateDoc(doc(db, 'orgs', orgId ?? '', 'stopRequests', requestId), { status: 'cancelled' });
 
                   setRequest(null);
                   setRequestId(null);
@@ -1501,6 +1530,26 @@ function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: num
 const styles = StyleSheet.create({
   map: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  notReadyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: BACKGROUND_COLOR,
+    padding: 40,
+  },
+  notReadyTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  notReadyBody: {
+    fontSize: 15,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
 
   searchContainer: {
     position: 'absolute',

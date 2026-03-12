@@ -22,7 +22,9 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
-import { LOCATIONS, STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { useOrg, Stop } from '../src/org/OrgContext';
+import { useAuth } from '../src/auth/AuthProvider';
 
 const STALE_WINDOW_SECONDS = 90;
 const ARRIVE_RADIUS_FT = 75;
@@ -72,11 +74,6 @@ function formatTimeAgo(inputMs: number) {
   return `${days}d ago`;
 }
 
-async function getMyRole(uid: string) {
-  const snap = await getDoc(doc(db, 'users', uid));
-  return snap.exists() ? (snap.data() as any)?.role ?? null : null;
-}
-
 function isDriverRole(role: unknown) {
   return role === 'driver' || role === 'admin';
 }
@@ -93,32 +90,33 @@ function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: num
   return R * c;
 }
 
-function getNearestStop(lat: number, lon: number) {
-  let nearest = LOCATIONS[0];
+function getNearestStop(lat: number, lon: number, stops: Stop[]) {
+  if (stops.length === 0) return null;
+  let nearest = stops[0];
   let minDist = Infinity;
-
-  LOCATIONS.forEach((stop) => {
+  stops.forEach((stop) => {
     const dist = getDistanceInMeters(lat, lon, stop.latitude, stop.longitude);
-    if (dist < minDist) {
-      minDist = dist;
-      nearest = stop;
-    }
+    if (dist < minDist) { minDist = dist; nearest = stop; }
   });
-
   return nearest;
 }
 
-function nextStopFromNearest(nearestStopId: string | null) {
-  if (!nearestStopId) return LOCATIONS[0] ?? null;
-  const idx = LOCATIONS.findIndex((stop) => stop.id === nearestStopId);
-  if (idx < 0) return LOCATIONS[0] ?? null;
-  return LOCATIONS[(idx + 1) % LOCATIONS.length] ?? null;
+function nextStopFromNearest(nearestStopId: string | null, stops: Stop[]) {
+  if (stops.length === 0) return null;
+  if (!nearestStopId) return stops[0];
+  const idx = stops.findIndex((stop) => stop.id === nearestStopId);
+  if (idx < 0) return stops[0];
+  return stops[(idx + 1) % stops.length];
 }
 
 export default function DriverScreen() {
   const insets = useSafeAreaInsets();
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
   const { driverId, loading } = useDriver();
+  const { org } = useOrg();
+  const { role: authRole } = useAuth();
+  const orgStops: Stop[] = org?.stops ?? [];
+  const orgId = org?.orgId ?? '';
 
   const [isToggling, setIsToggling] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
@@ -163,10 +161,13 @@ export default function DriverScreen() {
 
   const nearestStop = useMemo(() => {
     if (!driverCoords) return null;
-    return getNearestStop(driverCoords.latitude, driverCoords.longitude);
-  }, [driverCoords?.latitude, driverCoords?.longitude]);
+    return getNearestStop(driverCoords.latitude, driverCoords.longitude, orgStops);
+  }, [driverCoords?.latitude, driverCoords?.longitude, orgStops]);
 
-  const nextStop = useMemo(() => nextStopFromNearest(nearestStop?.id ?? null), [nearestStop?.id]);
+  const nextStop = useMemo(
+    () => nextStopFromNearest(nearestStop?.id ?? null, orgStops),
+    [nearestStop?.id, orgStops],
+  );
 
   const activeRequests = useMemo(
     () => requests.filter((req) => isActiveStopStatus(req?.status)).filter((req) => !isExpiredRequest(req)),
@@ -181,7 +182,7 @@ export default function DriverScreen() {
 
   const countsByStopId = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const stop of LOCATIONS) counts[stop.id] = 0;
+    for (const stop of orgStops) counts[stop.id] = 0;
 
     for (const req of activeRequests) {
       const stopId = req?.stop?.id ?? req?.stopId;
@@ -227,7 +228,7 @@ export default function DriverScreen() {
   }, []);
 
   useEffect(() => {
-    if (loading || !driverId) return;
+    if (loading || !driverId || !orgId) return;
 
     const uid = auth.currentUser?.uid;
     if (!uid || uid !== driverId) return;
@@ -237,21 +238,13 @@ export default function DriverScreen() {
     let unsubRequests: (() => void) | undefined;
 
     (async () => {
-      let role: unknown;
-      try {
-        role = await getMyRole(uid);
-      } catch (e: any) {
-        console.error('DriverScreen: failed to read /users role', e?.message);
-        return;
-      }
-
-      if (!isDriverRole(role) || cancelled) return;
+      if (!isDriverRole(authRole) || cancelled) return;
 
       const { status } = await Location.requestForegroundPermissionsAsync();
       setHasLocationPermission(status === 'granted');
 
       unsubBus = onSnapshot(
-        collection(db, 'buses'),
+        collection(db, 'orgs', orgId, 'buses'),
         (snapshot) => {
           if (snapshot.metadata.hasPendingWrites) return;
 
@@ -324,7 +317,7 @@ export default function DriverScreen() {
         expiryWritesInFlightRef.current.add(item.id);
         try {
           await runTransaction(db, async (tx) => {
-            const ref = doc(db, 'stopRequests', item.id);
+            const ref = doc(db, 'orgs', orgId, 'stopRequests', item.id);
             const snap = await tx.get(ref);
             if (!snap.exists()) return;
 
@@ -347,7 +340,7 @@ export default function DriverScreen() {
 
       unsubRequests = onSnapshot(
         query(
-          collection(db, 'stopRequests'),
+          collection(db, 'orgs', orgId, 'stopRequests'),
           where('status', 'in', ['pending', 'accepted']),
           orderBy('createdAt', 'desc'),
           limit(200),
@@ -370,7 +363,7 @@ export default function DriverScreen() {
       if (unsubBus) unsubBus();
       if (unsubRequests) unsubRequests();
     };
-  }, [driverId, loading]);
+  }, [driverId, loading, authRole, orgId]);
 
   useEffect(() => {
     const activeIds = new Set(activeRequests.map((r) => r.id));
@@ -388,7 +381,7 @@ export default function DriverScreen() {
 
       try {
         await runTransaction(db, async (tx) => {
-          const ref = doc(db, 'stopRequests', requestId);
+          const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
           const snap = await tx.get(ref);
           if (!snap.exists()) return;
           const current = snap.data() as any;
@@ -410,7 +403,7 @@ export default function DriverScreen() {
 
       try {
         await runTransaction(db, async (tx) => {
-          const ref = doc(db, 'stopRequests', requestId);
+          const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
           const snap = await tx.get(ref);
           if (!snap.exists()) return;
           const current = snap.data() as any;
@@ -443,7 +436,7 @@ export default function DriverScreen() {
           if (!expiryWritesInFlightRef.current.has(req.id)) {
             expiryWritesInFlightRef.current.add(req.id);
             void runTransaction(db, async (tx) => {
-              const ref = doc(db, 'stopRequests', req.id);
+              const ref = doc(db, 'orgs', orgId, 'stopRequests', req.id);
               const snap = await tx.get(ref);
               if (!snap.exists()) return;
               const current = snap.data() as any;
@@ -506,7 +499,7 @@ export default function DriverScreen() {
     tick();
     const interval = setInterval(tick, PROXIMITY_POLL_MS);
     return () => clearInterval(interval);
-  }, [driverId, isSharing]);
+  }, [driverId, isSharing, orgId]);
 
   useEffect(() => {
     if (!driverId) return;
@@ -515,7 +508,7 @@ export default function DriverScreen() {
         if (!item?.id || !isExpiredRequest(item) || expiryWritesInFlightRef.current.has(item.id)) return;
         expiryWritesInFlightRef.current.add(item.id);
         void runTransaction(db, async (tx) => {
-          const ref = doc(db, 'stopRequests', item.id);
+          const ref = doc(db, 'orgs', orgId, 'stopRequests', item.id);
           const snap = await tx.get(ref);
           if (!snap.exists()) return;
           const current = snap.data() as any;
@@ -537,7 +530,7 @@ export default function DriverScreen() {
     }, TTL_SWEEP_MS);
 
     return () => clearInterval(timer);
-  }, [driverId]);
+  }, [driverId, orgId]);
 
   useEffect(() => {
     if (!showBoardingCard) {
@@ -585,7 +578,11 @@ export default function DriverScreen() {
       return;
     }
 
-    const nearest = getNearestStop(loc.latitude, loc.longitude);
+    const nearest = getNearestStop(loc.latitude, loc.longitude, orgStops);
+    if (!nearest) {
+      showAlert('No stops configured for this org.');
+      return;
+    }
 
     const nearestStopRequest = activeRequests.find((req) => {
       const stopId = req?.stop?.id ?? req?.stopId;
@@ -594,7 +591,7 @@ export default function DriverScreen() {
 
     try {
       const batch = writeBatch(db);
-      const boardingRef = doc(collection(db, 'boardingCounts'));
+      const boardingRef = doc(collection(db, 'orgs', orgId, 'boardingCounts'));
       batch.set(boardingRef, {
         driverUid: driverId,
         stopRequestId: nearestStopRequest?.id ?? null,
@@ -735,7 +732,10 @@ export default function DriverScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Route Progress</Text>
-          {LOCATIONS.map((stop) => {
+          {orgStops.length === 0 && (
+            <Text style={styles.emptyText}>No stops configured. Ask your admin to set up stops.</Text>
+          )}
+          {orgStops.map((stop) => {
             const isCurrent = stop.id === nearestStop?.id;
             const isNext = stop.id === nextStop?.id;
             return (

@@ -5,13 +5,13 @@ import { getFirestore } from 'firebase/firestore';
 import { initializeAuth, getAuth, getReactNativePersistence, Auth } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCFSRvElVpTPnFPShpbUwYzamLgtqw1EmQ",
-  authDomain: "bogey-bus-tracker.firebaseapp.com",
-  projectId: "bogey-bus-tracker",
-  storageBucket: "bogey-bus-tracker.firebasestorage.app",
-  messagingSenderId: "654162335695",
-  appId: "1:654162335695:web:32110715f48005e4a0e4ba",
-  measurementId: "G-9VMB81C9KE"
+  apiKey: "AIzaSyBpKRq2XaDcz_pDftYIMGKMKk756HiOjC0",
+  authDomain: "shuttler-8f030.firebaseapp.com",
+  projectId: "shuttler-8f030",
+  storageBucket: "shuttler-8f030.firebasestorage.app",
+  messagingSenderId: "1080585468745",
+  appId: "1:1080585468745:web:971766253b517cb432b898",
+  measurementId: "G-763BLXDJQ5"
 };
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);

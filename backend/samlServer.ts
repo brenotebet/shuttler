@@ -248,12 +248,21 @@ async function requireAuth(req: Request, res: Response, next: Function) {
 async function requireOrgAdmin(req: Request, res: Response, next: Function) {
   const orgId = req.params.orgId as string;
   const uid = (req as any).uid as string;
-  const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
-  if (!orgDoc.exists || !(orgDoc.data()!.adminUids ?? []).includes(uid)) {
-    return res.status(403).json({ error: 'Not authorized as org admin' });
+  try {
+    const userDoc = await admin.firestore()
+      .collection('orgs').doc(orgId)
+      .collection('users').doc(uid)
+      .get();
+    if (!userDoc.exists || userDoc.data()!.role !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized as org admin' });
+    }
+    const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
+    (req as any).orgSlug = orgDoc.data()!.slug;
+    next();
+  } catch {
+    return res.status(500).json({ error: 'Authorization check failed' });
   }
-  (req as any).orgSlug = orgDoc.data()!.slug;
-  next();
 }
 
 function requireInternal(req: Request, res: Response, next: Function) {
@@ -534,6 +543,60 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Registration failed' });
   }
 });
+
+// ---- Admin: list org members ----
+
+app.get(
+  '/admin/orgs/:orgId/users',
+  requireAuth,
+  requireOrgAdmin,
+  async (req: Request, res: Response) => {
+    const orgId = req.params.orgId as string;
+    try {
+      const snap = await admin.firestore()
+        .collection('orgs').doc(orgId)
+        .collection('users')
+        .orderBy('createdAt', 'desc')
+        .get();
+      const users = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+      return res.json(users);
+    } catch (e) {
+      console.error('List users error:', e);
+      return res.status(500).json({ error: 'Failed to list users' });
+    }
+  },
+);
+
+// ---- Admin: set member role ----
+
+app.post(
+  '/admin/orgs/:orgId/users/:uid/role',
+  requireAuth,
+  requireOrgAdmin,
+  async (req: Request, res: Response) => {
+    const { orgId, uid } = req.params as { orgId: string; uid: string };
+    const { role } = req.body;
+
+    if (!['student', 'driver', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'role must be student, driver, or admin' });
+    }
+
+    try {
+      const userRef = admin.firestore()
+        .collection('orgs').doc(orgId)
+        .collection('users').doc(uid);
+
+      const snap = await userRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'User not found in this org' });
+
+      await userRef.update({ role, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+      return res.json({ uid, role });
+    } catch (e) {
+      console.error('Set role error:', e);
+      return res.status(500).json({ error: 'Failed to update role' });
+    }
+  },
+);
 
 // ---- Admin: save auth config ----
 

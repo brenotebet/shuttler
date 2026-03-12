@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR, TEXT_PRIMARY } from '../src/constants/theme';
 import { MaterialIcons } from '@expo/vector-icons';
 
 
@@ -25,7 +25,7 @@ function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
     <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
       {showBack ? (
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <MaterialIcons name="arrow-back" size={24} color="#fff" />
+          <MaterialIcons name="arrow-back" size={24} color={PRIMARY_COLOR} />
         </TouchableOpacity>
       ) : (
         <View style={styles.placeholder} />
@@ -40,12 +40,14 @@ export default React.memo(HeaderBar);
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: PRIMARY_COLOR,
+    backgroundColor: BACKGROUND_COLOR,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingBottom: 10,
     paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   backButton: {
     padding: 4,
@@ -56,7 +58,7 @@ const styles = StyleSheet.create({
   title: {
     flex: 1,
     textAlign: 'center',
-    color: '#fff',
+    color: TEXT_PRIMARY,
     fontSize: 18,
     fontWeight: '600',
   },

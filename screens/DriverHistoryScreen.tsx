@@ -8,6 +8,7 @@ import HeaderBar from '../components/HeaderBar';
 import { db } from '../firebase/firebaseconfig';
 import { collection, doc, getDoc, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
+import { useAuth } from '../src/auth/AuthProvider';
 import ScreenContainer from '../components/ScreenContainer';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
@@ -16,14 +17,15 @@ export default function DriverHistoryScreen() {
   const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
   const lookupInFlightRef = useRef<Set<string>>(new Set());
   const { driverId } = useDriver();
+  const { orgId } = useAuth();
   const screenWidth = Dimensions.get('window').width;
   const chartWidth = screenWidth - spacing.screenPadding * 2;
 
   useEffect(() => {
-    if (!driverId) return;
+    if (!driverId || !orgId) return;
 
     const q = query(
-      collection(db, 'stopRequests'),
+      collection(db, 'orgs', orgId, 'stopRequests'),
       where('driverUid', '==', driverId),
       where('status', '==', 'completed'),
       orderBy('completedAt', 'desc')
@@ -44,10 +46,12 @@ export default function DriverHistoryScreen() {
     );
 
     return () => unsub();
-  }, [driverId]);
+  }, [driverId, orgId]);
 
   // Fetch display names for all unique student UIDs in the history list.
   useEffect(() => {
+    if (!orgId) return;
+
     const missingUids = stops
       .map((r) => r?.studentUid)
       .filter(
@@ -57,7 +61,7 @@ export default function DriverHistoryScreen() {
 
     missingUids.forEach((uid) => {
       lookupInFlightRef.current.add(uid);
-      void getDoc(doc(db, 'publicUsers', uid))
+      void getDoc(doc(db, 'orgs', orgId, 'publicUsers', uid))
         .then((snap) => {
           if (!snap.exists()) return;
           const displayName = (snap.data() as any)?.displayName;
@@ -68,7 +72,7 @@ export default function DriverHistoryScreen() {
         .catch((err) => console.error('Failed to load public user profile', err))
         .finally(() => lookupInFlightRef.current.delete(uid));
     });
-  }, [stops, userNameByUid]);
+  }, [stops, userNameByUid, orgId]);
 
   const totalStops = stops.length;
   const totalDistance = stops.reduce((acc, r) => acc + (r.distance || 0), 0);

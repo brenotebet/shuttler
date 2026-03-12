@@ -4,6 +4,7 @@
 // Tabs: Org Profile | Auth Settings | Stop Configuration | Billing
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Alert,
@@ -16,11 +17,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import MapView, { Marker, Region } from 'react-native-maps';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import * as WebBrowser from 'expo-web-browser';
 import { auth, db } from '../firebase/firebaseconfig';
-import { useOrg, Stop } from '../src/org/OrgContext';
+import { useOrg, Stop, Route } from '../src/org/OrgContext';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
@@ -28,7 +29,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-type Tab = 'profile' | 'auth' | 'stops' | 'billing';
+type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing';
 
 // ---- Helpers ----
 
@@ -213,25 +214,61 @@ function AuthTab() {
 
 // ---- Stop Configuration Tab ----
 
+function calcBoundsFromStops(stops: Stop[]) {
+  if (stops.length < 2) return null;
+  const lats = stops.map((s) => s.latitude);
+  const lngs = stops.map((s) => s.longitude);
+  const PADDING = 0.008; // ~800 m
+  return {
+    mapCenter: {
+      latitude: (Math.max(...lats) + Math.min(...lats)) / 2,
+      longitude: (Math.max(...lngs) + Math.min(...lngs)) / 2,
+    },
+    mapBoundingBox: {
+      ne: { latitude: Math.max(...lats) + PADDING, longitude: Math.max(...lngs) + PADDING },
+      sw: { latitude: Math.min(...lats) - PADDING, longitude: Math.min(...lngs) - PADDING },
+    },
+  };
+}
+
 function StopsTab() {
   const { org, refreshOrg } = useOrg();
   const mapRef = useRef<MapView>(null);
   const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
+  const [routes, setRoutes] = useState<Route[]>(org?.routes ?? []);
+  const hasOrgCenter = org?.mapCenter && (org.mapCenter.latitude !== 0 || org.mapCenter.longitude !== 0);
   const [mapCenter, setMapCenter] = useState(
-    org?.mapCenter ?? { latitude: 38.9072, longitude: -77.0369 },
+    hasOrgCenter ? org!.mapCenter : { latitude: 39.5, longitude: -98.35 },
   );
   const [pendingName, setPendingName] = useState('');
-  const [pendingCoords, setPendingCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [pendingLat, setPendingLat] = useState('');
+  const [pendingLng, setPendingLng] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
+  const pendingCoords =
+    pendingLat && pendingLng &&
+    !Number.isNaN(parseFloat(pendingLat)) && !Number.isNaN(parseFloat(pendingLng))
+      ? { latitude: parseFloat(pendingLat), longitude: parseFloat(pendingLng) }
+      : null;
+
+  // Route editing state
+  const [newRouteName, setNewRouteName] = useState('');
+  const [showRouteForm, setShowRouteForm] = useState(false);
+  const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+
   const handleMapPress = useCallback((e: any) => {
-    const coords = e.nativeEvent.coordinate;
-    setPendingCoords(coords);
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    setPendingLat(latitude.toFixed(6));
+    setPendingLng(longitude.toFixed(6));
   }, []);
 
   const handleAddStop = useCallback(() => {
-    if (!pendingCoords || !pendingName.trim()) {
-      Alert.alert('Name required', 'Enter a stop name before adding.');
+    if (!pendingName.trim()) {
+      Alert.alert('Name required', 'Enter a stop name.');
+      return;
+    }
+    if (!pendingCoords) {
+      Alert.alert('Coordinates required', 'Tap the map or enter latitude and longitude.');
       return;
     }
     const newStop: Stop = {
@@ -242,39 +279,107 @@ function StopsTab() {
     };
     setStops((prev) => [...prev, newStop]);
     setPendingName('');
-    setPendingCoords(null);
+    setPendingLat('');
+    setPendingLng('');
   }, [pendingCoords, pendingName]);
 
   const handleDeleteStop = useCallback((id: string) => {
     Alert.alert('Remove stop', 'Remove this stop?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => setStops((prev) => prev.filter((s) => s.id !== id)) },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => {
+          setStops((prev) => prev.filter((s) => s.id !== id));
+          // Remove from any routes that reference it
+          setRoutes((prev) =>
+            prev.map((r) => ({ ...r, stopIds: r.stopIds.filter((sid) => sid !== id) })),
+          );
+        },
+      },
     ]);
   }, []);
 
-  const handleSaveStops = useCallback(async () => {
+  const handleSaveAll = useCallback(async () => {
     if (!org) return;
     setIsSaving(true);
     try {
+      const bounds = calcBoundsFromStops(stops);
       await updateDoc(doc(db, 'orgs', org.orgId), {
         stops,
-        mapCenter,
+        routes,
+        mapCenter: bounds?.mapCenter ?? mapCenter,
+        ...(bounds ? { mapBoundingBox: bounds.mapBoundingBox } : {}),
         updatedAt: serverTimestamp(),
       });
       await refreshOrg();
-      Alert.alert('Saved', 'Stops and map center updated.');
+      Alert.alert('Saved', 'Stops, routes, and map bounds updated.');
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to save stops.');
+      Alert.alert('Error', e?.message ?? 'Failed to save.');
     } finally {
       setIsSaving(false);
     }
-  }, [org, stops, mapCenter, refreshOrg]);
+  }, [org, stops, routes, mapCenter, refreshOrg]);
+
+  // Route helpers
+  const handleAddRoute = useCallback(() => {
+    if (!newRouteName.trim()) return;
+    setRoutes((prev) => [
+      ...prev,
+      { id: `route_${Date.now()}`, name: newRouteName.trim(), stopIds: [] },
+    ]);
+    setNewRouteName('');
+    setShowRouteForm(false);
+  }, [newRouteName]);
+
+  const handleDeleteRoute = useCallback((routeId: string) => {
+    Alert.alert('Delete route', 'Remove this route?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => setRoutes((prev) => prev.filter((r) => r.id !== routeId)),
+      },
+    ]);
+  }, []);
+
+  const handleToggleStopInRoute = useCallback((routeId: string, stopId: string) => {
+    setRoutes((prev) =>
+      prev.map((r) => {
+        if (r.id !== routeId) return r;
+        if (r.stopIds.includes(stopId)) {
+          return { ...r, stopIds: r.stopIds.filter((id) => id !== stopId) };
+        }
+        return { ...r, stopIds: [...r.stopIds, stopId] };
+      }),
+    );
+  }, []);
+
+  const handleMoveStop = useCallback(
+    (routeId: string, stopId: string, direction: 'up' | 'down') => {
+      setRoutes((prev) =>
+        prev.map((r) => {
+          if (r.id !== routeId) return r;
+          const idx = r.stopIds.indexOf(stopId);
+          if (idx < 0) return r;
+          const newIds = [...r.stopIds];
+          if (direction === 'up' && idx > 0) {
+            [newIds[idx - 1], newIds[idx]] = [newIds[idx], newIds[idx - 1]];
+          } else if (direction === 'down' && idx < newIds.length - 1) {
+            [newIds[idx + 1], newIds[idx]] = [newIds[idx], newIds[idx + 1]];
+          }
+          return { ...r, stopIds: newIds };
+        }),
+      );
+    },
+    [],
+  );
 
   const initialRegion: Region = {
     latitude: mapCenter.latitude,
     longitude: mapCenter.longitude,
-    latitudeDelta: 0.02,
-    longitudeDelta: 0.02,
+    latitudeDelta: hasOrgCenter ? 0.04 : 30,
+    longitudeDelta: hasOrgCenter ? 0.04 : 55,
   };
 
   return (
@@ -282,7 +387,6 @@ function StopsTab() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        provider={PROVIDER_GOOGLE}
         initialRegion={initialRegion}
         onPress={handleMapPress}
         onRegionChangeComplete={(r) =>
@@ -299,57 +403,299 @@ function StopsTab() {
           />
         ))}
         {pendingCoords && (
-          <Marker
-            coordinate={pendingCoords}
-            pinColor="orange"
-            title="New stop (tap callout to confirm)"
-          />
+          <Marker coordinate={pendingCoords} pinColor="orange" title="New stop" />
         )}
       </MapView>
 
-      <View style={styles.stopsPanel}>
+      <ScrollView style={styles.stopsPanel} nestedScrollEnabled>
+        {/* --- Stops section --- */}
+        <Text style={styles.sectionLabel}>Stops</Text>
+        <Text style={styles.hint}>Tap the map to fill coordinates, or type them in directly.</Text>
+
+        <View style={styles.addStopForm}>
+          <TextInput
+            style={styles.input}
+            placeholder="Stop name"
+            value={pendingName}
+            onChangeText={setPendingName}
+            placeholderTextColor="#aaa"
+          />
+          <View style={styles.coordRow}>
+            <TextInput
+              style={[styles.input, styles.coordInput]}
+              placeholder="Latitude"
+              value={pendingLat}
+              onChangeText={setPendingLat}
+              keyboardType="numeric"
+              placeholderTextColor="#aaa"
+            />
+            <TextInput
+              style={[styles.input, styles.coordInput]}
+              placeholder="Longitude"
+              value={pendingLng}
+              onChangeText={setPendingLng}
+              keyboardType="numeric"
+              placeholderTextColor="#aaa"
+            />
+          </View>
+          <TouchableOpacity
+            style={[styles.addStopBtn, (!pendingName.trim() || !pendingCoords) && styles.addStopBtnDisabled]}
+            onPress={handleAddStop}
+          >
+            <Icon name="add" size={20} color="#fff" />
+            <Text style={styles.addStopBtnText}>Add Stop</Text>
+          </TouchableOpacity>
+        </View>
+
+        {stops.map((stop) => (
+          <View key={stop.id} style={styles.stopRow}>
+            <Icon name="place" size={18} color={PRIMARY_COLOR} />
+            <Text style={styles.stopName} numberOfLines={1}>{stop.name}</Text>
+            <TouchableOpacity onPress={() => handleDeleteStop(stop.id)}>
+              <Icon name="close" size={18} color="#e53935" />
+            </TouchableOpacity>
+          </View>
+        ))}
+        {stops.length === 0 && <Text style={styles.hint}>No stops yet. Fill the form above and tap Add Stop.</Text>}
+
+        {/* --- Routes section --- */}
+        <View style={styles.routesHeader}>
+          <Text style={styles.sectionLabel}>Routes</Text>
+          <TouchableOpacity onPress={() => setShowRouteForm(true)}>
+            <Icon name="add-circle" size={24} color={PRIMARY_COLOR} />
+          </TouchableOpacity>
+        </View>
         <Text style={styles.hint}>
-          Tap the map to place a new stop. The map center is saved as the default view.
+          A route is an ordered sequence of stops a bus follows. Assign stops to each route below.
         </Text>
 
-        {pendingCoords && (
+        {showRouteForm && (
           <View style={styles.addStopRow}>
             <TextInput
               style={[styles.input, styles.stopNameInput]}
-              placeholder="Stop name"
-              value={pendingName}
-              onChangeText={setPendingName}
+              placeholder="Route name (e.g. Morning Loop)"
+              value={newRouteName}
+              onChangeText={setNewRouteName}
               placeholderTextColor="#aaa"
             />
-            <TouchableOpacity style={styles.addStopBtn} onPress={handleAddStop}>
-              <Icon name="add" size={22} color="#fff" />
+            <TouchableOpacity style={styles.addStopBtn} onPress={handleAddRoute}>
+              <Icon name="check" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
         )}
 
-        <ScrollView style={styles.stopsList} nestedScrollEnabled>
-          {stops.map((stop) => (
-            <View key={stop.id} style={styles.stopRow}>
-              <Icon name="place" size={18} color={PRIMARY_COLOR} />
-              <Text style={styles.stopName} numberOfLines={1}>{stop.name}</Text>
-              <TouchableOpacity onPress={() => handleDeleteStop(stop.id)}>
-                <Icon name="close" size={18} color="#e53935" />
+        {routes.map((route) => {
+          const isExpanded = editingRouteId === route.id;
+          return (
+            <View key={route.id} style={styles.routeCard}>
+              <TouchableOpacity
+                style={styles.routeCardHeader}
+                onPress={() => setEditingRouteId(isExpanded ? null : route.id)}
+              >
+                <Icon name="directions-bus" size={18} color={PRIMARY_COLOR} />
+                <Text style={styles.routeName}>{route.name}</Text>
+                <Text style={styles.routeStopCount}>{route.stopIds.length} stop{route.stopIds.length !== 1 ? 's' : ''}</Text>
+                <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={20} color="#888" />
+                <TouchableOpacity onPress={() => handleDeleteRoute(route.id)} style={styles.routeDeleteBtn}>
+                  <Icon name="delete-outline" size={18} color="#e53935" />
+                </TouchableOpacity>
               </TouchableOpacity>
+
+              {isExpanded && (
+                <View style={styles.routeEditor}>
+                  <Text style={styles.routeEditorLabel}>Stop order (tap to add/remove, arrows to reorder):</Text>
+
+                  {/* Stops in this route, in order */}
+                  {route.stopIds.map((stopId, idx) => {
+                    const stop = stops.find((s) => s.id === stopId);
+                    if (!stop) return null;
+                    return (
+                      <View key={stopId} style={styles.routeStopRow}>
+                        <Text style={styles.routeStopIndex}>{idx + 1}.</Text>
+                        <Text style={styles.routeStopName}>{stop.name}</Text>
+                        <TouchableOpacity onPress={() => handleMoveStop(route.id, stopId, 'up')} disabled={idx === 0}>
+                          <Icon name="arrow-upward" size={16} color={idx === 0 ? '#ccc' : '#555'} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleMoveStop(route.id, stopId, 'down')} disabled={idx === route.stopIds.length - 1}>
+                          <Icon name="arrow-downward" size={16} color={idx === route.stopIds.length - 1 ? '#ccc' : '#555'} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleToggleStopInRoute(route.id, stopId)}>
+                          <Icon name="remove-circle-outline" size={18} color="#e53935" />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+
+                  {/* Stops not yet in this route */}
+                  {stops.filter((s) => !route.stopIds.includes(s.id)).map((stop) => (
+                    <TouchableOpacity
+                      key={stop.id}
+                      style={styles.routeStopAvailable}
+                      onPress={() => handleToggleStopInRoute(route.id, stop.id)}
+                    >
+                      <Icon name="add-circle-outline" size={18} color={PRIMARY_COLOR} />
+                      <Text style={styles.routeStopName}>{stop.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+
+                  {stops.length === 0 && (
+                    <Text style={styles.hint}>Add stops above first.</Text>
+                  )}
+                </View>
+              )}
             </View>
-          ))}
-          {stops.length === 0 && (
-            <Text style={styles.hint}>No stops yet. Tap the map to add some.</Text>
-          )}
-        </ScrollView>
+          );
+        })}
+
+        {routes.length === 0 && !showRouteForm && (
+          <Text style={styles.hint}>No routes yet. Tap + to create one.</Text>
+        )}
 
         <AppButton
-          label={isSaving ? 'Saving…' : 'Save Stops & Map Center'}
-          onPress={handleSaveStops}
+          label={isSaving ? 'Saving…' : 'Save Stops & Routes'}
+          onPress={handleSaveAll}
           disabled={isSaving}
           style={styles.actionButton}
         />
-      </View>
+      </ScrollView>
     </View>
+  );
+}
+
+// ---- Users Tab ----
+
+type OrgMember = {
+  uid: string;
+  email: string;
+  displayName?: string;
+  role: 'student' | 'driver' | 'admin';
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  student: 'Student',
+  driver: 'Driver',
+  admin: 'Admin',
+};
+
+const ROLE_COLORS: Record<string, string> = {
+  student: '#3b82f6',
+  driver: '#f59e0b',
+  admin: PRIMARY_COLOR,
+};
+
+function UsersTab() {
+  const { org } = useOrg();
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadMembers = useCallback(async () => {
+    if (!org) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/admin/orgs/${org.orgId}/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      setMembers(await res.json());
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to load members.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [org]);
+
+  useEffect(() => { loadMembers(); }, [loadMembers]);
+
+  const handleChangeRole = useCallback(
+    (member: OrgMember) => {
+      if (!org) return;
+      Alert.alert(
+        `Change role for ${member.displayName ?? member.email}`,
+        `Current role: ${ROLE_LABELS[member.role]}`,
+        [
+          { text: 'Student', onPress: () => applyRole(member.uid, 'student') },
+          { text: 'Driver', onPress: () => applyRole(member.uid, 'driver') },
+          { text: 'Admin', onPress: () => applyRole(member.uid, 'admin') },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    },
+    [org],
+  );
+
+  const applyRole = useCallback(
+    async (uid: string, role: string) => {
+      if (!org) return;
+      try {
+        const token = await getBearerToken();
+        const res = await fetch(`${SHUTTLER_API_URL}/admin/orgs/${org.orgId}/users/${uid}/role`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ role }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+        setMembers((prev) =>
+          prev.map((m) => (m.uid === uid ? { ...m, role: role as OrgMember['role'] } : m)),
+        );
+      } catch (e: any) {
+        Alert.alert('Error', e?.message ?? 'Could not update role.');
+      }
+    },
+    [org],
+  );
+
+  if (isLoading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>{error}</Text>
+        <AppButton label="Retry" onPress={loadMembers} style={{ marginTop: 12, minWidth: 120 }} />
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.tabContent}>
+      <Text style={styles.hint}>
+        Tap a member's role badge to change it. All members start as Student after registering.
+      </Text>
+      {members.length === 0 && (
+        <Text style={styles.hint}>No members yet. Share your org slug so people can register.</Text>
+      )}
+      {members.map((member) => (
+        <View key={member.uid} style={styles.memberRow}>
+          <View style={styles.memberAvatar}>
+            <Text style={styles.memberAvatarText}>
+              {(member.displayName ?? member.email).charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <View style={styles.memberInfo}>
+            <Text style={styles.memberName} numberOfLines={1}>
+              {member.displayName ?? '—'}
+            </Text>
+            <Text style={styles.memberEmail} numberOfLines={1}>{member.email}</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.roleBadge, { backgroundColor: `${ROLE_COLORS[member.role]}20` }]}
+            onPress={() => handleChangeRole(member)}
+          >
+            <Text style={[styles.roleBadgeText, { color: ROLE_COLORS[member.role] }]}>
+              {ROLE_LABELS[member.role]}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+    </ScrollView>
   );
 }
 
@@ -450,18 +796,23 @@ function BillingTab() {
 // ---- Main Screen ----
 
 export default function AdminOrgSetupScreen() {
+  const navigation = useNavigation();
   const [activeTab, setActiveTab] = useState<Tab>('profile');
 
   const tabs: { key: Tab; icon: string; label: string }[] = [
     { key: 'profile', icon: 'business', label: 'Profile' },
     { key: 'auth', icon: 'lock', label: 'Auth' },
     { key: 'stops', icon: 'place', label: 'Stops' },
+    { key: 'users', icon: 'people', label: 'Users' },
     { key: 'billing', icon: 'credit-card', label: 'Billing' },
   ];
 
   return (
     <ScreenContainer>
       <View style={styles.headerRow}>
+        <TouchableOpacity onPress={() => (navigation as any).goBack()} style={styles.backButton}>
+          <Icon name="arrow-back" size={24} color={PRIMARY_COLOR} />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Organization Setup</Text>
       </View>
 
@@ -489,6 +840,7 @@ export default function AdminOrgSetupScreen() {
         {activeTab === 'profile' && <ProfileTab />}
         {activeTab === 'auth' && <AuthTab />}
         {activeTab === 'stops' && <StopsTab />}
+        {activeTab === 'users' && <UsersTab />}
         {activeTab === 'billing' && <BillingTab />}
       </KeyboardAvoidingView>
     </ScreenContainer>
@@ -497,10 +849,16 @@ export default function AdminOrgSetupScreen() {
 
 const styles = StyleSheet.create({
   headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: spacing.section,
     paddingVertical: spacing.item,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: '#E2E8F0',
+  },
+  backButton: {
+    padding: 4,
+    marginRight: spacing.section,
   },
   headerTitle: {
     fontSize: 20,
@@ -530,6 +888,61 @@ const styles = StyleSheet.create({
   tabBarLabelActive: {
     color: PRIMARY_COLOR,
     fontWeight: '600',
+  },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.section,
+  },
+  errorText: {
+    color: '#e53935',
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  memberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    gap: 10,
+  },
+  memberAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#e8f5e9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberAvatarText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: PRIMARY_COLOR,
+  },
+  memberInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  memberName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111',
+  },
+  memberEmail: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 1,
+  },
+  roleBadge: {
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  roleBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   tabContent: {
     padding: spacing.section,
@@ -625,11 +1038,23 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   map: {
-    height: 260,
+    height: 240,
   },
   stopsPanel: {
     flex: 1,
     padding: spacing.item,
+  },
+  addStopForm: {
+    marginBottom: spacing.item,
+    gap: 8,
+  },
+  coordRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  coordInput: {
+    flex: 1,
+    marginBottom: 0,
   },
   addStopRow: {
     flexDirection: 'row',
@@ -642,16 +1067,22 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   addStopBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     backgroundColor: PRIMARY_COLOR,
     borderRadius: borderRadius.md,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
   },
-  stopsList: {
-    flex: 1,
-    maxHeight: 160,
+  addStopBtnDisabled: {
+    opacity: 0.45,
+  },
+  addStopBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
   stopRow: {
     flexDirection: 'row',
@@ -665,6 +1096,76 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     color: '#222',
+  },
+  // Routes
+  routesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.section,
+  },
+  routeCard: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: borderRadius.md,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  routeCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.item,
+    gap: 6,
+    backgroundColor: '#fafafa',
+  },
+  routeName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#222',
+  },
+  routeStopCount: {
+    fontSize: 12,
+    color: '#888',
+  },
+  routeDeleteBtn: {
+    paddingLeft: 4,
+  },
+  routeEditor: {
+    padding: spacing.item,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  routeEditorLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 8,
+  },
+  routeStopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  routeStopIndex: {
+    fontSize: 13,
+    color: '#999',
+    width: 20,
+  },
+  routeStopName: {
+    flex: 1,
+    fontSize: 14,
+    color: '#222',
+  },
+  routeStopAvailable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    gap: 8,
+    opacity: 0.6,
   },
   // Billing
   statusCard: {

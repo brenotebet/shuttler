@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { type RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification } from 'firebase/auth';
 import * as Linking from 'expo-linking';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import ScreenContainer from '../components/ScreenContainer';
@@ -150,14 +150,35 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? 'Registration failed.');
-      // Account created — sign in immediately
+      // Account created — sign in and send verification email
       await signInWithEmailAndPassword(auth, email.trim(), password);
+      if (auth.currentUser) {
+        await sendEmailVerification(auth.currentUser).catch(() => {});
+      }
     } catch (e: any) {
       showAlert(e?.message ?? 'Registration failed.', 'Sign Up Error');
     } finally {
       setIsSubmitting(false);
     }
   }, [email, password, displayName, orgSlug]);
+
+  const handleForgotPassword = useCallback(async () => {
+    const trimmed = email.trim();
+    if (!trimmed) {
+      showAlert('Enter your email address above, then tap "Forgot password?".', 'Email required');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, trimmed);
+      showAlert(`Password reset email sent to ${trimmed}. Check your inbox.`, 'Email sent');
+    } catch (e: any) {
+      const msg =
+        e?.code === 'auth/user-not-found'
+          ? 'No account found with that email.'
+          : e?.message ?? 'Failed to send reset email.';
+      showAlert(msg, 'Error');
+    }
+  }, [email]);
 
   return (
     <View style={styles.card}>
@@ -220,6 +241,12 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
         style={styles.primaryButton}
         disabled={isSubmitting}
       />
+
+      {mode === 'signin' && (
+        <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotButton}>
+          <Text style={styles.forgotText}>Forgot password?</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -370,6 +397,14 @@ const styles = StyleSheet.create({
   },
   loadingIndicator: {
     marginBottom: spacing.item,
+  },
+  forgotButton: {
+    alignItems: 'center',
+    paddingTop: spacing.item,
+  },
+  forgotText: {
+    color: PRIMARY_COLOR,
+    fontSize: 14,
   },
   unsupportedText: {
     color: '#888',

@@ -6,6 +6,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import OrgSelectorScreen from '../screens/OrgSelectorScreen';
 import AuthScreen from '../screens/AuthScreen';
+import EmailVerificationScreen from '../screens/EmailVerificationScreen';
 import StudentTabs from '../tabs/StudentTabs';
 import DriverTabs from '../tabs/DriverTabs';
 import DriverHistoryScreen from '../screens/DriverHistoryScreen';
@@ -20,6 +21,7 @@ import { PRIMARY_COLOR } from '../src/constants/theme';
 export type RootStackParamList = {
   OrgSelector: undefined;
   Auth: { orgId: string };
+  EmailVerification: undefined;
 
   // Authenticated stacks
   StudentHome: undefined;
@@ -57,16 +59,25 @@ function SubscriptionExpiredScreen() {
 }
 
 export default function StackNavigator() {
-  const { user, role, initializing } = useAuth();
+  const { user, role, initializing, emailVerified } = useAuth();
   const { org, isLoadingOrg } = useOrg();
 
   if (initializing || isLoadingOrg) {
     return <LoadingScreen />;
   }
 
-  // Authenticated but org subscription lapsed
-  if (user && org && !['trialing', 'active'].includes(org.subscriptionStatus)) {
+  // Authenticated but org subscription lapsed (admins can always log in to manage the org)
+  if (user && org && role !== 'admin' && !['trialing', 'active'].includes(org.subscriptionStatus ?? 'trialing')) {
     return <SubscriptionExpiredScreen />;
+  }
+
+  // Email auth: require verification before entering the app
+  if (user && org?.authMethod === 'email' && !emailVerified) {
+    return (
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="EmailVerification" component={EmailVerificationScreen} />
+      </Stack.Navigator>
+    );
   }
 
   return (
@@ -102,7 +113,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
-    backgroundColor: '#fff',
+    backgroundColor: '#F8FAFC',
   },
   expiredTitle: {
     fontSize: 22,

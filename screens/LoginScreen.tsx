@@ -10,6 +10,7 @@ import { showAlert } from '../src/utils/alerts';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
+import { CARD_BACKGROUND } from '../src/constants/theme';
 import { persistSamlHandoffFromUrl, trySamlHandoffLogin } from '../src/auth/samlAuth';
 import { startSamlLogin } from '../src/auth/startSamlLogin';
 import * as Linking from 'expo-linking';
@@ -203,9 +204,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.section,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: CARD_BACKGROUND,
     borderRadius: borderRadius.xl,
     padding: spacing.section * 1.5,
+    borderWidth: 1,
+    borderColor: '#1E1E2E',
     ...cardShadow,
   },
   primaryButton: {

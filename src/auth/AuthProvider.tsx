@@ -1,5 +1,5 @@
 // src/auth/AuthProvider.tsx
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebaseconfig';
@@ -17,6 +17,8 @@ type AuthContextType = {
   role: Role | null;
   orgId: string | null;
   initializing: boolean;
+  emailVerified: boolean;
+  reloadUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -24,6 +26,8 @@ const AuthContext = createContext<AuthContextType>({
   role: null,
   orgId: null,
   initializing: true,
+  emailVerified: false,
+  reloadUser: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -31,10 +35,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [emailVerified, setEmailVerified] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+      setEmailVerified(firebaseUser?.emailVerified ?? false);
 
       if (!firebaseUser) {
         setRole(null);
@@ -69,10 +75,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return unsub;
   }, [org?.orgId]);
 
+  const reloadUser = useCallback(async () => {
+    if (!auth.currentUser) return;
+    await auth.currentUser.reload();
+    setEmailVerified(auth.currentUser.emailVerified);
+  }, []);
+
   const orgId = org?.orgId ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, role, orgId, initializing }}>
+    <AuthContext.Provider value={{ user, role, orgId, initializing, emailVerified, reloadUser }}>
       {children}
     </AuthContext.Provider>
   );

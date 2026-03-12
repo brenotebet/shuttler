@@ -43,3 +43,5 @@ yarn-error.*
 keys
 
 asc-api-key.json
+
+backend/serviceAccount.json

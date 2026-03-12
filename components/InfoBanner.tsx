@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import { PRIMARY_COLOR, CARD_BACKGROUND, TEXT_PRIMARY, TEXT_SECONDARY } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 export type InfoBannerProps = {
@@ -43,7 +43,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#ede9f3',
+    backgroundColor: '#dcfce7',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.item,
@@ -55,11 +55,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 15,
     fontWeight: '600',
-    color: PRIMARY_COLOR,
+    color: TEXT_PRIMARY,
   },
   description: {
     fontSize: 14,
-    color: '#4b5563',
+    color: TEXT_SECONDARY,
     lineHeight: 20,
   },
 });
