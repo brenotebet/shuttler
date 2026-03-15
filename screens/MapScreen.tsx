@@ -58,7 +58,7 @@ import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constan
 import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 
-const STALE_WINDOW_SECONDS = 90;
+const STALE_WINDOW_SECONDS = 180;
 
 function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -164,6 +164,7 @@ export default function MapScreen() {
 
   const STOPS_BOUNDS = useMemo(() => getStopsBounds(stops), [stops]);
   const PADDED_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.3), [STOPS_BOUNDS]);
+  const CLAMP_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.25), [STOPS_BOUNDS]);
   const INITIAL_REGION = useMemo(() => {
     if (org?.mapCenter) {
       return {
@@ -377,9 +378,9 @@ export default function MapScreen() {
 
   const getEdgePadding = () => ({
     top: insets.top + 120,
-    right: 70,
+    right: 95,
     bottom: mapBottomPadding + 80,
-    left: 70,
+    left: 95,
   });
 
   const centerOnUser = async () => {
@@ -402,9 +403,9 @@ export default function MapScreen() {
             latitudeDelta: 0.01,
             longitudeDelta: 0.01,
           },
-          PADDED_BOUNDS,
+          CLAMP_BOUNDS,
         ),
-        500,
+        600,
       );
     } catch (e) {
       console.error('centerOnUser error', e);
@@ -646,6 +647,17 @@ export default function MapScreen() {
         setActiveBusIds(recentIds);
 
         bumpBusTracks();
+
+        // Evict stale buses: write online: false for any bus that dropped out of the visible window
+        Object.keys(busRegions.current).forEach((evictedId) => {
+          if (!recentIds.includes(evictedId)) {
+            void setDoc(
+              doc(db, 'orgs', orgId, 'buses', evictedId),
+              { online: false, updatedAt: serverTimestamp() },
+              { merge: true },
+            );
+          }
+        });
 
         Object.keys(busRegions.current).forEach((key) => {
           if (!recentIds.includes(key)) delete busRegions.current[key];
@@ -1065,9 +1077,9 @@ export default function MapScreen() {
           latitudeDelta: latDelta,
           longitudeDelta: lonDelta,
         },
-        PADDED_BOUNDS,
+        CLAMP_BOUNDS,
       ),
-      650,
+      600,
     );
   };
 
@@ -1268,7 +1280,7 @@ const handleRequest = async (index: number) => {
             setCameraMode('free');
           }
 
-          const clamped = clampToBounds(newRegion, PADDED_BOUNDS);
+          const clamped = clampToBounds(newRegion, CLAMP_BOUNDS);
 
           const needsAdjustment =
             clamped.latitude !== newRegion.latitude ||
@@ -1280,7 +1292,7 @@ const handleRequest = async (index: number) => {
 
           if (needsAdjustment) {
             markProgrammaticMove();
-            mapRef.current?.animateToRegion(clamped, 260);
+            mapRef.current?.animateToRegion(clamped, 600);
           }
         }}
       >

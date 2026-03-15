@@ -26,7 +26,7 @@ import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constan
 import { useOrg, Stop } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 
-const STALE_WINDOW_SECONDS = 90;
+const STALE_WINDOW_SECONDS = 180;
 const ARRIVE_RADIUS_FT = 75;
 const EXIT_RADIUS_FT = 180;
 const DWELL_SECONDS = 30;
@@ -148,6 +148,7 @@ export default function DriverScreen() {
       string,
       {
         arrivalStartMs: number | null;
+        lastOutsideMs: number | null;
         servicedReady: boolean;
         arrivedAtWritten: boolean;
       }
@@ -469,10 +470,11 @@ export default function DriverScreen() {
 
         const state =
           proximityStateRef.current[req.id] ??
-          { arrivalStartMs: null, servicedReady: false, arrivedAtWritten: Boolean(req?.arrivedAt) };
+          { arrivalStartMs: null, lastOutsideMs: null, servicedReady: false, arrivedAtWritten: Boolean(req?.arrivedAt) };
         let nextState = { ...state };
 
         if (withinArrive) {
+          nextState.lastOutsideMs = null;
           if (nextState.arrivalStartMs === null) nextState.arrivalStartMs = nowMs;
           if (!nextState.arrivedAtWritten && !req?.arrivedAt) {
             nextState.arrivedAtWritten = true;
@@ -483,7 +485,12 @@ export default function DriverScreen() {
             nextState.servicedReady = true;
           }
         } else if (nextState.arrivalStartMs !== null) {
-          nextState.arrivalStartMs = null;
+          if (nextState.lastOutsideMs === null) {
+            nextState.lastOutsideMs = nowMs;
+          } else if (nowMs - nextState.lastOutsideMs >= PROXIMITY_POLL_MS * 2) {
+            nextState.arrivalStartMs = null;
+            nextState.lastOutsideMs = null;
+          }
         }
 
         if (beyondExit && nextState.servicedReady) {

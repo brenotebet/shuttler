@@ -19,7 +19,7 @@ export default function DriverHistoryScreen() {
   const { driverId } = useDriver();
   const { orgId } = useAuth();
   const screenWidth = Dimensions.get('window').width;
-  const chartWidth = screenWidth - spacing.screenPadding * 2;
+  const chartWidth = screenWidth - spacing.screenPadding * 2 - spacing.section * 2;
 
   useEffect(() => {
     if (!driverId || !orgId) return;
@@ -148,11 +148,12 @@ export default function DriverHistoryScreen() {
             <View style={styles.metricsCard}>
               <View style={[styles.metricItem, styles.metricItemLeft]}>
                 <Text style={styles.metricLabel}>Total Stops</Text>
-                <Text style={styles.metricValue}>{totalStops}</Text>
+                <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>{totalStops}</Text>
               </View>
+              <View style={styles.metricDivider} />
               <View style={styles.metricItem}>
                 <Text style={styles.metricLabel}>Total Distance</Text>
-                <Text style={styles.metricValue}>{totalDistance.toFixed(2)} km</Text>
+                <Text style={styles.metricValue} numberOfLines={1} adjustsFontSizeToFit>{totalDistance.toFixed(2)} km</Text>
               </View>
             </View>
 
@@ -234,6 +235,11 @@ const styles = StyleSheet.create({
   metricItemLeft: {
     marginRight: spacing.item,
   },
+  metricDivider: {
+    width: 1,
+    backgroundColor: '#e5e7eb',
+    alignSelf: 'stretch',
+  },
   metricLabel: {
     fontSize: 14,
     color: '#4b5563',
@@ -250,6 +256,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.section,
     paddingHorizontal: spacing.section,
     marginBottom: spacing.section,
+    overflow: 'hidden',
     ...cardShadow,
   },
   chartTitle: {
