@@ -9,6 +9,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -111,15 +112,101 @@ function SamlPanel({ orgSlug }: { orgSlug: string }) {
 
 // ---- Email Panel ----
 
+type FieldErrors = Partial<Record<
+  'firstName' | 'lastName' | 'phone' | 'email' | 'password' | 'confirmPassword',
+  string
+>>;
+
+function PasswordInput({
+  value,
+  onChangeText,
+  placeholder,
+  error,
+}: {
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder: string;
+  error?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <>
+      <View style={[styles.passwordRow, error ? styles.inputError : null]}>
+        <TextInput
+          style={styles.passwordInput}
+          placeholder={placeholder}
+          value={value}
+          onChangeText={onChangeText}
+          secureTextEntry={!visible}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholderTextColor="#aaa"
+        />
+        <TouchableOpacity onPress={() => setVisible((v) => !v)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <Icon name={visible ? 'visibility-off' : 'visibility'} size={20} color="#9ca3af" />
+        </TouchableOpacity>
+      </View>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    </>
+  );
+}
+
 function EmailPanel({ orgSlug }: { orgSlug: string }) {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [errors, setErrors] = useState<FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const switchMode = (next: 'signin' | 'signup') => {
+    setMode(next);
+    setErrors({});
+    setFirstName('');
+    setLastName('');
+    setPhone('');
+    setPassword('');
+    setConfirmPassword('');
+  };
+
+  const validate = (): boolean => {
+    const errs: FieldErrors = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const phoneRegex = /^\+?[\d\s\-(). ]{7,15}$/;
+
+    if (!email.trim() || !emailRegex.test(email.trim())) {
+      errs.email = 'Enter a valid email address.';
+    }
+    if (!password) {
+      errs.password = 'Password is required.';
+    } else if (password.length < 8) {
+      errs.password = 'Password must be at least 8 characters.';
+    }
+
+    if (mode === 'signup') {
+      if (!firstName.trim()) errs.firstName = 'First name is required.';
+      if (!lastName.trim()) errs.lastName = 'Last name is required.';
+      if (!phone.trim()) {
+        errs.phone = 'Phone number is required.';
+      } else if (!phoneRegex.test(phone.trim())) {
+        errs.phone = 'Enter a valid phone number.';
+      }
+      if (!confirmPassword) {
+        errs.confirmPassword = 'Please confirm your password.';
+      } else if (password !== confirmPassword) {
+        errs.confirmPassword = 'Passwords do not match.';
+      }
+    }
+
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleSignIn = useCallback(async () => {
-    if (!email.trim() || !password) return;
+    if (!validate()) return;
     setIsSubmitting(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -134,23 +221,26 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password]);
+  }, [email, password, mode]);
 
   const handleSignUp = useCallback(async () => {
-    if (!email.trim() || !password || !displayName.trim()) {
-      showAlert('Please fill in all fields.', 'Missing Info');
-      return;
-    }
+    if (!validate()) return;
     setIsSubmitting(true);
+    const displayName = `${firstName.trim()} ${lastName.trim()}`;
     try {
       const res = await fetch(`${SHUTTLER_API_URL}/auth/email/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orgSlug, email: email.trim(), password, displayName: displayName.trim() }),
+        body: JSON.stringify({
+          orgSlug,
+          email: email.trim(),
+          password,
+          displayName,
+          phone: phone.trim(),
+        }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? 'Registration failed.');
-      // Account created — sign in and send verification email
       await signInWithEmailAndPassword(auth, email.trim(), password);
       if (auth.currentUser) {
         await sendEmailVerification(auth.currentUser).catch(() => {});
@@ -160,7 +250,7 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password, displayName, orgSlug]);
+  }, [email, password, firstName, lastName, phone, confirmPassword, orgSlug, mode]);
 
   const handleForgotPassword = useCallback(async () => {
     const trimmed = email.trim();
@@ -185,32 +275,61 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
       <View style={styles.tabRow}>
         <TouchableOpacity
           style={[styles.tab, mode === 'signin' && styles.tabActive]}
-          onPress={() => setMode('signin')}
+          onPress={() => switchMode('signin')}
         >
           <Text style={[styles.tabText, mode === 'signin' && styles.tabTextActive]}>Sign In</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, mode === 'signup' && styles.tabActive]}
-          onPress={() => setMode('signup')}
+          onPress={() => switchMode('signup')}
         >
           <Text style={[styles.tabText, mode === 'signup' && styles.tabTextActive]}>Create Account</Text>
         </TouchableOpacity>
       </View>
 
       {mode === 'signup' && (
-        <TextInput
-          style={styles.input}
-          placeholder="Full name"
-          value={displayName}
-          onChangeText={setDisplayName}
-          autoCapitalize="words"
-          autoCorrect={false}
-          placeholderTextColor="#aaa"
-        />
+        <>
+          <View style={styles.nameRow}>
+            <View style={styles.nameField}>
+              <TextInput
+                style={[styles.input, errors.firstName ? styles.inputError : null]}
+                placeholder="First name"
+                value={firstName}
+                onChangeText={setFirstName}
+                autoCapitalize="words"
+                autoCorrect={false}
+                placeholderTextColor="#aaa"
+              />
+              {errors.firstName ? <Text style={styles.errorText}>{errors.firstName}</Text> : null}
+            </View>
+            <View style={styles.nameField}>
+              <TextInput
+                style={[styles.input, errors.lastName ? styles.inputError : null]}
+                placeholder="Last name"
+                value={lastName}
+                onChangeText={setLastName}
+                autoCapitalize="words"
+                autoCorrect={false}
+                placeholderTextColor="#aaa"
+              />
+              {errors.lastName ? <Text style={styles.errorText}>{errors.lastName}</Text> : null}
+            </View>
+          </View>
+
+          <TextInput
+            style={[styles.input, errors.phone ? styles.inputError : null]}
+            placeholder="Phone number"
+            value={phone}
+            onChangeText={setPhone}
+            keyboardType="phone-pad"
+            placeholderTextColor="#aaa"
+          />
+          {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
+        </>
       )}
 
       <TextInput
-        style={styles.input}
+        style={[styles.input, errors.email ? styles.inputError : null]}
         placeholder="Email"
         value={email}
         onChangeText={setEmail}
@@ -219,24 +338,26 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
         autoCorrect={false}
         placeholderTextColor="#aaa"
       />
+      {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
 
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
+      <PasswordInput
         value={password}
         onChangeText={setPassword}
-        secureTextEntry
-        placeholderTextColor="#aaa"
+        placeholder="Password"
+        error={errors.password}
       />
 
+      {mode === 'signup' && (
+        <PasswordInput
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          placeholder="Confirm password"
+          error={errors.confirmPassword}
+        />
+      )}
+
       <AppButton
-        label={
-          isSubmitting
-            ? 'Please wait…'
-            : mode === 'signin'
-            ? 'Sign In'
-            : 'Create Account'
-        }
+        label={isSubmitting ? 'Please wait…' : mode === 'signin' ? 'Sign In' : 'Create Account'}
         onPress={mode === 'signin' ? handleSignIn : handleSignUp}
         style={styles.primaryButton}
         disabled={isSubmitting}
@@ -287,25 +408,31 @@ export default function AuthScreen() {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {/* Back to org selector */}
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.replace('OrgSelector')}>
-          <Icon name="arrow-back" size={20} color={PRIMARY_COLOR} />
-          <Text style={styles.backText}>Change organization</Text>
-        </TouchableOpacity>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Back to org selector */}
+          <TouchableOpacity style={styles.backButton} onPress={() => navigation.replace('OrgSelector')}>
+            <Icon name="arrow-back" size={20} color={PRIMARY_COLOR} />
+            <Text style={styles.backText}>Change organization</Text>
+          </TouchableOpacity>
 
-        {/* Org identity */}
-        <View style={styles.orgHeader}>
-          {org.logoUrl ? (
-            <Image source={{ uri: org.logoUrl }} style={styles.orgLogo} resizeMode="contain" />
-          ) : (
-            <View style={[styles.orgLogo, styles.orgLogoPlaceholder]}>
-              <Icon name="directions-bus" size={30} color={PRIMARY_COLOR} />
-            </View>
-          )}
-          <Text style={styles.orgName}>{org.name}</Text>
-        </View>
+          {/* Org identity */}
+          <View style={styles.orgHeader}>
+            {org.logoUrl ? (
+              <Image source={{ uri: org.logoUrl }} style={styles.orgLogo} resizeMode="contain" />
+            ) : (
+              <View style={[styles.orgLogo, styles.orgLogoPlaceholder]}>
+                <Icon name="directions-bus" size={30} color={PRIMARY_COLOR} />
+              </View>
+            )}
+            <Text style={styles.orgName}>{org.name}</Text>
+          </View>
 
-        {renderContent()}
+          {renderContent()}
+        </ScrollView>
       </KeyboardAvoidingView>
     </ScreenContainer>
   );
@@ -313,6 +440,10 @@ export default function AuthScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: spacing.section,
+  },
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -391,6 +522,38 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#111',
     marginBottom: spacing.item / 2,
+  },
+  inputError: {
+    borderColor: '#dc2626',
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#dc2626',
+    marginBottom: spacing.item / 2,
+    marginTop: -2,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 0,
+  },
+  nameField: {
+    flex: 1,
+  },
+  passwordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.item,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 9,
+    marginBottom: spacing.item / 2,
+  },
+  passwordInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#111',
   },
   primaryButton: {
     marginTop: spacing.item / 2,

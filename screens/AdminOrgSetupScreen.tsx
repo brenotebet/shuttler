@@ -797,7 +797,10 @@ function BillingTab() {
 
 export default function AdminOrgSetupScreen() {
   const navigation = useNavigation();
-  const [activeTab, setActiveTab] = useState<Tab>('profile');
+  const { org: setupOrg } = useOrg();
+  const [activeTab, setActiveTab] = useState<Tab>(
+    (setupOrg?.stops?.length ?? 0) === 0 ? 'stops' : 'profile',
+  );
 
   const tabs: { key: Tab; icon: string; label: string }[] = [
     { key: 'profile', icon: 'business', label: 'Profile' },

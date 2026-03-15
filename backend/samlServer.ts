@@ -487,7 +487,7 @@ app.get('/saml/:orgSlug/metadata', async (req: Request, res: Response) => {
 // ---- Email/password registration ----
 
 app.post('/auth/email/register', async (req: Request, res: Response) => {
-  const { orgSlug, email, password, displayName } = req.body;
+  const { orgSlug, email, password, displayName, phone } = req.body;
   if (!orgSlug || !email || !password) {
     return res.status(400).json({ error: 'orgSlug, email and password are required' });
   }
@@ -521,25 +521,37 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     await admin.auth().setCustomUserClaims(user.uid, { orgId });
 
-    await admin.firestore()
-      .collection('orgs').doc(orgId)
-      .collection('users').doc(user.uid)
-      .set({
-        uid: user.uid,
-        orgId,
-        email,
-        displayName: displayName ?? null,
-        role: 'student',
-        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+    try {
+      console.log(`[register] Writing user doc → orgs/${orgId}/users/${user.uid}`);
+      await admin.firestore()
+        .collection('orgs').doc(orgId)
+        .collection('users').doc(user.uid)
+        .set({
+          uid: user.uid,
+          orgId,
+          email,
+          displayName: displayName ?? null,
+          phone: phone ?? null,
+          role: 'student',
+          lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      console.log(`[register] User doc written successfully for uid=${user.uid}`);
+    } catch (firestoreErr: any) {
+      console.error(`[register] Firestore write FAILED for uid=${user.uid} orgId=${orgId}:`, firestoreErr);
+      // Auth user was created — clean up so the email isn't permanently orphaned
+      await admin.auth().deleteUser(user.uid).catch((delErr) =>
+        console.error('[register] Cleanup deleteUser also failed:', delErr),
+      );
+      return res.status(500).json({ error: 'Registration failed: could not save user profile.' });
+    }
 
     return res.json({ uid: user.uid });
   } catch (e: any) {
     if (e?.code === 'auth/email-already-exists') {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
-    console.error('Email register error:', e);
+    console.error('[register] Auth user creation failed:', e);
     return res.status(500).json({ error: 'Registration failed' });
   }
 });

@@ -88,8 +88,16 @@ export default function StackNavigator() {
           <Stack.Screen name="OrgSelector" component={OrgSelectorScreen} />
           <Stack.Screen name="Auth" component={AuthScreen} />
         </>
+      ) : role === 'admin' && (org?.stops?.length ?? 0) === 0 ? (
+        // Admin with no stops yet — send straight to org setup
+        <>
+          <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
+          <Stack.Screen name="DriverHome" component={DriverTabs} />
+          <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
+          <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+        </>
       ) : role === 'driver' || role === 'admin' ? (
-        // Logged in as driver/admin
+        // Logged in as driver/admin with stops configured
         <>
           <Stack.Screen name="DriverHome" component={DriverTabs} />
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />

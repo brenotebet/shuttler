@@ -7,7 +7,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>bogey-bus</string>
+    <string>Shuttler</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -27,15 +27,15 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>bogeybus</string>
-          <string>edu.mckendree.shuttle</string>
+          <string>shuttler</string>
+          <string>com.shuttler.app</string>
         </array>
       </dict>
     </array>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>GMSApiKey</key>
-    <string>AIzaSyBYT2BQOYAfECInFsBtysKvuFUXSnUZoCU</string>
+    <string>AIzaSyADxsc3A8jGl73plj9ZeMDDOtl3tzKSZ8Y</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSRequiresIPhoneOS</key>
@@ -48,11 +48,11 @@
       <true/>
     </dict>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Allow BogeyBus to access your location even when the app is in the background.</string>
+    <string>Allow Shuttler to access your location even when the app is in the background.</string>
     <key>NSLocationAlwaysUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your location</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Allow BogeyBus to access your location while using the app.</string>
+    <string>Allow Shuttler to access your location while using the app.</string>
     <key>RCTNewArchEnabled</key>
     <true/>
     <key>UIBackgroundModes</key>

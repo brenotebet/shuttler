@@ -9,6 +9,7 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { useDriver } from '../drivercontext/DriverContext';
 import { useLocationSharing } from '../location/LocationContext';
 import { useAuth } from '../src/auth/AuthProvider';
+import { useOrg } from '../src/org/OrgContext';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import { clearSamlSession } from '../src/auth/samlAuth';
@@ -23,6 +24,8 @@ export default function DriverMenuScreen() {
   const { logout: clearDriverContext } = useDriver();
   const { stopSharing, isSharing } = useLocationSharing();
   const { role } = useAuth();
+  const { org } = useOrg();
+  const needsSetup = role === 'admin' && (org?.stops?.length ?? 0) === 0;
 
   const handleLogout = () => {
     Alert.alert(
@@ -84,7 +87,11 @@ export default function DriverMenuScreen() {
           <MenuItem
             icon="settings"
             title="Org Setup"
-            description="Manage stops, routes, users and billing"
+            description={
+              needsSetup
+                ? '⚠️ No stops configured — tap to set up your org'
+                : 'Manage stops, routes, users and billing'
+            }
             onPress={() => navigation.navigate('AdminOrgSetup')}
           />
         )}

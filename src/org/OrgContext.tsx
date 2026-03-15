@@ -7,7 +7,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../firebase/firebaseconfig';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../../config';
 
 export type Stop = {
@@ -144,6 +145,11 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOrg(selected);
     await AsyncStorage.setItem(STORAGE_KEY, selected.orgId);
     await writeCachedOrg(selected);
+    // The list endpoint may omit stops/routes. Fetch the full config so that
+    // org.stops is populated before the user finishes registering/signing in.
+    fetchOrgById(selected.orgId).then((full) => {
+      if (full) { setOrg(full); writeCachedOrg(full); }
+    });
   }, []);
 
   const clearOrg = useCallback(async () => {
@@ -163,26 +169,37 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Live Firestore listener — keeps stops, mapCenter, mapBoundingBox fresh
   // without waiting for the 24-hour cache to expire.
+  // We gate the snapshot on auth state so it starts (or restarts) as soon as
+  // the user signs in, rather than silently dying with a permission error when
+  // the org is selected before authentication.
   useEffect(() => {
     if (!org?.orgId) return;
-    const unsub = onSnapshot(
-      doc(db, 'orgs', org.orgId),
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data() as any;
-        setOrg((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            stops: Array.isArray(data.stops) ? data.stops : prev.stops,
-            mapCenter: data.mapCenter ?? prev.mapCenter,
-            mapBoundingBox: data.mapBoundingBox ?? prev.mapBoundingBox,
-          };
-        });
-      },
-      () => {/* silently ignore permission errors on non-member orgs */},
-    );
-    return () => unsub();
+    let snapshotUnsub: (() => void) | null = null;
+    const authUnsub = onAuthStateChanged(auth, (firebaseUser) => {
+      snapshotUnsub?.();
+      snapshotUnsub = null;
+      if (!firebaseUser) return;
+      snapshotUnsub = onSnapshot(
+        doc(db, 'orgs', org.orgId),
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data() as any;
+          setOrg((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              stops: Array.isArray(data.stops) ? data.stops : prev.stops,
+              mapCenter: data.mapCenter ?? prev.mapCenter,
+              mapBoundingBox: data.mapBoundingBox ?? prev.mapBoundingBox,
+            };
+          });
+        },
+      );
+    });
+    return () => {
+      authUnsub();
+      snapshotUnsub?.();
+    };
   }, [org?.orgId]);
 
   return (
