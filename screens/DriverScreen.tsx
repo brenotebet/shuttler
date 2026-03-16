@@ -14,15 +14,18 @@ import {
   serverTimestamp,
   limit,
   getDoc,
+  getDocs,
   writeBatch,
   orderBy,
   runTransaction,
+  increment,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { getPlanLimits } from '../src/constants/planLimits';
 import { useOrg, Stop } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 
@@ -39,6 +42,8 @@ function feetToMeters(feet: number) {
 
 const ARRIVE_RADIUS_M = feetToMeters(ARRIVE_RADIUS_FT);
 const EXIT_RADIUS_M = feetToMeters(EXIT_RADIUS_FT);
+const NEAREST_STOP_RADIUS_FT = 300;
+const NEAREST_STOP_RADIUS_M = feetToMeters(NEAREST_STOP_RADIUS_FT);
 
 function isActiveStopStatus(status: unknown): status is 'pending' | 'accepted' {
   return status === 'pending' || status === 'accepted';
@@ -127,6 +132,7 @@ export default function DriverScreen() {
 
   const [boardingCount, setBoardingCount] = useState(0);
   const [showBoardingCard, setShowBoardingCard] = useState(false);
+  const [totalBoardedSession, setTotalBoardedSession] = useState(0);
   const boardingSlideAnim = useRef(new Animated.Value(0)).current;
   const [boardingCardHeight, setBoardingCardHeight] = useState(220);
 
@@ -162,7 +168,10 @@ export default function DriverScreen() {
 
   const nearestStop = useMemo(() => {
     if (!driverCoords) return null;
-    return getNearestStop(driverCoords.latitude, driverCoords.longitude, orgStops);
+    const stop = getNearestStop(driverCoords.latitude, driverCoords.longitude, orgStops);
+    if (!stop) return null;
+    const dist = getDistanceInMeters(driverCoords.latitude, driverCoords.longitude, stop.latitude, stop.longitude);
+    return dist <= NEAREST_STOP_RADIUS_M ? stop : null;
   }, [driverCoords?.latitude, driverCoords?.longitude, orgStops]);
 
   const nextStop = useMemo(
@@ -547,6 +556,10 @@ export default function DriverScreen() {
     Animated.timing(boardingSlideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   }, [showBoardingCard, boardingSlideAnim]);
 
+  useEffect(() => {
+    if (isSharing) setTotalBoardedSession(0);
+  }, [isSharing]);
+
   // ✅ UPDATED: Load names from /publicUsers instead of /users
   useEffect(() => {
     const missingUids = recentFeed
@@ -591,27 +604,41 @@ export default function DriverScreen() {
       return;
     }
 
-    const nearestStopRequest = activeRequests.find((req) => {
+    const requestsAtStop = activeRequests.filter((req) => {
       const stopId = req?.stop?.id ?? req?.stopId;
       return stopId === nearest.id;
     });
 
     try {
       const batch = writeBatch(db);
+
       const boardingRef = doc(collection(db, 'orgs', orgId, 'boardingCounts'));
       batch.set(boardingRef, {
         driverUid: driverId,
-        stopRequestId: nearestStopRequest?.id ?? null,
-        studentUid: nearestStopRequest?.studentUid ?? null,
         stopId: nearest.id,
         stopName: nearest.name,
         stopLat: nearest.latitude,
         stopLng: nearest.longitude,
         count: boardingCount,
+        completedRequestIds: requestsAtStop.map((r) => r.id),
         createdAt: serverTimestamp(),
       });
 
+      requestsAtStop.forEach((req) => {
+        batch.update(doc(db, 'orgs', orgId, 'stopRequests', req.id), {
+          status: 'completed',
+          completedAt: serverTimestamp(),
+          completedReason: 'driver_boarding_save',
+          driverUid: req?.driverUid ?? req?.driverId ?? driverId,
+        });
+      });
+
+      batch.update(doc(db, 'orgs', orgId, 'buses', driverId), {
+        totalStudentsBoarded: increment(boardingCount),
+      });
+
       await batch.commit();
+      setTotalBoardedSession((prev) => prev + boardingCount);
       showAlert('Boarding count saved!');
       setShowBoardingCard(false);
       setBoardingCount(0);
@@ -628,7 +655,7 @@ export default function DriverScreen() {
   const nextStats = nextStop ? oldestLatestByStopId[nextStop.id] : undefined;
 
   return (
-    <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.root}>
+    <SafeAreaView edges={['left', 'right']} style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.headerTitle}>Driver Dashboard</Text>
         <TouchableOpacity
@@ -641,8 +668,29 @@ export default function DriverScreen() {
             }
             setIsToggling(true);
             try {
-              if (isSharing) await stopSharing();
-              else await startSharing();
+              if (isSharing) {
+                await stopSharing();
+              } else {
+                // Check vehicle limit before going online
+                const limits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
+                if (limits.maxVehicles !== Infinity) {
+                  const busSnap = await getDocs(
+                    query(
+                      collection(db, 'orgs', orgId, 'buses'),
+                      where('online', '==', true),
+                    ),
+                  );
+                  const otherOnline = busSnap.docs.filter((d) => d.id !== driverId).length;
+                  if (otherOnline >= limits.maxVehicles) {
+                    showAlert(
+                      `Your ${limits.label} plan allows up to ${limits.maxVehicles} vehicles online at once. Upgrade to Campus to add more.`,
+                      'Vehicle limit reached',
+                    );
+                    return;
+                  }
+                }
+                await startSharing();
+              }
             } catch (err) {
               console.error(err);
               showAlert('Error toggling location sharing');
@@ -683,19 +731,28 @@ export default function DriverScreen() {
 
         <View style={styles.cardLarge}>
           <Text style={styles.cardTitle}>Current Stop</Text>
-          <Text style={styles.cardMainValue}>{nearestStop?.name ?? 'Waiting for location...'}</Text>
+          <Text style={styles.cardMainValue}>
+            {nearestStop?.name ?? (driverCoords ? 'En route…' : 'Waiting for location...')}
+          </Text>
           <Text style={styles.cardMeta}>Active requests: {nearestStop ? countsByStopId[nearestStop.id] ?? 0 : 0}</Text>
           <Text style={styles.cardMeta}>
             {nearestStats?.oldestMs
               ? `Oldest: ${formatTimeAgo(nearestStats.oldestMs)} • Latest: ${formatTimeAgo(nearestStats.latestMs ?? nearestStats.oldestMs)}`
               : 'Oldest: — • Latest: —'}
           </Text>
+          {isSharing && totalBoardedSession > 0 && (
+            <Text style={styles.cardMeta}>Session total: {totalBoardedSession} students boarded</Text>
+          )}
 
           <TouchableOpacity
-            style={[styles.actionButton, !isSharing && styles.actionButtonDisabled]}
+            style={[styles.actionButton, (!isSharing || !nearestStop) && styles.actionButtonDisabled]}
             onPress={() => {
               if (!isSharing) {
                 showAlert('Turn on location sharing before adding students.', 'Location required');
+                return;
+              }
+              if (!nearestStop) {
+                showAlert('You must be within 300 ft of a stop to add students.', 'Not at a stop');
                 return;
               }
               setShowBoardingCard(true);

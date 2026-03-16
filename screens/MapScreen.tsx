@@ -634,7 +634,7 @@ export default function MapScreen() {
               .timing({
                 latitude,
                 longitude,
-                duration: 2900,
+                duration: 1800,
                 useNativeDriver: false,
               } as any)
               .start();
@@ -1207,7 +1207,7 @@ const handleRequest = async (index: number) => {
   const fabBottom = insets.bottom + 18;
 
   return (
-    <SafeAreaView edges={['left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
+    <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {!rideActive && !selectedBusId && (
         <TouchableOpacity
           style={[styles.searchContainer, { top: topOverlay }]}

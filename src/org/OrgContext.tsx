@@ -42,6 +42,7 @@ export type OrgConfig = {
     sw: { latitude: number; longitude: number };
   };
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
+  subscriptionPlan?: string;
 };
 
 type OrgContextType = {
@@ -189,8 +190,11 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return {
               ...prev,
               stops: Array.isArray(data.stops) ? data.stops : prev.stops,
+              routes: Array.isArray(data.routes) ? data.routes : prev.routes,
               mapCenter: data.mapCenter ?? prev.mapCenter,
               mapBoundingBox: data.mapBoundingBox ?? prev.mapBoundingBox,
+              subscriptionStatus: data.subscriptionStatus ?? prev.subscriptionStatus,
+              subscriptionPlan: data.subscriptionPlan ?? prev.subscriptionPlan,
             };
           });
         },

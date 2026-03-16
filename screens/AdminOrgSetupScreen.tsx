@@ -25,6 +25,7 @@ import { useOrg, Stop, Route } from '../src/org/OrgContext';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
+import { getPlanLimits, vehicleLimitText, routeLimitText } from '../src/constants/planLimits';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -233,6 +234,7 @@ function calcBoundsFromStops(stops: Stop[]) {
 
 function StopsTab() {
   const { org, refreshOrg } = useOrg();
+  const planLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
   const mapRef = useRef<MapView>(null);
   const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
   const [routes, setRoutes] = useState<Route[]>(org?.routes ?? []);
@@ -324,13 +326,20 @@ function StopsTab() {
   // Route helpers
   const handleAddRoute = useCallback(() => {
     if (!newRouteName.trim()) return;
+    if (routes.length >= planLimits.maxRoutes) {
+      Alert.alert(
+        'Route limit reached',
+        `Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}. Upgrade to Campus for unlimited routes.`,
+      );
+      return;
+    }
     setRoutes((prev) => [
       ...prev,
       { id: `route_${Date.now()}`, name: newRouteName.trim(), stopIds: [] },
     ]);
     setNewRouteName('');
     setShowRouteForm(false);
-  }, [newRouteName]);
+  }, [newRouteName, routes.length, planLimits]);
 
   const handleDeleteRoute = useCallback((routeId: string) => {
     Alert.alert('Delete route', 'Remove this route?', [
@@ -461,8 +470,26 @@ function StopsTab() {
         {/* --- Routes section --- */}
         <View style={styles.routesHeader}>
           <Text style={styles.sectionLabel}>Routes</Text>
-          <TouchableOpacity onPress={() => setShowRouteForm(true)}>
-            <Icon name="add-circle" size={24} color={PRIMARY_COLOR} />
+          <Text style={styles.planLimitBadge}>
+            {routes.length}/{planLimits.maxRoutes === Infinity ? '∞' : planLimits.maxRoutes}
+          </Text>
+          <TouchableOpacity
+            onPress={() => {
+              if (routes.length >= planLimits.maxRoutes) {
+                Alert.alert(
+                  'Route limit reached',
+                  `Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}. Upgrade to Campus for unlimited routes.`,
+                );
+                return;
+              }
+              setShowRouteForm(true);
+            }}
+          >
+            <Icon
+              name="add-circle"
+              size={24}
+              color={routes.length >= planLimits.maxRoutes ? '#ccc' : PRIMARY_COLOR}
+            />
           </TouchableOpacity>
         </View>
         <Text style={styles.hint}>
@@ -702,7 +729,7 @@ function UsersTab() {
 // ---- Billing Tab ----
 
 function BillingTab() {
-  const { org } = useOrg();
+  const { org, refreshOrg } = useOrg();
   const [isLoading, setIsLoading] = useState(false);
 
   const openCheckout = useCallback(
@@ -718,14 +745,17 @@ function BillingTab() {
         });
         const { url, error } = await res.json();
         if (error) throw new Error(error);
-        await WebBrowser.openBrowserAsync(url);
+        await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+        // Give the webhook a moment to process, then pull latest subscription state
+        await new Promise((r) => setTimeout(r, 2000));
+        await refreshOrg();
       } catch (e: any) {
         Alert.alert('Error', e?.message ?? 'Failed to open billing.');
       } finally {
         setIsLoading(false);
       }
     },
-    [org],
+    [org, refreshOrg],
   );
 
   const openPortal = useCallback(async () => {
@@ -740,48 +770,106 @@ function BillingTab() {
       });
       const { url, error } = await res.json();
       if (error) throw new Error(error);
-      await WebBrowser.openBrowserAsync(url);
+      await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      await new Promise((r) => setTimeout(r, 2000));
+      await refreshOrg();
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Failed to open billing portal.');
     } finally {
       setIsLoading(false);
     }
-  }, [org]);
+  }, [org, refreshOrg]);
 
-  const statusColor =
-    org?.subscriptionStatus === 'active' || org?.subscriptionStatus === 'trialing'
-      ? '#2e7d32'
-      : '#e53935';
+  const currentLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
+  const isActive = org?.subscriptionStatus === 'active';
+  const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
+  const statusColor = isActive || isTrialing ? '#2e7d32' : '#e53935';
+
+  const PLANS = [
+    {
+      key: 'starter' as const,
+      label: 'Starter',
+      price: '$149/mo',
+      desc: 'Up to 3 vehicles · 1 route',
+    },
+    {
+      key: 'campus' as const,
+      label: 'Campus',
+      price: '$299/mo',
+      desc: 'Up to 8 vehicles · Unlimited routes',
+      popular: true,
+    },
+  ];
 
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
+      {/* Current plan card */}
       <View style={styles.statusCard}>
-        <Text style={styles.statusLabel}>Current Status</Text>
-        <Text style={[styles.statusValue, { color: statusColor }]}>
-          {org?.subscriptionStatus ?? '—'}
-        </Text>
-        <Text style={styles.statusPlan}>Plan: {org?.subscriptionPlan ?? '—'}</Text>
-      </View>
-
-      {['starter', 'professional'].map((plan) => (
-        <View key={plan} style={styles.planCard}>
-          <View style={styles.planInfo}>
-            <Text style={styles.planName}>{plan === 'starter' ? 'Starter' : 'Professional'}</Text>
-            <Text style={styles.planPrice}>{plan === 'starter' ? '$99/mo' : '$249/mo'}</Text>
-            <Text style={styles.planDesc}>
-              {plan === 'starter' ? 'Up to 3 drivers, 10 stops' : 'Up to 10 drivers, 30 stops'}
+        <View style={styles.statusRow}>
+          <View>
+            <Text style={styles.statusLabel}>Current Plan</Text>
+            <Text style={styles.statusPlanName}>{currentLimits.label}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
+            <Text style={[styles.statusBadgeText, { color: statusColor }]}>
+              {isTrialing ? 'Trial' : org?.subscriptionStatus ?? '—'}
             </Text>
           </View>
-          <AppButton
-            label={isLoading ? '…' : 'Subscribe'}
-            onPress={() => openCheckout(plan)}
-            disabled={isLoading}
-            style={styles.planButton}
-          />
         </View>
-      ))}
+        <View style={styles.statusLimitsRow}>
+          <Text style={styles.statusLimitItem}>
+            🚌 {vehicleLimitText(currentLimits)}
+          </Text>
+          <Text style={styles.statusLimitItem}>
+            🗺 {routeLimitText(currentLimits)}
+          </Text>
+        </View>
+        {isTrialing && (
+          <Text style={styles.trialNote}>
+            You're on a free trial — same limits as Starter. Subscribe to keep your service running.
+          </Text>
+        )}
+      </View>
 
-      {org?.subscriptionStatus && org.subscriptionStatus !== 'trialing' && (
+      <Text style={styles.sectionLabel}>Available Plans</Text>
+
+      {PLANS.map((plan) => {
+        const isCurrent = org?.subscriptionPlan === plan.key && isActive;
+        return (
+          <View key={plan.key} style={[styles.planCard, isCurrent && styles.planCardActive]}>
+            <View style={styles.planInfo}>
+              <View style={styles.planNameRow}>
+                <Text style={styles.planName}>{plan.label}</Text>
+                {plan.popular && <View style={styles.popularBadge}><Text style={styles.popularBadgeText}>Most Popular</Text></View>}
+                {isCurrent && <View style={styles.currentBadge}><Text style={styles.currentBadgeText}>Current</Text></View>}
+              </View>
+              <Text style={styles.planPrice}>{plan.price}</Text>
+              <Text style={styles.planDesc}>{plan.desc}</Text>
+            </View>
+            <AppButton
+              label={isCurrent ? 'Active' : (isLoading ? '…' : 'Subscribe')}
+              onPress={() => !isCurrent && openCheckout(plan.key)}
+              disabled={isLoading || isCurrent}
+              style={styles.planButton}
+            />
+          </View>
+        );
+      })}
+
+      <View style={styles.planCard}>
+        <View style={styles.planInfo}>
+          <Text style={styles.planName}>Enterprise</Text>
+          <Text style={styles.planPrice}>Custom pricing</Text>
+          <Text style={styles.planDesc}>Unlimited vehicles · SSO · SLA · Custom branding</Text>
+        </View>
+        <AppButton
+          label="Contact us"
+          onPress={() => WebBrowser.openBrowserAsync('https://shuttler.net')}
+          style={styles.planButton}
+        />
+      </View>
+
+      {isActive && (
         <AppButton
           label={isLoading ? '…' : 'Manage Billing'}
           onPress={openPortal}
@@ -1107,6 +1195,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: spacing.section,
   },
+  planLimitBadge: {
+    fontSize: 12,
+    color: '#888',
+    marginLeft: 'auto' as any,
+    marginRight: 8,
+  },
   routeCard: {
     borderWidth: 1,
     borderColor: '#e0e0e0',
@@ -1174,25 +1268,50 @@ const styles = StyleSheet.create({
   statusCard: {
     backgroundColor: '#fff',
     borderRadius: borderRadius.xl,
-    padding: spacing.section,
+    padding: spacing.section + 4,
     ...cardShadow,
     marginBottom: spacing.section,
-    alignItems: 'center',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: spacing.item,
   },
   statusLabel: {
     fontSize: 12,
     color: '#888',
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  statusValue: {
+  statusPlanName: {
     fontSize: 22,
     fontWeight: '700',
+    color: '#111',
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
     textTransform: 'capitalize',
   },
-  statusPlan: {
+  statusLimitsRow: {
+    flexDirection: 'row',
+    gap: spacing.section,
+    marginBottom: 4,
+  },
+  statusLimitItem: {
     fontSize: 13,
-    color: '#666',
-    marginTop: 4,
+    color: '#444',
+  },
+  trialNote: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: spacing.item,
+    lineHeight: 17,
   },
   planCard: {
     backgroundColor: '#fff',
@@ -1204,13 +1323,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.item,
   },
+  planCardActive: {
+    borderWidth: 2,
+    borderColor: PRIMARY_COLOR,
+  },
   planInfo: {
     flex: 1,
+  },
+  planNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
   },
   planName: {
     fontSize: 16,
     fontWeight: '700',
     color: '#111',
+  },
+  popularBadge: {
+    backgroundColor: PRIMARY_COLOR + '20',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  popularBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: PRIMARY_COLOR,
+  },
+  currentBadge: {
+    backgroundColor: '#d1fae5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  currentBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#065f46',
   },
   planPrice: {
     fontSize: 14,

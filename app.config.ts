@@ -66,5 +66,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     ['expo-notifications'],
     ['expo-location'],
+    ["@stripe/stripe-react-native", { merchantIdentifier: "merchant.com.shuttler.app" }]
   ],
 });

@@ -19,6 +19,7 @@ import {
 import { type RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { signInWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification } from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import * as Linking from 'expo-linking';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import ScreenContainer from '../components/ScreenContainer';
@@ -28,7 +29,7 @@ import { useOrg } from '../src/org/OrgContext';
 import { persistSamlHandoffFromUrl, trySamlHandoffLogin } from '../src/auth/samlAuth';
 import { startSamlLogin } from '../src/auth/startSamlLogin';
 import { showAlert } from '../src/utils/alerts';
-import { auth } from '../firebase/firebaseconfig';
+import { auth, db } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
@@ -151,7 +152,7 @@ function PasswordInput({
   );
 }
 
-function EmailPanel({ orgSlug }: { orgSlug: string }) {
+function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -209,7 +210,23 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
     if (!validate()) return;
     setIsSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+      // Ensure a user doc exists in orgs/{orgId}/users — accounts created outside
+      // the registration flow (Firebase Console, old app versions, etc.) won't have one.
+      const userRef = doc(db, 'orgs', orgId, 'users', cred.user.uid);
+      const snap = await getDoc(userRef);
+      if (!snap.exists()) {
+        await setDoc(userRef, {
+          uid: cred.user.uid,
+          email: cred.user.email ?? null,
+          displayName: cred.user.displayName ?? cred.user.email?.split('@')[0] ?? null,
+          role: 'student',
+          lastLoginAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
+      }
     } catch (e: any) {
       const msg =
         e?.code === 'auth/invalid-credential' || e?.code === 'auth/wrong-password'
@@ -221,7 +238,7 @@ function EmailPanel({ orgSlug }: { orgSlug: string }) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password, mode]);
+  }, [email, password, orgId, mode]);
 
   const handleSignUp = useCallback(async () => {
     if (!validate()) return;
@@ -390,7 +407,7 @@ export default function AuthScreen() {
       case 'saml':
         return <SamlPanel orgSlug={org.slug} />;
       case 'email':
-        return <EmailPanel orgSlug={org.slug} />;
+        return <EmailPanel orgSlug={org.slug} orgId={org.orgId} />;
       default:
         return (
           <View style={styles.card}>

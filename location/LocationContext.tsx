@@ -29,7 +29,7 @@ const LocationContext = createContext<LocationContextType>({
   stopSharing: async () => {},
 });
 
-const WRITE_MIN_INTERVAL_MS = 4000;
+const WRITE_MIN_INTERVAL_MS = 2000;
 const WRITE_MIN_DISTANCE_M = 8;
 
 // Ignore GPS readings with accuracy worse than this (meters)

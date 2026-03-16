@@ -107,7 +107,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '20
 
 const PLAN_PRICE_IDS: Record<string, string> = {
   starter: process.env.STRIPE_PRICE_STARTER || '',
-  professional: process.env.STRIPE_PRICE_PROFESSIONAL || '',
+  campus: process.env.STRIPE_PRICE_CAMPUS || '',
   enterprise: process.env.STRIPE_PRICE_ENTERPRISE || '',
 };
 
@@ -665,7 +665,8 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
     const org = orgDoc.data()!;
 
-    if (!(org.adminUids ?? []).includes(uid)) {
+    const userDoc = await admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid).get();
+    if (!userDoc.exists || userDoc.data()!.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized' });
     }
 
@@ -686,6 +687,7 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
       success_url: `${returnUrl}?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: returnUrl,
       metadata: { orgId, plan },
+      subscription_data: { metadata: { orgId, plan } },
     });
 
     return res.json({ url: session.url });
@@ -704,7 +706,8 @@ app.post('/billing/create-portal-session', requireAuth, async (req: Request, res
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
     const org = orgDoc.data()!;
 
-    if (!(org.adminUids ?? []).includes(uid)) {
+    const userDoc2 = await admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid).get();
+    if (!userDoc2.exists || userDoc2.data()!.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized' });
     }
 
@@ -739,39 +742,56 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     return res.status(400).send(`Webhook Error: ${err}`);
   }
 
-  const subscription = event.data.object as Stripe.Subscription;
-  const orgId = subscription.metadata?.orgId;
-  if (!orgId) {
-    console.warn('Stripe webhook: no orgId in subscription metadata');
+  const subscriptionEventTypes = [
+    'customer.subscription.created',
+    'customer.subscription.updated',
+    'customer.subscription.deleted',
+  ];
+  const invoiceEventTypes = ['invoice.payment_failed'];
+  const handledTypes = [...subscriptionEventTypes, ...invoiceEventTypes];
+
+  if (!handledTypes.includes(event.type)) {
     return res.json({ received: true });
   }
 
   try {
-    switch (event.type) {
-      case 'customer.subscription.created':
-      case 'customer.subscription.updated':
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          subscriptionStatus: subscription.status,
-          stripeSubscriptionId: subscription.id,
-          subscriptionPlan: subscription.metadata?.plan ?? 'starter',
-          currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        break;
+    if (subscriptionEventTypes.includes(event.type)) {
+      const subscription = event.data.object as Stripe.Subscription;
+      const orgId = subscription.metadata?.orgId;
+      if (!orgId) {
+        console.warn(`Stripe webhook: no orgId in subscription metadata (event: ${event.type}, sub: ${subscription.id})`);
+        return res.json({ received: true });
+      }
 
-      case 'customer.subscription.deleted':
+      if (event.type === 'customer.subscription.deleted') {
         await admin.firestore().collection('orgs').doc(orgId).update({
           subscriptionStatus: 'canceled',
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        break;
-
-      case 'invoice.payment_failed':
+      } else {
         await admin.firestore().collection('orgs').doc(orgId).update({
-          subscriptionStatus: 'past_due',
+          subscriptionStatus: subscription.status,
+          stripeSubscriptionId: subscription.id,
+          subscriptionPlan: subscription.metadata?.plan ?? 'starter',
+          currentPeriodEnd: (subscription as any).current_period_end
+            ? new Date((subscription as any).current_period_end * 1000)
+            : null,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        break;
+      }
+    } else if (event.type === 'invoice.payment_failed') {
+      const invoice = event.data.object as Stripe.Invoice;
+      const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+      if (!subId) return res.json({ received: true });
+
+      const sub = await stripe.subscriptions.retrieve(subId);
+      const orgId = sub.metadata?.orgId;
+      if (!orgId) return res.json({ received: true });
+
+      await admin.firestore().collection('orgs').doc(orgId).update({
+        subscriptionStatus: 'past_due',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     }
   } catch (e) {
     console.error('Stripe webhook handler error:', e);
