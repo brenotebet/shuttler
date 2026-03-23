@@ -53,6 +53,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ---------- Org applications ----------
+    // Created by POST /orgs/create (backend admin SDK). Internal review only.
+    // No client should ever read or write these directly.
+    match /orgApplications/{orgId} {
+      allow read, write: if false;
+    }
+
     // ---------- Org document ----------
     // Any member can read their org doc (stops, mapCenter, subscriptionStatus, authMethod).
     // Admins may update a limited set of fields (stops, map, branding, auth).

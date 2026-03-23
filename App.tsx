@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, Platform, ScrollView } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import StackNavigator from './navigation/StackNavigator';
 import { LocationProvider } from './location/LocationContext';
@@ -10,23 +10,46 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/auth/AuthProvider';
 import { OrgProvider } from './src/org/OrgContext';
 import { StripeProvider } from '@stripe/stripe-react-native';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from './firebase/firebaseconfig';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
 > {
-  state = { error: null };
+  state: { error: Error | null } = { error: null };
   static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    addDoc(collection(db, 'crashes'), {
+      message: error.message,
+      stack: (error.stack ?? '').slice(0, 2000),
+      componentStack: (info.componentStack ?? '').slice(0, 2000),
+      platform: Platform.OS,
+      appVersion: Constants.expoConfig?.version ?? null,
+      timestamp: serverTimestamp(),
+    }).catch(() => {
+      console.error('[crash]', error.message, error.stack);
+    });
+  }
   render() {
-    if (this.state.error) {
-      return (
-        <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
-          <Text style={{ color: 'red', fontWeight: 'bold' }}>Startup error:</Text>
-          <Text selectable>{String(this.state.error)}</Text>
-        </View>
-      );
-    }
-    return this.props.children;
+    if (!this.state.error) return this.props.children;
+    return (
+      <View style={{ flex: 1, backgroundColor: '#fff', padding: 32, justifyContent: 'center' }}>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: '#DC2626', marginBottom: 8 }}>
+          Something went wrong
+        </Text>
+        <Text style={{ fontSize: 14, color: '#555', marginBottom: 16 }}>
+          The app ran into an unexpected error. Please restart.
+        </Text>
+        <ScrollView style={{ maxHeight: 300, backgroundColor: '#f3f4f6', borderRadius: 8, padding: 12 }}>
+          <Text selectable style={{ fontFamily: 'Menlo', fontSize: 11, color: '#111' }}>
+            {this.state.error?.message}
+            {'\n\n'}
+            {this.state.error?.stack}
+          </Text>
+        </ScrollView>
+      </View>
+    );
   }
 }
 

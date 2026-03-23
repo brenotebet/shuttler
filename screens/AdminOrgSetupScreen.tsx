@@ -674,6 +674,37 @@ function UsersTab() {
     [org],
   );
 
+  const handleRemoveUser = useCallback(
+    (member: OrgMember) => {
+      if (!org) return;
+      Alert.alert(
+        'Remove member',
+        `Remove ${member.displayName ?? member.email} from ${org.name}? They will lose access immediately.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const token = await getBearerToken();
+                const res = await fetch(
+                  `${SHUTTLER_API_URL}/admin/orgs/${org.orgId}/users/${member.uid}`,
+                  { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+                );
+                if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
+                setMembers((prev) => prev.filter((m) => m.uid !== member.uid));
+              } catch (e: any) {
+                Alert.alert('Error', e?.message ?? 'Could not remove user.');
+              }
+            },
+          },
+        ],
+      );
+    },
+    [org],
+  );
+
   if (isLoading) {
     return (
       <View style={styles.centered}>
@@ -719,6 +750,9 @@ function UsersTab() {
             <Text style={[styles.roleBadgeText, { color: ROLE_COLORS[member.role] }]}>
               {ROLE_LABELS[member.role]}
             </Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => handleRemoveUser(member)} style={styles.removeUserBtn}>
+            <Icon name="person-remove" size={18} color="#e53935" />
           </TouchableOpacity>
         </View>
       ))}
@@ -784,6 +818,7 @@ function BillingTab() {
   const isActive = org?.subscriptionStatus === 'active';
   const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
   const statusColor = isActive || isTrialing ? '#2e7d32' : '#e53935';
+  const isApproved = org?.approved === true;
 
   const PLANS = [
     {
@@ -831,6 +866,19 @@ function BillingTab() {
         )}
       </View>
 
+      {!isApproved && (
+        <View style={styles.pendingReviewBox}>
+          <Icon name="hourglass-empty" size={22} color="#f59e0b" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pendingReviewTitle}>Account pending review</Text>
+            <Text style={styles.pendingReviewBody}>
+              Our team will review your application within 1 business day. Paid plans will unlock
+              once approved — your trial is fully functional in the meantime.
+            </Text>
+          </View>
+        </View>
+      )}
+
       <Text style={styles.sectionLabel}>Available Plans</Text>
 
       {PLANS.map((plan) => {
@@ -847,9 +895,9 @@ function BillingTab() {
               <Text style={styles.planDesc}>{plan.desc}</Text>
             </View>
             <AppButton
-              label={isCurrent ? 'Active' : (isLoading ? '…' : 'Subscribe')}
-              onPress={() => !isCurrent && openCheckout(plan.key)}
-              disabled={isLoading || isCurrent}
+              label={isCurrent ? 'Active' : (!isApproved ? 'Pending' : (isLoading ? '…' : 'Subscribe'))}
+              onPress={() => !isCurrent && isApproved && openCheckout(plan.key)}
+              disabled={isLoading || isCurrent || !isApproved}
               style={styles.planButton}
             />
           </View>
@@ -980,6 +1028,28 @@ const styles = StyleSheet.create({
     color: PRIMARY_COLOR,
     fontWeight: '600',
   },
+  pendingReviewBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: '#fffbeb',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    padding: 14,
+    marginBottom: spacing.section,
+  },
+  pendingReviewTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#92400e',
+    marginBottom: 3,
+  },
+  pendingReviewBody: {
+    fontSize: 13,
+    color: '#78350f',
+    lineHeight: 18,
+  },
   centered: {
     flex: 1,
     alignItems: 'center',
@@ -1015,6 +1085,10 @@ const styles = StyleSheet.create({
   memberInfo: {
     flex: 1,
     minWidth: 0,
+  },
+  removeUserBtn: {
+    padding: 4,
+    marginLeft: 4,
   },
   memberName: {
     fontSize: 14,

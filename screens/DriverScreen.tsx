@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator } from 'react-native';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import { useLocationSharing } from '../location/LocationContext';
 import { useDriver } from '../drivercontext/DriverContext';
 import {
@@ -163,6 +164,7 @@ export default function DriverScreen() {
   const arrivalWritesInFlightRef = useRef<Set<string>>(new Set());
   const completionWritesInFlightRef = useRef<Set<string>>(new Set());
   const expiryWritesInFlightRef = useRef<Set<string>>(new Set());
+  const seenRequestIdsRef = useRef<Set<string>>(new Set());
 
   const driverCoords = driverId ? (busLocationsRef.current[driverId] ?? null) : null;
 
@@ -256,8 +258,6 @@ export default function DriverScreen() {
       unsubBus = onSnapshot(
         collection(db, 'orgs', orgId, 'buses'),
         (snapshot) => {
-          if (snapshot.metadata.hasPendingWrites) return;
-
           const buses = snapshot.docs
             .map((docSnap) => {
               const data: any = docSnap.data();
@@ -559,6 +559,25 @@ export default function DriverScreen() {
   useEffect(() => {
     if (isSharing) setTotalBoardedSession(0);
   }, [isSharing]);
+
+  useEffect(() => {
+    if (!isSharing) return;
+    const pending = requests.filter((r) => r.status === 'pending' && !isExpiredRequest(r));
+    const newOnes = pending.filter((r) => !seenRequestIdsRef.current.has(r.id));
+    if (newOnes.length > 0) {
+      const stopName = newOnes[0].stop?.name ?? 'a stop';
+      const body =
+        newOnes.length === 1
+          ? `New request at ${stopName}`
+          : `${newOnes.length} new stop requests`;
+      Notifications.scheduleNotificationAsync({
+        content: { title: 'Shuttler', body, sound: true },
+        trigger: null,
+      });
+    }
+    pending.forEach((r) => seenRequestIdsRef.current.add(r.id));
+    requests.forEach((r) => seenRequestIdsRef.current.add(r.id));
+  }, [requests, isSharing]);
 
   // ✅ UPDATED: Load names from /publicUsers instead of /users
   useEffect(() => {

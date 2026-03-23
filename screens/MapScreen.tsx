@@ -20,6 +20,7 @@ import MapView, {
   MarkerAnimated,
   AnimatedRegion,
   Polyline,
+  Polygon,
   Region,
   Marker,
 } from 'react-native-maps';
@@ -136,6 +137,56 @@ function clampToBounds(r: Region, b: Bounds): Region {
   };
 }
 
+// Jarvis march (gift-wrapping) convex hull over lat/lon points
+function convexHull(pts: { latitude: number; longitude: number }[]) {
+  const n = pts.length;
+  if (n < 3) return [...pts];
+
+  // Start from the westernmost (lowest longitude) point
+  let start = 0;
+  for (let i = 1; i < n; i++) {
+    if (pts[i].longitude < pts[start].longitude) start = i;
+  }
+
+  const hull: { latitude: number; longitude: number }[] = [];
+  let p = start;
+  do {
+    hull.push(pts[p]);
+    let q = (p + 1) % n;
+    for (let i = 0; i < n; i++) {
+      // Negative cross product → pts[i] is more counter-clockwise than pts[q]
+      const cross =
+        (pts[q].longitude - pts[p].longitude) * (pts[i].latitude - pts[p].latitude) -
+        (pts[q].latitude - pts[p].latitude) * (pts[i].longitude - pts[p].longitude);
+      if (cross < 0) q = i;
+    }
+    p = q;
+  } while (p !== start && hull.length <= n);
+
+  return hull;
+}
+
+// Expand each hull point outward from the centroid by padMeters
+function expandHull(
+  hull: { latitude: number; longitude: number }[],
+  padMeters = 180,
+) {
+  if (hull.length === 0) return hull;
+  const cx = hull.reduce((s, p) => s + p.latitude, 0) / hull.length;
+  const cy = hull.reduce((s, p) => s + p.longitude, 0) / hull.length;
+  const latPad = padMeters / 111000;
+  const lonPad = padMeters / (111000 * Math.cos((cx * Math.PI) / 180));
+  return hull.map((p) => {
+    const dlat = p.latitude - cx;
+    const dlon = p.longitude - cy;
+    const len = Math.sqrt(dlat * dlat + dlon * dlon) || 1e-10;
+    return {
+      latitude: p.latitude + (dlat / len) * latPad,
+      longitude: p.longitude + (dlon / len) * lonPad,
+    };
+  });
+}
+
 type CameraMode = 'free' | 'followUser' | 'overview';
 
 type BusPopup = {
@@ -165,6 +216,7 @@ export default function MapScreen() {
   const STOPS_BOUNDS = useMemo(() => getStopsBounds(stops), [stops]);
   const PADDED_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.3), [STOPS_BOUNDS]);
   const CLAMP_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.25), [STOPS_BOUNDS]);
+  const campusHull = useMemo(() => expandHull(convexHull(stops)), [stops]);
   const INITIAL_REGION = useMemo(() => {
     if (org?.mapCenter) {
       return {
@@ -214,6 +266,7 @@ export default function MapScreen() {
   const [driverFirstNames, setDriverFirstNames] = useState<Record<string, string>>({});
 
   const mapRef = useRef<MapView | null>(null);
+  const regionRef = useRef<Region | null>(null);
 
   const notifiedRef = useRef(false);
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
@@ -396,15 +449,12 @@ export default function MapScreen() {
       markProgrammaticMove();
       setCameraMode('followUser');
       mapRef.current?.animateToRegion(
-        clampToBounds(
-          {
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          },
-          CLAMP_BOUNDS,
-        ),
+        {
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        },
         600,
       );
     } catch (e) {
@@ -419,9 +469,6 @@ export default function MapScreen() {
 
     const points = stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
     mapRef.current?.fitToCoordinates(points, { edgePadding: getEdgePadding(), animated: true });
-
-    const r = INITIAL_REGION;
-    setRegion(r);
   };
 
   const fitActiveRide = () => {
@@ -1065,8 +1112,8 @@ export default function MapScreen() {
       }
     } catch {}
 
-    const latDelta = region ? region.latitudeDelta / 1.5 : 0.008;
-    const lonDelta = region ? region.longitudeDelta / 1.5 : 0.008;
+    const latDelta = regionRef.current ? regionRef.current.latitudeDelta / 1.5 : 0.008;
+    const lonDelta = regionRef.current ? regionRef.current.longitudeDelta / 1.5 : 0.008;
 
     markProgrammaticMove();
     mapRef.current?.animateToRegion(
@@ -1259,7 +1306,7 @@ const handleRequest = async (index: number) => {
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={styles.map}
-        region={region}
+        initialRegion={region ?? INITIAL_REGION}
         mapPadding={mapPadding}
         showsUserLocation
         showsMyLocationButton={false}
@@ -1276,26 +1323,23 @@ const handleRequest = async (index: number) => {
           }, 250);
         }}
         onRegionChangeComplete={(newRegion) => {
+          regionRef.current = newRegion;
           if (!isProgrammaticMove() && userInteractingRef.current) {
             setCameraMode('free');
           }
-
-          const clamped = clampToBounds(newRegion, CLAMP_BOUNDS);
-
-          const needsAdjustment =
-            clamped.latitude !== newRegion.latitude ||
-            clamped.longitude !== newRegion.longitude ||
-            clamped.latitudeDelta !== newRegion.latitudeDelta ||
-            clamped.longitudeDelta !== newRegion.longitudeDelta;
-
-          setRegion(clamped);
-
-          if (needsAdjustment) {
-            markProgrammaticMove();
-            mapRef.current?.animateToRegion(clamped, 600);
-          }
         }}
       >
+        {/* Campus boundary — convex hull of all stops */}
+        {campusHull.length >= 3 && (
+          <Polygon
+            coordinates={campusHull}
+            strokeColor={PRIMARY_COLOR + '99'}
+            fillColor={PRIMARY_COLOR + '12'}
+            strokeWidth={2}
+            lineDashPattern={[8, 6]}
+          />
+        )}
+
         {/* ✅ Campus stops always visible, but hide the destination stop marker while ride is active */}
         {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
           <Marker

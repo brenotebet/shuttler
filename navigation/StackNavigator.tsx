@@ -13,6 +13,7 @@ import DriverHistoryScreen from '../screens/DriverHistoryScreen';
 import AdminDriverScreen from '../screens/AdminDriverScreen';
 import StudentHistoryScreen from '../screens/StudentHistoryScreen';
 import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
+import CreateOrgScreen from '../screens/CreateOrgScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -20,6 +21,7 @@ import { PRIMARY_COLOR } from '../src/constants/theme';
 
 export type RootStackParamList = {
   OrgSelector: undefined;
+  CreateOrg: undefined;
   Auth: { orgId: string };
   EmailVerification: undefined;
 
@@ -86,6 +88,7 @@ export default function StackNavigator() {
         // Logged out — two-step login flow
         <>
           <Stack.Screen name="OrgSelector" component={OrgSelectorScreen} />
+          <Stack.Screen name="CreateOrg" component={CreateOrgScreen} />
           <Stack.Screen name="Auth" component={AuthScreen} />
         </>
       ) : role === 'admin' && (org?.stops?.length ?? 0) === 0 ? (

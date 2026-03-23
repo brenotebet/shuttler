@@ -43,6 +43,8 @@ export type OrgConfig = {
   };
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
+  approved?: boolean;
+  reviewStatus?: 'pending' | 'approved' | 'rejected';
 };
 
 type OrgContextType = {
@@ -195,6 +197,8 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               mapBoundingBox: data.mapBoundingBox ?? prev.mapBoundingBox,
               subscriptionStatus: data.subscriptionStatus ?? prev.subscriptionStatus,
               subscriptionPlan: data.subscriptionPlan ?? prev.subscriptionPlan,
+              approved: data.approved ?? prev.approved,
+              reviewStatus: data.reviewStatus ?? prev.reviewStatus,
             };
           });
         },

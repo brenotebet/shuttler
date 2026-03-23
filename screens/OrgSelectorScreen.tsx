@@ -25,7 +25,7 @@ import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-type Nav = NativeStackNavigationProp<RootStackParamList, 'OrgSelector'>;
+type Nav = NativeStackNavigationProp<RootStackParamList, 'OrgSelector' | 'CreateOrg'>;
 
 const AUTH_METHOD_LABEL: Record<string, string> = {
   saml: 'SSO',
@@ -143,6 +143,16 @@ export default function OrgSelectorScreen() {
               <Icon name="chevron-right" size={22} color="#ccc" />
             </TouchableOpacity>
           )}
+          ListFooterComponent={
+            <TouchableOpacity
+              style={styles.createOrgBtn}
+              onPress={() => navigation.navigate('CreateOrg')}
+              activeOpacity={0.8}
+            >
+              <Icon name="add-circle-outline" size={20} color={PRIMARY_COLOR} />
+              <Text style={styles.createOrgBtnText}>Create a new organisation</Text>
+            </TouchableOpacity>
+          }
         />
       )}
     </ScreenContainer>
@@ -248,5 +258,19 @@ const styles = StyleSheet.create({
   emptyText: {
     color: '#888',
     fontSize: 14,
+  },
+  createOrgBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  createOrgBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: PRIMARY_COLOR,
   },
 });

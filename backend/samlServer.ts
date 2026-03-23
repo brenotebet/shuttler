@@ -484,6 +484,119 @@ app.get('/saml/:orgSlug/metadata', async (req: Request, res: Response) => {
   }
 });
 
+// ---- Self-serve org creation ----
+
+app.post('/orgs/create', async (req: Request, res: Response) => {
+  const {
+    contactFirstName,
+    contactLastName,
+    contactEmail,
+    contactPhone,
+    orgName,
+    orgType,
+    website,
+    estimatedRiders,
+    heardAboutUs,
+    description,
+  } = req.body;
+
+  if (!contactFirstName || !contactLastName || !contactEmail || !orgName || !orgType) {
+    return res.status(400).json({
+      error: 'contactFirstName, contactLastName, contactEmail, orgName and orgType are required',
+    });
+  }
+
+  // Basic email format check
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+
+  // Auto-generate slug; ensure uniqueness by appending a counter
+  const baseSlug = (orgName as string)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 40);
+
+  let slug = baseSlug;
+  let attempt = 0;
+  while (true) {
+    const existing = await admin.firestore().collection('orgSlugs').doc(slug).get();
+    if (!existing.exists) break;
+    attempt++;
+    slug = `${baseSlug}-${attempt}`;
+    if (attempt > 99) return res.status(409).json({ error: 'Could not generate a unique slug' });
+  }
+
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc();
+    const orgId = orgRef.id;
+
+    const orgData: Record<string, any> = {
+      orgId,
+      name: orgName,
+      slug,
+      authMethod: 'email',
+      allowedEmailDomains: [],
+      stops: [],
+      routes: [],
+      mapCenter: { latitude: 0, longitude: 0 },
+      subscriptionStatus: 'trialing',
+      subscriptionPlan: 'starter',
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      adminUids: [],
+      approved: false,
+      reviewStatus: 'pending',
+      founderEmail: (contactEmail as string).toLowerCase().trim(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const batch = admin.firestore().batch();
+    batch.set(orgRef, orgData);
+    batch.set(admin.firestore().collection('orgSlugs').doc(slug), {
+      orgId,
+      name: orgName,
+      authMethod: 'email',
+    });
+    batch.set(admin.firestore().collection('orgApplications').doc(orgId), {
+      orgId,
+      contactFirstName,
+      contactLastName,
+      contactEmail: (contactEmail as string).toLowerCase().trim(),
+      contactPhone: contactPhone ?? null,
+      orgName,
+      orgType,
+      website: website ?? null,
+      estimatedRiders: estimatedRiders ?? null,
+      heardAboutUs: heardAboutUs ?? null,
+      description: description ?? null,
+      reviewStatus: 'pending',
+      submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+
+    console.log(`[orgs/create] New org application: ${orgName} (${orgId}) by ${contactEmail}`);
+
+    return res.status(201).json({
+      orgId,
+      name: orgName,
+      slug,
+      authMethod: 'email' as const,
+      allowedEmailDomains: [],
+      stops: [],
+      mapCenter: { latitude: 0, longitude: 0 },
+      subscriptionStatus: 'trialing' as const,
+      subscriptionPlan: 'starter',
+      approved: false,
+      reviewStatus: 'pending',
+    });
+  } catch (e) {
+    console.error('[orgs/create] error:', e);
+    return res.status(500).json({ error: 'Failed to create organisation' });
+  }
+});
+
 // ---- Email/password registration ----
 
 app.post('/auth/email/register', async (req: Request, res: Response) => {
@@ -523,6 +636,12 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     try {
       console.log(`[register] Writing user doc → orgs/${orgId}/users/${user.uid}`);
+      // Founder promotion: if the registering email matches the org's founderEmail, make them admin
+      const isFounder =
+        typeof org.founderEmail === 'string' &&
+        org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
+      const role = isFounder ? 'admin' : 'student';
+
       await admin.firestore()
         .collection('orgs').doc(orgId)
         .collection('users').doc(user.uid)
@@ -532,10 +651,18 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
           email,
           displayName: displayName ?? null,
           phone: phone ?? null,
-          role: 'student',
+          role,
           lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+
+      if (isFounder) {
+        await admin.firestore().collection('orgs').doc(orgId).update({
+          adminUids: admin.firestore.FieldValue.arrayUnion(user.uid),
+          founderEmail: admin.firestore.FieldValue.delete(), // consumed — remove so members can't read it
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
       console.log(`[register] User doc written successfully for uid=${user.uid}`);
     } catch (firestoreErr: any) {
       console.error(`[register] Firestore write FAILED for uid=${user.uid} orgId=${orgId}:`, firestoreErr);
@@ -606,6 +733,34 @@ app.post(
     } catch (e) {
       console.error('Set role error:', e);
       return res.status(500).json({ error: 'Failed to update role' });
+    }
+  },
+);
+
+// ---- Admin: remove member from org ----
+
+app.delete(
+  '/admin/orgs/:orgId/users/:uid',
+  requireAuth,
+  requireOrgAdmin,
+  async (req: Request, res: Response) => {
+    const { orgId, uid } = req.params as { orgId: string; uid: string };
+    try {
+      const batch = admin.firestore().batch();
+      const userRef = admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid);
+      const pubRef = admin.firestore().collection('orgs').doc(orgId).collection('publicUsers').doc(uid);
+
+      const [userSnap, pubSnap] = await Promise.all([userRef.get(), pubRef.get()]);
+      if (!userSnap.exists) return res.status(404).json({ error: 'User not found in this org' });
+
+      batch.delete(userRef);
+      if (pubSnap.exists) batch.delete(pubRef);
+      await batch.commit();
+
+      return res.json({ uid, removed: true });
+    } catch (e) {
+      console.error('Remove user error:', e);
+      return res.status(500).json({ error: 'Failed to remove user' });
     }
   },
 );
@@ -800,6 +955,30 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
   return res.json({ received: true });
 });
 
+// ---- Internal: approve org application ----
+
+app.post('/internal/orgs/:orgId/approve', requireInternal, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  try {
+    const batch = admin.firestore().batch();
+    batch.update(admin.firestore().collection('orgs').doc(orgId), {
+      approved: true,
+      reviewStatus: 'approved',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
+      reviewStatus: 'approved',
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    console.log(`[approve] Org ${orgId} approved`);
+    return res.json({ orgId, approved: true });
+  } catch (e) {
+    console.error('[approve] error:', e);
+    return res.status(500).json({ error: 'Failed to approve org' });
+  }
+});
+
 // ---- Internal: create new org ----
 
 app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) => {
@@ -857,10 +1036,25 @@ app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) 
 
 // ---------- Start ----------
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Shuttler backend listening on http://localhost:${PORT}`);
   console.log(`API base URL: ${API_BASE_URL}`);
 });
+
+function shutdown(signal: string) {
+  console.log(`${signal} received — shutting down gracefully`);
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10_000);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // ---------- Helpers ----------
 

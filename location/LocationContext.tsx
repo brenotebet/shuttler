@@ -31,6 +31,8 @@ const LocationContext = createContext<LocationContextType>({
 
 const WRITE_MIN_INTERVAL_MS = 2000;
 const WRITE_MIN_DISTANCE_M = 8;
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // auto-stop after 15 min of no GPS movement
+const INACTIVITY_CHECK_MS = 60 * 1000;         // check once per minute
 
 // Ignore GPS readings with accuracy worse than this (meters)
 const GPS_ACCURACY_MAX_M = 50;
@@ -168,6 +170,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const lastWrittenAt = useRef<number>(0);
   const lastWrittenCoords = useRef<{ latitude: number; longitude: number } | null>(null);
   const smoothedCoords = useRef<{ latitude: number; longitude: number } | null>(null);
+  const lastActivityAt = useRef<number>(Date.now());
 
   const notifyStillOn = () => {
     Notifications.scheduleNotificationAsync({
@@ -312,6 +315,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       return; // don't start watch if we can't write
     }
 
+    lastActivityAt.current = Date.now();
+
     watchSub.current = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
@@ -322,6 +327,9 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         try {
           const id = currentUid.current;
           if (!id) return;
+
+          // Any GPS reading counts as activity (even low-accuracy ones)
+          lastActivityAt.current = Date.now();
 
           // Skip readings with poor GPS accuracy to reduce off-road drift
           const gpsAccuracy = loc.coords.accuracy;
@@ -390,6 +398,32 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       setIsSharing(false);
     }
   };
+
+  // Auto-stop sharing after 15 minutes of no GPS activity
+  useEffect(() => {
+    if (!isSharing) return;
+
+    const interval = setInterval(async () => {
+      if (Date.now() - lastActivityAt.current < INACTIVITY_TIMEOUT_MS) return;
+
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Location Sharing Stopped',
+          body: 'No movement detected for 15 minutes. Location sharing has been turned off.',
+        },
+        trigger: null,
+      });
+
+      try {
+        await stopSharing();
+      } catch (err) {
+        console.error('Inactivity auto-stop failed:', err);
+      }
+    }, INACTIVITY_CHECK_MS);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSharing]);
 
   return (
     <LocationContext.Provider value={{ isSharing, startSharing, stopSharing }}>
