@@ -177,6 +177,13 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ---------- SAML handoff tokens ----------
+    // Written and consumed exclusively by the backend (Admin SDK).
+    // Clients never access these directly.
+    match /samlHandoffTokens/{token} {
+      allow read, write: if false;
+    }
+
     // ---------- Default deny ----------
     match /{document=**} {
       allow read, write: if false;

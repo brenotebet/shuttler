@@ -14,6 +14,7 @@ import AdminDriverScreen from '../screens/AdminDriverScreen';
 import StudentHistoryScreen from '../screens/StudentHistoryScreen';
 import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
 import CreateOrgScreen from '../screens/CreateOrgScreen';
+import SuperAdminScreen from '../screens/SuperAdminScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -34,6 +35,7 @@ export type RootStackParamList = {
   DriverHistory: undefined;
   AdminDriver: undefined;
   AdminOrgSetup: undefined;
+  SuperAdmin: undefined;
 
   SubscriptionExpired: undefined;
 };
@@ -61,7 +63,7 @@ function SubscriptionExpiredScreen() {
 }
 
 export default function StackNavigator() {
-  const { user, role, initializing, emailVerified } = useAuth();
+  const { user, role, initializing, emailVerified, isSuperAdmin } = useAuth();
   const { org, isLoadingOrg } = useOrg();
 
   if (initializing || isLoadingOrg) {
@@ -98,6 +100,7 @@ export default function StackNavigator() {
           <Stack.Screen name="DriverHome" component={DriverTabs} />
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+          {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
         </>
       ) : role === 'driver' || role === 'admin' ? (
         // Logged in as driver/admin with stops configured
@@ -106,12 +109,14 @@ export default function StackNavigator() {
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
+          {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
         </>
       ) : (
         // Logged in as student (default)
         <>
           <Stack.Screen name="StudentHome" component={StudentTabs} />
           <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
+          {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
         </>
       )}
     </Stack.Navigator>

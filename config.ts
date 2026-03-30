@@ -19,6 +19,7 @@ const handleMissingEnvVar = (key: string): string => {
 const _env: Record<string, string> = {
   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '',
   EXPO_PUBLIC_SHUTTLER_API_URL: process.env.EXPO_PUBLIC_SHUTTLER_API_URL ?? '',
+  EXPO_PUBLIC_SENTRY_DSN: process.env.EXPO_PUBLIC_SENTRY_DSN ?? '',
 };
 
 const getPublicEnvVar = (key: string): string => {

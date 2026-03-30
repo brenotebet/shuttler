@@ -53,6 +53,7 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
+import { notifyDriversNewRequest } from '../src/utils/pushNotifications';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
@@ -1190,6 +1191,7 @@ const handleRequest = async (index: number) => {
       });
 
       if (__DEV__) console.log('[handleRequest] created stopRequest', ref.id);
+      void notifyDriversNewRequest(orgId ?? '');
     } catch (e: any) {
       console.error('[handleRequest] addDoc FAILED', e?.code, e?.message);
       throw e;

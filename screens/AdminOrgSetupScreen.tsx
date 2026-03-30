@@ -18,7 +18,7 @@ import {
   View,
 } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import * as WebBrowser from 'expo-web-browser';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route } from '../src/org/OrgContext';
@@ -30,7 +30,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing';
+type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'analytics';
 
 // ---- Helpers ----
 
@@ -90,7 +90,7 @@ function ProfileTab() {
 
 // ---- Auth Settings Tab ----
 
-type AuthMethod = 'saml' | 'email' | 'email+google';
+type AuthMethod = 'saml' | 'email';
 
 function AuthTab() {
   const { org, refreshOrg } = useOrg();
@@ -142,7 +142,7 @@ function AuthTab() {
     <ScrollView contentContainerStyle={styles.tabContent}>
       <Text style={styles.sectionLabel}>Authentication Method</Text>
 
-      {(['email', 'saml', 'email+google'] as AuthMethod[]).map((m) => (
+      {(['email', 'saml'] as AuthMethod[]).map((m) => (
         <TouchableOpacity
           key={m}
           style={[styles.radioRow, authMethod === m && styles.radioRowActive]}
@@ -150,7 +150,7 @@ function AuthTab() {
         >
           <View style={[styles.radio, authMethod === m && styles.radioSelected]} />
           <Text style={styles.radioLabel}>
-            {m === 'email' ? 'Email / Password' : m === 'saml' ? 'SAML SSO (IT-managed)' : 'Email + Google'}
+            {m === 'email' ? 'Email / Password' : 'SAML SSO (IT-managed)'}
           </Text>
         </TouchableOpacity>
       ))}
@@ -929,6 +929,230 @@ function BillingTab() {
   );
 }
 
+// ---- Analytics Tab ----
+
+interface BoardingCount {
+  id: string;
+  driverUid: string;
+  stopId: string;
+  stopName: string;
+  count: number;
+  createdAt: any;
+}
+
+interface StopStat {
+  stopName: string;
+  total: number;
+}
+
+interface DriverStat {
+  driverUid: string;
+  total: number;
+}
+
+function AnalyticsTab() {
+  const { org } = useOrg();
+  const [records, setRecords] = useState<BoardingCount[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!org) return;
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        const q = query(
+          collection(db, 'orgs', org.orgId, 'boardingCounts'),
+          orderBy('createdAt', 'desc'),
+        );
+        const snap = await getDocs(q);
+        setRecords(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardingCount, 'id'>) })));
+      } catch (e: any) {
+        setError(e.message ?? 'Failed to load analytics');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    load();
+  }, [org?.orgId]);
+
+  if (isLoading) {
+    return (
+      <View style={analyticsStyles.center}>
+        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={analyticsStyles.center}>
+        <Text style={analyticsStyles.errorText}>{error}</Text>
+      </View>
+    );
+  }
+
+  if (records.length === 0) {
+    return (
+      <View style={analyticsStyles.center}>
+        <Icon name="bar-chart" size={48} color="#d1d5db" />
+        <Text style={analyticsStyles.emptyText}>No boarding data yet.</Text>
+        <Text style={analyticsStyles.emptySubtext}>
+          Analytics will appear once drivers start completing stop requests.
+        </Text>
+      </View>
+    );
+  }
+
+  const totalBoarded = records.reduce((sum, r) => sum + (r.count ?? 0), 0);
+
+  const stopMap = new Map<string, StopStat>();
+  for (const r of records) {
+    const key = r.stopName ?? r.stopId ?? 'Unknown';
+    const existing = stopMap.get(key);
+    stopMap.set(key, { stopName: key, total: (existing?.total ?? 0) + (r.count ?? 0) });
+  }
+  const topStops = Array.from(stopMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5);
+
+  const driverMap = new Map<string, DriverStat>();
+  for (const r of records) {
+    const key = r.driverUid ?? 'Unknown';
+    const existing = driverMap.get(key);
+    driverMap.set(key, { driverUid: key, total: (existing?.total ?? 0) + (r.count ?? 0) });
+  }
+  const topDrivers = Array.from(driverMap.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5);
+
+  const recent = records.slice(0, 10);
+
+  return (
+    <ScrollView contentContainerStyle={analyticsStyles.container}>
+      {/* Summary cards */}
+      <View style={analyticsStyles.cardRow}>
+        <View style={[analyticsStyles.card, { flex: 1 }]}>
+          <Icon name="people" size={24} color={PRIMARY_COLOR} />
+          <Text style={analyticsStyles.cardValue}>{totalBoarded}</Text>
+          <Text style={analyticsStyles.cardLabel}>Total Boarded</Text>
+        </View>
+        <View style={[analyticsStyles.card, { flex: 1 }]}>
+          <Icon name="place" size={24} color={PRIMARY_COLOR} />
+          <Text style={analyticsStyles.cardValue}>{stopMap.size}</Text>
+          <Text style={analyticsStyles.cardLabel}>Active Stops</Text>
+        </View>
+        <View style={[analyticsStyles.card, { flex: 1 }]}>
+          <Icon name="directions-bus" size={24} color={PRIMARY_COLOR} />
+          <Text style={analyticsStyles.cardValue}>{driverMap.size}</Text>
+          <Text style={analyticsStyles.cardLabel}>Active Drivers</Text>
+        </View>
+      </View>
+
+      {/* Busiest stops */}
+      <Text style={analyticsStyles.sectionTitle}>Busiest Stops</Text>
+      <View style={analyticsStyles.listCard}>
+        {topStops.map((s, i) => (
+          <View key={s.stopName} style={[analyticsStyles.listRow, i > 0 && analyticsStyles.listRowBorder]}>
+            <View style={analyticsStyles.rankBadge}>
+              <Text style={analyticsStyles.rankText}>{i + 1}</Text>
+            </View>
+            <Text style={analyticsStyles.listLabel} numberOfLines={1}>{s.stopName}</Text>
+            <Text style={analyticsStyles.listValue}>{s.total} boarded</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Top drivers */}
+      <Text style={analyticsStyles.sectionTitle}>Top Drivers</Text>
+      <View style={analyticsStyles.listCard}>
+        {topDrivers.map((d, i) => (
+          <View key={d.driverUid} style={[analyticsStyles.listRow, i > 0 && analyticsStyles.listRowBorder]}>
+            <View style={analyticsStyles.rankBadge}>
+              <Text style={analyticsStyles.rankText}>{i + 1}</Text>
+            </View>
+            <Text style={[analyticsStyles.listLabel, { fontFamily: 'Menlo', fontSize: 12 }]} numberOfLines={1}>
+              {d.driverUid.slice(0, 16)}…
+            </Text>
+            <Text style={analyticsStyles.listValue}>{d.total} boarded</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Recent activity */}
+      <Text style={analyticsStyles.sectionTitle}>Recent Activity</Text>
+      <View style={analyticsStyles.listCard}>
+        {recent.map((r, i) => {
+          const ts = r.createdAt?.toDate?.();
+          const dateStr = ts ? ts.toLocaleDateString() : '—';
+          return (
+            <View key={r.id} style={[analyticsStyles.listRow, i > 0 && analyticsStyles.listRowBorder]}>
+              <Icon name="check-circle" size={16} color="#22c55e" style={{ marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={analyticsStyles.listLabel} numberOfLines={1}>{r.stopName ?? r.stopId}</Text>
+                <Text style={analyticsStyles.listMeta}>{dateStr}</Text>
+              </View>
+              <Text style={analyticsStyles.listValue}>{r.count} boarded</Text>
+            </View>
+          );
+        })}
+      </View>
+    </ScrollView>
+  );
+}
+
+const analyticsStyles = StyleSheet.create({
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 12,
+  },
+  errorText: { color: '#DC2626', fontSize: 14, textAlign: 'center' },
+  emptyText: { fontSize: 16, fontWeight: '600', color: '#374151', textAlign: 'center' },
+  emptySubtext: { fontSize: 13, color: '#9ca3af', textAlign: 'center' },
+  container: { padding: 16, gap: 8, paddingBottom: 40 },
+  cardRow: { flexDirection: 'row', gap: 10, marginBottom: 8 },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center',
+    gap: 4,
+    ...cardShadow,
+  },
+  cardValue: { fontSize: 24, fontWeight: '700', color: '#111' },
+  cardLabel: { fontSize: 11, color: '#6b7280', textAlign: 'center' },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: '#374151', marginTop: 12, marginBottom: 4 },
+  listCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    overflow: 'hidden',
+    ...cardShadow,
+  },
+  listRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  listRowBorder: { borderTopWidth: 1, borderTopColor: '#f3f4f6' },
+  rankBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  rankText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  listLabel: { flex: 1, fontSize: 14, color: '#111' },
+  listMeta: { fontSize: 11, color: '#9ca3af' },
+  listValue: { fontSize: 13, fontWeight: '600', color: '#374151' },
+});
+
 // ---- Main Screen ----
 
 export default function AdminOrgSetupScreen() {
@@ -944,6 +1168,7 @@ export default function AdminOrgSetupScreen() {
     { key: 'stops', icon: 'place', label: 'Stops' },
     { key: 'users', icon: 'people', label: 'Users' },
     { key: 'billing', icon: 'credit-card', label: 'Billing' },
+    { key: 'analytics', icon: 'bar-chart', label: 'Analytics' },
   ];
 
   return (
@@ -981,6 +1206,7 @@ export default function AdminOrgSetupScreen() {
         {activeTab === 'stops' && <StopsTab />}
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'billing' && <BillingTab />}
+        {activeTab === 'analytics' && <AnalyticsTab />}
       </KeyboardAvoidingView>
     </ScreenContainer>
   );

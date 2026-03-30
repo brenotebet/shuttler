@@ -30,8 +30,7 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'OrgSelector' | 'Create
 const AUTH_METHOD_LABEL: Record<string, string> = {
   saml: 'SSO',
   email: 'Email',
-  google: 'Google',
-  'email+google': 'Email / Google',
+  'email+google': 'Email',
 };
 
 export default function OrgSelectorScreen() {

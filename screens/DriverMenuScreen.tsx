@@ -23,7 +23,7 @@ export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout: clearDriverContext } = useDriver();
   const { stopSharing, isSharing } = useLocationSharing();
-  const { role } = useAuth();
+  const { role, isSuperAdmin } = useAuth();
   const { org } = useOrg();
   const needsSetup = role === 'admin' && (org?.stops?.length ?? 0) === 0;
 
@@ -93,6 +93,15 @@ export default function DriverMenuScreen() {
                 : 'Manage stops, routes, users and billing'
             }
             onPress={() => navigation.navigate('AdminOrgSetup')}
+          />
+        )}
+
+        {isSuperAdmin && (
+          <MenuItem
+            icon="admin-panel-settings"
+            title="Org Applications"
+            description="Review and approve pending organization sign-ups"
+            onPress={() => navigation.navigate('SuperAdmin')}
           />
         )}
 

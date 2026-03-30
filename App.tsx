@@ -9,9 +9,17 @@ import { DriverProvider } from './drivercontext/DriverContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/auth/AuthProvider';
 import { OrgProvider } from './src/org/OrgContext';
+import { usePushToken } from './src/hooks/usePushToken';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase/firebaseconfig';
+import * as Sentry from '@sentry/react-native';
+
+Sentry.init({
+  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN ?? '',
+  enabled: !__DEV__,
+  tracesSampleRate: 0.2,
+});
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -20,6 +28,7 @@ class ErrorBoundary extends React.Component<
   state: { error: Error | null } = { error: null };
   static getDerivedStateFromError(error: Error) { return { error }; }
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    Sentry.captureException(error, { extra: { componentStack: info.componentStack } });
     addDoc(collection(db, 'crashes'), {
       message: error.message,
       stack: (error.stack ?? '').slice(0, 2000),
@@ -58,10 +67,15 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: false,
     shouldSetBadge: false,
-    shouldShowBanner: true, 
-    shouldShowList: true,  
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
+
+function PushTokenRegistrar() {
+  usePushToken();
+  return null;
+}
 
 export default function App() {
   useEffect(() => {
@@ -74,6 +88,7 @@ export default function App() {
         <SafeAreaProvider>
           <OrgProvider>
             <AuthProvider>
+              <PushTokenRegistrar />
               <DriverProvider>
                 <LocationProvider>
                   <NavigationContainer>

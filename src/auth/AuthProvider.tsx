@@ -18,6 +18,7 @@ type AuthContextType = {
   orgId: string | null;
   initializing: boolean;
   emailVerified: boolean;
+  isSuperAdmin: boolean;
   reloadUser: () => Promise<void>;
 };
 
@@ -27,6 +28,7 @@ const AuthContext = createContext<AuthContextType>({
   orgId: null,
   initializing: true,
   emailVerified: false,
+  isSuperAdmin: false,
   reloadUser: async () => {},
 });
 
@@ -36,6 +38,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<Role | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [emailVerified, setEmailVerified] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -44,16 +47,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (!firebaseUser) {
         setRole(null);
+        setIsSuperAdmin(false);
         setInitializing(false);
         return;
       }
 
       // Resolve orgId: prefer the selected org from OrgContext, fall back to
       // the custom claim set at registration/SAML-exchange time.
+      const tokenResult = await firebaseUser.getIdTokenResult();
       const orgId =
         org?.orgId ??
-        ((await firebaseUser.getIdTokenResult()).claims.orgId as string | undefined) ??
+        (tokenResult.claims.orgId as string | undefined) ??
         null;
+
+      setIsSuperAdmin(tokenResult.claims.superAdmin === true);
 
       if (!orgId) {
         // No org context yet — user needs to select their org
@@ -84,7 +91,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const orgId = org?.orgId ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, role, orgId, initializing, emailVerified, reloadUser }}>
+    <AuthContext.Provider value={{ user, role, orgId, initializing, emailVerified, isSuperAdmin, reloadUser }}>
       {children}
     </AuthContext.Provider>
   );

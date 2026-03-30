@@ -24,6 +24,7 @@ import {
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
+import { notifyStudentArrived, notifyStudentCompleted } from '../src/utils/pushNotifications';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { getPlanLimits } from '../src/constants/planLimits';
@@ -122,9 +123,11 @@ export default function DriverScreen() {
   const { org } = useOrg();
   const { role: authRole } = useAuth();
   const orgStops: Stop[] = org?.stops ?? [];
+  const orgRoutes = org?.routes ?? [];
   const orgId = org?.orgId ?? '';
 
   const [isToggling, setIsToggling] = useState(false);
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
   const [busOnline, setBusOnline] = useState(false);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
@@ -168,17 +171,32 @@ export default function DriverScreen() {
 
   const driverCoords = driverId ? (busLocationsRef.current[driverId] ?? null) : null;
 
+  // Resolve the active route. Auto-selects the first route when routes are available.
+  const activeRoute = useMemo(() => {
+    if (orgRoutes.length === 0) return null;
+    return orgRoutes.find((r) => r.id === selectedRouteId) ?? orgRoutes[0];
+  }, [orgRoutes, selectedRouteId]);
+
+  // Ordered stop list: follows the active route's stopIds, falls back to orgStops if no routes.
+  const routeOrderedStops: Stop[] = useMemo(() => {
+    if (!activeRoute) return orgStops;
+    const stopById = new Map(orgStops.map((s) => [s.id, s]));
+    return activeRoute.stopIds
+      .map((id) => stopById.get(id))
+      .filter((s): s is Stop => s !== undefined);
+  }, [activeRoute, orgStops]);
+
   const nearestStop = useMemo(() => {
     if (!driverCoords) return null;
-    const stop = getNearestStop(driverCoords.latitude, driverCoords.longitude, orgStops);
+    const stop = getNearestStop(driverCoords.latitude, driverCoords.longitude, routeOrderedStops);
     if (!stop) return null;
     const dist = getDistanceInMeters(driverCoords.latitude, driverCoords.longitude, stop.latitude, stop.longitude);
     return dist <= NEAREST_STOP_RADIUS_M ? stop : null;
-  }, [driverCoords?.latitude, driverCoords?.longitude, orgStops]);
+  }, [driverCoords?.latitude, driverCoords?.longitude, routeOrderedStops]);
 
   const nextStop = useMemo(
-    () => nextStopFromNearest(nearestStop?.id ?? null, orgStops),
-    [nearestStop?.id, orgStops],
+    () => nextStopFromNearest(nearestStop?.id ?? null, routeOrderedStops),
+    [nearestStop?.id, routeOrderedStops],
   );
 
   const activeRequests = useMemo(
@@ -390,6 +408,9 @@ export default function DriverScreen() {
       arrivalWritesInFlightRef.current.add(requestId);
 
       try {
+        let studentUid: string | null = null;
+        let stopName: string | null = null;
+
         await runTransaction(db, async (tx) => {
           const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
           const snap = await tx.get(ref);
@@ -398,8 +419,14 @@ export default function DriverScreen() {
           if (!isActiveStopStatus(current?.status)) return;
           if (isExpiredRequestAt(current, Date.now())) return;
           if (current?.arrivedAt) return;
+          studentUid = current.studentUid ?? null;
+          stopName = current.stop?.name ?? null;
           tx.update(ref, { arrivedAt: serverTimestamp() });
         });
+
+        if (studentUid) {
+          void notifyStudentArrived(orgId, studentUid, stopName ?? 'your stop');
+        }
       } catch (err) {
         console.error('Failed to set arrivedAt on stop request', err);
       } finally {
@@ -412,6 +439,9 @@ export default function DriverScreen() {
       completionWritesInFlightRef.current.add(requestId);
 
       try {
+        let studentUid: string | null = null;
+        let stopName: string | null = null;
+
         await runTransaction(db, async (tx) => {
           const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
           const snap = await tx.get(ref);
@@ -419,6 +449,8 @@ export default function DriverScreen() {
           const current = snap.data() as any;
           if (!isActiveStopStatus(current?.status)) return;
           if (isExpiredRequestAt(current, Date.now())) return;
+          studentUid = current.studentUid ?? null;
+          stopName = current.stop?.name ?? null;
 
           tx.update(ref, {
             status: 'completed',
@@ -427,6 +459,10 @@ export default function DriverScreen() {
             driverUid: current?.driverUid ?? current?.driverId ?? driverUid,
           });
         });
+
+        if (studentUid) {
+          void notifyStudentCompleted(orgId, studentUid, stopName ?? 'your stop');
+        }
       } catch (err) {
         console.error('Failed to complete stop request from proximity', err);
       } finally {
@@ -657,6 +693,13 @@ export default function DriverScreen() {
       });
 
       await batch.commit();
+
+      requestsAtStop.forEach((req) => {
+        if (req.studentUid) {
+          void notifyStudentCompleted(orgId, req.studentUid, nearest.name);
+        }
+      });
+
       setTotalBoardedSession((prev) => prev + boardingCount);
       showAlert('Boarding count saved!');
       setShowBoardingCard(false);
@@ -815,17 +858,49 @@ export default function DriverScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Route Progress</Text>
-          {orgStops.length === 0 && (
+
+          {orgRoutes.length > 1 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.routePickerScroll}
+              contentContainerStyle={styles.routePickerContent}
+            >
+              {orgRoutes.map((route) => {
+                const isSelected = (selectedRouteId ?? orgRoutes[0]?.id) === route.id;
+                return (
+                  <TouchableOpacity
+                    key={route.id}
+                    style={[styles.routeChip, isSelected && styles.routeChipSelected]}
+                    onPress={() => setSelectedRouteId(route.id)}
+                  >
+                    <Text style={[styles.routeChipText, isSelected && styles.routeChipTextSelected]}>
+                      {route.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {activeRoute && orgRoutes.length === 1 && (
+            <Text style={styles.routeSingleName}>{activeRoute.name}</Text>
+          )}
+
+          {routeOrderedStops.length === 0 && (
             <Text style={styles.emptyText}>No stops configured. Ask your admin to set up stops.</Text>
           )}
-          {orgStops.map((stop) => {
+          {routeOrderedStops.map((stop, index) => {
             const isCurrent = stop.id === nearestStop?.id;
             const isNext = stop.id === nextStop?.id;
             return (
               <View key={stop.id} style={[styles.routeRow, isCurrent && styles.routeCurrent, isNext && styles.routeNext]}>
-                <View>
-                  <Text style={styles.routeName}>{stop.name}</Text>
-                  <Text style={styles.routeHint}>{isCurrent ? 'Current stop' : isNext ? 'Next stop' : 'Upcoming'}</Text>
+                <View style={styles.routeRowLeft}>
+                  <Text style={styles.routeIndex}>{index + 1}</Text>
+                  <View>
+                    <Text style={styles.routeName}>{stop.name}</Text>
+                    <Text style={styles.routeHint}>{isCurrent ? 'You are here' : isNext ? 'Next stop' : 'Upcoming'}</Text>
+                  </View>
                 </View>
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>{countsByStopId[stop.id] ?? 0}</Text>
@@ -964,6 +1039,22 @@ const styles = StyleSheet.create({
   feedMeta: { fontSize: 13, color: '#666', marginTop: 2 },
   feedStudent: { fontSize: 13, color: '#444', marginTop: 2 },
   emptyText: { fontSize: 14, color: '#777', paddingVertical: 10 },
+  routePickerScroll: { marginBottom: 10 },
+  routePickerContent: { gap: 8, paddingBottom: 4 },
+  routeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: PRIMARY_COLOR,
+    backgroundColor: '#fff',
+  },
+  routeChipSelected: { backgroundColor: PRIMARY_COLOR },
+  routeChipText: { fontSize: 13, fontWeight: '600', color: PRIMARY_COLOR },
+  routeChipTextSelected: { color: '#fff' },
+  routeSingleName: { fontSize: 13, fontWeight: '600', color: '#555', marginBottom: 8 },
+  routeRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  routeIndex: { fontSize: 13, fontWeight: '700', color: '#aaa', minWidth: 20, textAlign: 'center' },
   routeRow: {
     paddingVertical: 10,
     flexDirection: 'row',

@@ -1,7 +1,7 @@
 // screens/AuthScreen.tsx
 //
 // Step 2 of the login flow. Renders the correct auth panel based on the
-// selected org's authMethod: SAML, email/password, or Google.
+// selected org's authMethod: SAML or email/password.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {

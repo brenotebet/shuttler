@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import xpath from 'xpath';
 import 'dotenv/config';
+import * as Sentry from '@sentry/node';
 
 /**
  * Shuttler multi-tenant backend
@@ -28,6 +29,14 @@ import 'dotenv/config';
  *   POST /stripe/webhook
  *   POST /internal/orgs                 ← Create new org (super-admin only)
  */
+
+// ---------- Sentry ----------
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN ?? '',
+  enabled: process.env.NODE_ENV === 'production',
+  tracesSampleRate: 0.2,
+});
 
 // ---------- ENV ----------
 
@@ -111,7 +120,8 @@ const PLAN_PRICE_IDS: Record<string, string> = {
   enterprise: process.env.STRIPE_PRICE_ENTERPRISE || '',
 };
 
-// ---------- Handoff token store ----------
+// ---------- Handoff token store (Firestore-backed) ----------
+// Using Firestore instead of an in-memory Map so tokens survive server restarts.
 
 type HandoffTokenPayload = {
   uid: string;
@@ -121,31 +131,47 @@ type HandoffTokenPayload = {
 };
 
 const HANDOFF_TOKEN_TTL_MS = 5 * 60 * 1000;
-const handoffTokens = new Map<string, HandoffTokenPayload>();
+const HANDOFF_TOKENS_COLLECTION = 'samlHandoffTokens';
 
-function cleanupExpiredHandoffTokens() {
-  const now = Date.now();
-  for (const [token, payload] of handoffTokens.entries()) {
-    if (payload.expiresAt <= now) handoffTokens.delete(token);
-  }
-}
-
-function issueHandoffToken(uid: string, orgId: string, attributes: Record<string, unknown>) {
-  cleanupExpiredHandoffTokens();
+async function issueHandoffToken(
+  uid: string,
+  orgId: string,
+  attributes: Record<string, unknown>,
+): Promise<string> {
   const token = crypto.randomBytes(32).toString('hex');
-  handoffTokens.set(token, { uid, orgId, attributes, expiresAt: Date.now() + HANDOFF_TOKEN_TTL_MS });
+  await admin.firestore().collection(HANDOFF_TOKENS_COLLECTION).doc(token).set({
+    uid,
+    orgId,
+    attributes,
+    expiresAt: Date.now() + HANDOFF_TOKEN_TTL_MS,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
   return token;
 }
 
-function consumeHandoffToken(token: string): HandoffTokenPayload | null {
-  cleanupExpiredHandoffTokens();
-  const payload = handoffTokens.get(token);
-  if (!payload || payload.expiresAt <= Date.now()) {
-    handoffTokens.delete(token);
+async function consumeHandoffToken(token: string): Promise<HandoffTokenPayload | null> {
+  const ref = admin.firestore().collection(HANDOFF_TOKENS_COLLECTION).doc(token);
+  try {
+    return await admin.firestore().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return null;
+      const data = snap.data() as any;
+      if (!data || data.expiresAt <= Date.now()) {
+        tx.delete(ref);
+        return null;
+      }
+      tx.delete(ref);
+      return {
+        uid: data.uid as string,
+        orgId: data.orgId as string,
+        attributes: (data.attributes ?? {}) as Record<string, unknown>,
+        expiresAt: data.expiresAt as number,
+      };
+    });
+  } catch (err) {
+    console.error('[consumeHandoffToken] transaction error:', err);
     return null;
   }
-  handoffTokens.delete(token);
-  return payload;
 }
 
 // ---------- Rate limiter ----------
@@ -265,6 +291,24 @@ async function requireOrgAdmin(req: Request, res: Response, next: Function) {
   }
 }
 
+async function requireSuperAdmin(req: Request, res: Response, next: Function) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing authorization header' });
+  }
+  try {
+    const decoded = await admin.auth().verifyIdToken(header.slice(7));
+    if (!decoded.superAdmin) {
+      return res.status(403).json({ error: 'Super admin access required' });
+    }
+    (req as any).uid = decoded.uid;
+    (req as any).claims = decoded;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
 function requireInternal(req: Request, res: Response, next: Function) {
   if (!INTERNAL_SECRET || req.headers['x-internal-secret'] !== INTERNAL_SECRET) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -275,6 +319,8 @@ function requireInternal(req: Request, res: Response, next: Function) {
 // ---------- Express app ----------
 
 const app = express();
+
+Sentry.setupExpressErrorHandler(app);
 
 // Stripe webhook needs raw body — register before express.json()
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
@@ -383,7 +429,7 @@ app.post('/saml/:orgSlug/acs', async (req: Request, res: Response) => {
       }
     }
 
-    const samlToken = issueHandoffToken(uid, config.orgId, attributes);
+    const samlToken = await issueHandoffToken(uid, config.orgId, attributes);
 
     const relayState =
       normalizeString((req.body as any)?.RelayState) ||
@@ -420,7 +466,7 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
   const samlToken = (req.body as any)?.samlToken;
   if (!samlToken) return res.status(400).json({ error: 'Missing SAML handoff token' });
 
-  const payload = consumeHandoffToken(String(samlToken));
+  const payload = await consumeHandoffToken(String(samlToken));
   if (!payload) return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
 
   const { uid, orgId, attributes } = payload;
@@ -979,6 +1025,100 @@ app.post('/internal/orgs/:orgId/approve', requireInternal, async (req: Request, 
   }
 });
 
+// ---- Internal: grant super-admin claim to a user ----
+
+app.post('/internal/users/:uid/grant-super-admin', requireInternal, async (req: Request, res: Response) => {
+  const { uid } = req.params as { uid: string };
+  try {
+    await admin.auth().setCustomUserClaims(uid, { superAdmin: true });
+    console.log(`[super-admin] Granted superAdmin claim to uid ${uid}`);
+    return res.json({ uid, superAdmin: true });
+  } catch (e) {
+    console.error('[super-admin] grant error:', e);
+    return res.status(500).json({ error: 'Failed to grant super-admin claim' });
+  }
+});
+
+// ---- Super-admin: list pending org applications ----
+
+app.get('/super-admin/org-applications', requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const snap = await admin.firestore()
+      .collection('orgApplications')
+      .where('reviewStatus', '==', 'pending')
+      .orderBy('submittedAt', 'desc')
+      .get();
+
+    const applications = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        orgId: d.id,
+        name: data.name ?? null,
+        slug: data.slug ?? null,
+        founderEmail: data.founderEmail ?? null,
+        authMethod: data.authMethod ?? null,
+        submittedAt: data.submittedAt?.toDate?.()?.toISOString() ?? null,
+        reviewStatus: data.reviewStatus ?? 'pending',
+      };
+    });
+
+    return res.json({ applications });
+  } catch (e) {
+    console.error('[super-admin] list applications error:', e);
+    return res.status(500).json({ error: 'Failed to list applications' });
+  }
+});
+
+// ---- Super-admin: approve org application ----
+
+app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  try {
+    const batch = admin.firestore().batch();
+    batch.update(admin.firestore().collection('orgs').doc(orgId), {
+      approved: true,
+      reviewStatus: 'approved',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
+      reviewStatus: 'approved',
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    console.log(`[super-admin] Approved org ${orgId}`);
+    return res.json({ orgId, approved: true });
+  } catch (e) {
+    console.error('[super-admin] approve error:', e);
+    return res.status(500).json({ error: 'Failed to approve org' });
+  }
+});
+
+// ---- Super-admin: reject org application ----
+
+app.post('/super-admin/org-applications/:orgId/reject', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  const { reason } = req.body as { reason?: string };
+  try {
+    const batch = admin.firestore().batch();
+    batch.update(admin.firestore().collection('orgs').doc(orgId), {
+      approved: false,
+      reviewStatus: 'rejected',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
+      reviewStatus: 'rejected',
+      rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      rejectionReason: reason ?? null,
+    });
+    await batch.commit();
+    console.log(`[super-admin] Rejected org ${orgId}`);
+    return res.json({ orgId, rejected: true });
+  } catch (e) {
+    console.error('[super-admin] reject error:', e);
+    return res.status(500).json({ error: 'Failed to reject org' });
+  }
+});
+
 // ---- Internal: create new org ----
 
 app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) => {
@@ -1031,6 +1171,136 @@ app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) 
   } catch (e) {
     console.error('Create org error:', e);
     return res.status(500).json({ error: 'Failed to create org' });
+  }
+});
+
+// ---------- Push Notifications ----------
+
+/**
+ * Sends push notifications via the Expo Push API.
+ * Batches up to 100 messages per request as required by Expo.
+ */
+async function sendExpoPushNotifications(
+  tokens: string[],
+  title: string,
+  body: string,
+): Promise<void> {
+  const valid = tokens.filter((t) => t && t.startsWith('ExponentPushToken['));
+  if (valid.length === 0) return;
+
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < valid.length; i += BATCH_SIZE) {
+    const batch = valid.slice(i, i + BATCH_SIZE).map((to) => ({
+      to,
+      title,
+      body,
+      sound: 'default',
+    }));
+
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+      },
+      body: JSON.stringify(batch),
+    });
+  }
+}
+
+/** POST /notifications/stop-request-created
+ *  Called when a student creates a stop request.
+ *  Reads all driver/admin users in the org and sends them a push notification.
+ */
+app.post('/notifications/stop-request-created', async (req: Request, res: Response) => {
+  const { orgId } = req.body as { orgId?: string };
+  if (!orgId) return res.status(400).json({ error: 'orgId required' });
+
+  try {
+    const usersSnap = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users')
+      .get();
+
+    const tokens: string[] = [];
+    usersSnap.forEach((d) => {
+      const data = d.data();
+      if ((data.role === 'driver' || data.role === 'admin') && data.expoPushToken) {
+        tokens.push(data.expoPushToken as string);
+      }
+    });
+
+    await sendExpoPushNotifications(tokens, 'New Stop Request', 'A student is requesting a pickup.');
+    return res.json({ sent: tokens.length });
+  } catch (e) {
+    console.error('[notifications] stop-request-created error:', e);
+    return res.status(500).json({ error: 'Failed to send notifications' });
+  }
+});
+
+/** POST /notifications/stop-arrived
+ *  Called when the driver's bus enters a stop's arrival radius.
+ *  Sends a push notification to the student who made the request.
+ */
+app.post('/notifications/stop-arrived', async (req: Request, res: Response) => {
+  const { orgId, studentUid, stopName } = req.body as {
+    orgId?: string;
+    studentUid?: string;
+    stopName?: string;
+  };
+  if (!orgId || !studentUid) return res.status(400).json({ error: 'orgId and studentUid required' });
+
+  try {
+    const userDoc = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').doc(studentUid)
+      .get();
+    const token = userDoc.data()?.expoPushToken as string | undefined;
+
+    if (token) {
+      await sendExpoPushNotifications(
+        [token],
+        'Bus Arriving!',
+        `Your bus is arriving at ${stopName ?? 'your stop'}.`,
+      );
+    }
+
+    return res.json({ sent: token ? 1 : 0 });
+  } catch (e) {
+    console.error('[notifications] stop-arrived error:', e);
+    return res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
+/** POST /notifications/stop-completed
+ *  Called when a stop request is marked completed.
+ *  Sends a push notification to the student who made the request.
+ */
+app.post('/notifications/stop-completed', async (req: Request, res: Response) => {
+  const { orgId, studentUid, stopName } = req.body as {
+    orgId?: string;
+    studentUid?: string;
+    stopName?: string;
+  };
+  if (!orgId || !studentUid) return res.status(400).json({ error: 'orgId and studentUid required' });
+
+  try {
+    const userDoc = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').doc(studentUid)
+      .get();
+    const token = userDoc.data()?.expoPushToken as string | undefined;
+
+    if (token) {
+      await sendExpoPushNotifications(
+        [token],
+        'Bus Has Arrived!',
+        `The bus has completed your pickup at ${stopName ?? 'your stop'}.`,
+      );
+    }
+
+    return res.json({ sent: token ? 1 : 0 });
+  } catch (e) {
+    console.error('[notifications] stop-completed error:', e);
+    return res.status(500).json({ error: 'Failed to send notification' });
   }
 });
 
