@@ -155,7 +155,7 @@ function AuthTab() {
         </TouchableOpacity>
       ))}
 
-      <Text style={styles.sectionLabel} style={{ marginTop: spacing.section }}>
+      <Text style={[styles.sectionLabel, { marginTop: spacing.section }]}>
         Allowed Email Domains
       </Text>
       <TextInput

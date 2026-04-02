@@ -2,7 +2,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { initializeAuth, getAuth, getReactNativePersistence, Auth } from 'firebase/auth';
+import { initializeAuth, getAuth, Auth } from 'firebase/auth';
+import { getReactNativePersistence } from 'firebase/auth/react-native';
 
 // Values are read from EXPO_PUBLIC_FIREBASE_* env vars at Metro bundle time.
 // Hardcoded fallbacks keep local dev working before .env is populated —

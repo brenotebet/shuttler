@@ -6,12 +6,13 @@ import { SHUTTLER_API_URL } from '../../config';
 // For iOS: makes the browser session return cleanly
 WebBrowser.maybeCompleteAuthSession?.();
 
-export async function startSamlLogin(orgSlug: string): Promise<string | null> {
+export async function startSamlLogin(orgSlug?: string): Promise<string | null> {
   if (!SHUTTLER_API_URL) {
     throw new Error('Missing SHUTTLER_API_URL in config/.env');
   }
 
-  const samlLoginUrl = `${SHUTTLER_API_URL}/saml/${orgSlug}/login`;
+  const slug = orgSlug ?? process.env.EXPO_PUBLIC_SAML_ORG_SLUG ?? '';
+  const samlLoginUrl = `${SHUTTLER_API_URL}/saml/${slug}/login`;
 
   // Use a runtime-aware callback URL so this works in Expo Go/dev client and standalone builds.
   const returnTo = Linking.createURL('sso');

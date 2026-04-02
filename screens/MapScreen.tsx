@@ -763,7 +763,7 @@ export default function MapScreen() {
 
         // Evict stale buses: write online: false for any bus that dropped out of the visible window
         Object.keys(busRegions.current).forEach((evictedId) => {
-          if (!recentIds.includes(evictedId)) {
+          if (!recentIds.includes(evictedId) && orgId) {
             void setDoc(
               doc(db, 'orgs', orgId, 'buses', evictedId),
               { online: false, updatedAt: serverTimestamp() },
