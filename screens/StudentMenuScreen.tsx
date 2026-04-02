@@ -53,6 +53,13 @@ export default function StudentMenuScreen() {
         />
 
         <MenuItem
+          icon="help-outline"
+          title="How to Use"
+          description="Step-by-step guide to requesting a ride"
+          onPress={() => navigation.navigate('HowToUse', { role: 'student' })}
+        />
+
+        <MenuItem
           icon="logout"
           title="Logout"
           description="Sign out of your account"

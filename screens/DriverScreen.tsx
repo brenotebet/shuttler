@@ -13,6 +13,7 @@ import {
   onSnapshot,
   doc,
   serverTimestamp,
+  setDoc,
   limit,
   getDoc,
   getDocs,
@@ -176,6 +177,17 @@ export default function DriverScreen() {
     if (orgRoutes.length === 0) return null;
     return orgRoutes.find((r) => r.id === selectedRouteId) ?? orgRoutes[0];
   }, [orgRoutes, selectedRouteId]);
+
+  // Keep the bus doc's routeId field in sync so MapScreen can do route-aware bus matching.
+  useEffect(() => {
+    if (!driverId || !orgId) return;
+    const routeId = activeRoute?.id ?? null;
+    void setDoc(
+      doc(db, 'orgs', orgId, 'buses', driverId),
+      { routeId },
+      { merge: true },
+    );
+  }, [activeRoute?.id, driverId, orgId]);
 
   // Ordered stop list: follows the active route's stopIds, falls back to orgStops if no routes.
   const routeOrderedStops: Stop[] = useMemo(() => {
@@ -598,7 +610,7 @@ export default function DriverScreen() {
 
   useEffect(() => {
     if (!isSharing) return;
-    const pending = requests.filter((r) => r.status === 'pending' && !isExpiredRequest(r));
+    const pending = requests.filter((r) => isActiveStopStatus(r?.status) && !isExpiredRequest(r));
     const newOnes = pending.filter((r) => !seenRequestIdsRef.current.has(r.id));
     if (newOnes.length > 0) {
       const stopName = newOnes[0].stop?.name ?? 'a stop';

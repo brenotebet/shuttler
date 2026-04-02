@@ -170,7 +170,7 @@ function convexHull(pts: { latitude: number; longitude: number }[]) {
 // Expand each hull point outward from the centroid by padMeters
 function expandHull(
   hull: { latitude: number; longitude: number }[],
-  padMeters = 180,
+  padMeters = 350,
 ) {
   if (hull.length === 0) return hull;
   const cx = hull.reduce((s, p) => s + p.latitude, 0) / hull.length;
@@ -186,6 +186,34 @@ function expandHull(
       longitude: p.longitude + (dlon / len) * lonPad,
     };
   });
+}
+
+// Chaikin smoothing — each iteration cuts corners by replacing every edge
+// A→B with two new points at 25% and 75% along the edge, then closing the
+// loop. After 3 passes a 3-point triangle becomes a smooth 24-point blob.
+function smoothHull(
+  pts: { latitude: number; longitude: number }[],
+  iterations = 3,
+): { latitude: number; longitude: number }[] {
+  let result = pts;
+  for (let iter = 0; iter < iterations; iter++) {
+    const next: { latitude: number; longitude: number }[] = [];
+    const n = result.length;
+    for (let i = 0; i < n; i++) {
+      const a = result[i];
+      const b = result[(i + 1) % n];
+      next.push({
+        latitude: a.latitude * 0.75 + b.latitude * 0.25,
+        longitude: a.longitude * 0.75 + b.longitude * 0.25,
+      });
+      next.push({
+        latitude: a.latitude * 0.25 + b.latitude * 0.75,
+        longitude: a.longitude * 0.25 + b.longitude * 0.75,
+      });
+    }
+    result = next;
+  }
+  return result;
 }
 
 type CameraMode = 'free' | 'followUser' | 'overview';
@@ -208,6 +236,7 @@ export default function MapScreen() {
   const { org } = useOrg();
   const { orgId } = useAuth();
   const stops = org?.stops ?? [];
+  const orgRoutes = org?.routes ?? [];
   // Returns a Firestore CollectionReference scoped to the current org
   const orgCol = (name: string) =>
     orgId ? collection(db, 'orgs', orgId, name) : collection(db, name);
@@ -217,7 +246,7 @@ export default function MapScreen() {
   const STOPS_BOUNDS = useMemo(() => getStopsBounds(stops), [stops]);
   const PADDED_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.3), [STOPS_BOUNDS]);
   const CLAMP_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.25), [STOPS_BOUNDS]);
-  const campusHull = useMemo(() => expandHull(convexHull(stops)), [stops]);
+  const campusHull = useMemo(() => smoothHull(expandHull(convexHull(stops))), [stops]);
   const INITIAL_REGION = useMemo(() => {
     if (org?.mapCenter) {
       return {
@@ -247,6 +276,26 @@ export default function MapScreen() {
   const [driverId, setDriverId] = useState<string | null>(null);
   const [stopsBefore, setStopsBefore] = useState<number | null>(null);
   const [busOnline, setBusOnline] = useState<boolean>(false);
+  const [busRouteIds, setBusRouteIds] = useState<Record<string, string | null>>({});
+
+  // Map from stopId → { routeId, routeName, position (1-based), totalStops }
+  // Used to show route position in the stop list and ride card.
+  const routeStopMap = useMemo(() => {
+    const map = new Map<string, { routeId: string; routeName: string; position: number; totalStops: number }>();
+    for (const route of orgRoutes) {
+      route.stopIds.forEach((stopId, idx) => {
+        if (!map.has(stopId)) {
+          map.set(stopId, {
+            routeId: route.id,
+            routeName: route.name,
+            position: idx + 1,
+            totalStops: route.stopIds.length,
+          });
+        }
+      });
+    }
+    return map;
+  }, [orgRoutes]);
 
   const [busLocations, setBusLocations] = useState<{
     [id: string]: {
@@ -386,12 +435,19 @@ export default function MapScreen() {
   const resolvedDriverId = useMemo(() => {
     if (!request?.stop) return driverId;
 
+    // If a specific driver was assigned and is still visible, keep them.
     if (driverId && (busLocations[driverId] || lastCoords.current[driverId])) {
       return driverId;
     }
 
-    let bestId: string | null = null;
-    let bestDist = Number.POSITIVE_INFINITY;
+    const requestRouteId: string | null = request?.routeId ?? null;
+
+    // Two-pass: first pick the closest bus on the correct route,
+    // fall back to closest bus overall only if no route match exists.
+    let routeMatchId: string | null = null;
+    let routeMatchDist = Number.POSITIVE_INFINITY;
+    let anyBestId: string | null = null;
+    let anyBestDist = Number.POSITIVE_INFINITY;
 
     for (const id of activeBusIds) {
       const loc = busLocations[id] || lastCoords.current[id];
@@ -404,14 +460,18 @@ export default function MapScreen() {
         request.stop.longitude,
       );
 
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestId = id;
+      if (requestRouteId && busRouteIds[id] === requestRouteId && dist < routeMatchDist) {
+        routeMatchDist = dist;
+        routeMatchId = id;
+      }
+      if (dist < anyBestDist) {
+        anyBestDist = dist;
+        anyBestId = id;
       }
     }
 
-    return bestId;
-  }, [activeBusIds, busLocations, driverId, request?.stop]);
+    return routeMatchId ?? anyBestId;
+  }, [activeBusIds, busLocations, busRouteIds, driverId, request?.routeId, request?.stop]);
 
   // ✅ NEW: for “hide only destination stop marker while active”
   const destinationStopId = request?.stop?.id ?? request?.stopId ?? null;
@@ -625,6 +685,7 @@ export default function MapScreen() {
               longitude,
               timestamp,
               online,
+              routeId: typeof data.routeId === 'string' ? data.routeId : null,
             };
           })
           .filter(Boolean)
@@ -690,6 +751,10 @@ export default function MapScreen() {
         });
 
         setBusLocations(newLocations);
+
+        const newRouteIds: Record<string, string | null> = {};
+        visibleBuses.forEach((bus: any) => { newRouteIds[bus.id] = bus.routeId ?? null; });
+        setBusRouteIds(newRouteIds);
 
         const recentIds = visibleBuses.map((b: any) => b.id);
         setActiveBusIds(recentIds);
@@ -858,10 +923,19 @@ export default function MapScreen() {
       setRouteCoords(coords);
       setEta(etaText);
 
+      // Use the route the student requested on (stored in request.routeId).
+      // Falls back to the flat stops array if no route is configured.
+      const requestRoute = orgRoutes.find((r) => r.id === (request.routeId ?? null)) ?? null;
+      const orderedStops = requestRoute
+        ? requestRoute.stopIds
+            .map((id) => stops.find((s) => s.id === id))
+            .filter((s): s is typeof stops[0] => s !== undefined)
+        : stops;
+
       const getNearestStopIndex = (lat: number, lon: number) => {
         let nearestIdx = 0;
         let minDist = Number.MAX_VALUE;
-        stops.forEach((stop, idx) => {
+        orderedStops.forEach((stop, idx) => {
           const d = getDistanceInMeters(lat, lon, stop.latitude, stop.longitude);
           if (d < minDist) {
             minDist = d;
@@ -872,12 +946,12 @@ export default function MapScreen() {
       };
 
       const busStopIdx = getNearestStopIndex(assigned.latitude, assigned.longitude);
-      const requestedStopIdx = stops.findIndex((stop) => stop.id === request.stop.id);
+      const requestedStopIdx = orderedStops.findIndex((stop) => stop.id === request.stop.id);
 
       if (requestedStopIdx < 0) {
         setStopsBefore(null);
       } else {
-        const rawDiff = (requestedStopIdx - busStopIdx + stops.length) % stops.length;
+        const rawDiff = (requestedStopIdx - busStopIdx + orderedStops.length) % orderedStops.length;
         setStopsBefore(Math.max(0, rawDiff - 1));
       }
     } catch (error) {
@@ -1183,9 +1257,10 @@ const handleRequest = async (index: number) => {
           latitude: selectedStop.latitude,
           longitude: selectedStop.longitude,
         },
-        status: 'pending',
+        status: 'accepted',
         driverUid: null,
-        acceptedAt: null,
+        acceptedAt: serverTimestamp(),
+        routeId: routeStopMap.get(selectedStop.id)?.routeId ?? null,
         createdAt: serverTimestamp(),
         expiresAtMs: Date.now() + STUDENT_REQUEST_TTL_MS,
       });
@@ -1296,6 +1371,15 @@ const handleRequest = async (index: number) => {
                     }}
                   >
                     <Text style={styles.locationText}>{item.name}</Text>
+                    {(() => {
+                      const info = routeStopMap.get(item.id);
+                      if (!info) return null;
+                      return (
+                        <Text style={styles.locationRouteMeta}>
+                          Stop {info.position} of {info.totalStops} · {info.routeName}
+                        </Text>
+                      );
+                    })()}
                   </TouchableOpacity>
                 )}
               />
@@ -1526,6 +1610,16 @@ const handleRequest = async (index: number) => {
               </View>
             </View>
 
+            {(() => {
+              const info = routeStopMap.get(request.stop?.id);
+              if (!info) return null;
+              return (
+                <Text style={styles.cardRouteMeta}>
+                  Stop {info.position} of {info.totalStops} · {info.routeName}
+                </Text>
+              );
+            })()}
+
             <Text style={styles.cardSubtitle}>
               {request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
                 ? 'Your request timed out after 15 minutes.'
@@ -1544,7 +1638,7 @@ const handleRequest = async (index: number) => {
               </View>
             )}
 
-            {request.studentUid === studentUid && request.status === 'pending' && (
+            {request.studentUid === studentUid && (request.status === 'accepted' || request.status === 'pending') && (
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={async () => {
@@ -1651,6 +1745,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#eee',
   },
   locationText: { fontSize: 16, color: '#333' },
+  locationRouteMeta: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
 
   fabWrapBottomLeft: {
     position: 'absolute',
@@ -1730,6 +1825,7 @@ const styles = StyleSheet.create({
   cardBadgeText: { fontSize: 12, fontWeight: '600', color: '#111' },
   cardTitle: { fontSize: 18, fontWeight: '600', marginBottom: 6 },
   cardSubtitle: { fontSize: 14, color: '#555', marginBottom: 4 },
+  cardRouteMeta: { fontSize: 12, color: '#9ca3af', marginBottom: 4 },
   cardInfoRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 },
   etaText: { fontSize: 15, fontWeight: '700', color: PRIMARY_COLOR },
   cardInfoDot: { fontSize: 14, color: '#9CA3AF' },

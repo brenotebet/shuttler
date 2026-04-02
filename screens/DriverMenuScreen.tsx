@@ -106,6 +106,13 @@ export default function DriverMenuScreen() {
         )}
 
         <MenuItem
+          icon="help-outline"
+          title="How to Use"
+          description="Step-by-step guide to the app"
+          onPress={() => navigation.navigate('HowToUse', { role: role === 'admin' ? 'admin' : 'driver' })}
+        />
+
+        <MenuItem
           icon="logout"
           title="Logout"
           description="Sign out of your account"

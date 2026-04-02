@@ -1213,7 +1213,7 @@ async function sendExpoPushNotifications(
  *  Called when a student creates a stop request.
  *  Reads all driver/admin users in the org and sends them a push notification.
  */
-app.post('/notifications/stop-request-created', async (req: Request, res: Response) => {
+app.post('/notifications/stop-request-created', requireAuth, async (req: Request, res: Response) => {
   const { orgId } = req.body as { orgId?: string };
   if (!orgId) return res.status(400).json({ error: 'orgId required' });
 
@@ -1242,7 +1242,7 @@ app.post('/notifications/stop-request-created', async (req: Request, res: Respon
  *  Called when the driver's bus enters a stop's arrival radius.
  *  Sends a push notification to the student who made the request.
  */
-app.post('/notifications/stop-arrived', async (req: Request, res: Response) => {
+app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: Response) => {
   const { orgId, studentUid, stopName } = req.body as {
     orgId?: string;
     studentUid?: string;
@@ -1275,7 +1275,7 @@ app.post('/notifications/stop-arrived', async (req: Request, res: Response) => {
  *  Called when a stop request is marked completed.
  *  Sends a push notification to the student who made the request.
  */
-app.post('/notifications/stop-completed', async (req: Request, res: Response) => {
+app.post('/notifications/stop-completed', requireAuth, async (req: Request, res: Response) => {
   const { orgId, studentUid, stopName } = req.body as {
     orgId?: string;
     studentUid?: string;

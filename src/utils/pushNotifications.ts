@@ -3,11 +3,16 @@
 // All functions are fire-and-forget; errors are swallowed so callers never need
 // to handle notification failures.
 import { SHUTTLER_API_URL } from '../../config';
+import { auth } from '../../firebase/firebaseconfig';
 
 async function post(path: string, body: object): Promise<void> {
+  const token = await auth.currentUser?.getIdToken();
   await fetch(`${SHUTTLER_API_URL}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify(body),
   });
 }

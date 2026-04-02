@@ -15,6 +15,7 @@ import StudentHistoryScreen from '../screens/StudentHistoryScreen';
 import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
 import CreateOrgScreen from '../screens/CreateOrgScreen';
 import SuperAdminScreen from '../screens/SuperAdminScreen';
+import HowToUseScreen from '../screens/HowToUseScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -36,6 +37,7 @@ export type RootStackParamList = {
   AdminDriver: undefined;
   AdminOrgSetup: undefined;
   SuperAdmin: undefined;
+  HowToUse: { role: 'student' | 'driver' | 'admin' };
 
   SubscriptionExpired: undefined;
 };
@@ -101,6 +103,7 @@ export default function StackNavigator() {
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
+          <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : role === 'driver' || role === 'admin' ? (
         // Logged in as driver/admin with stops configured
@@ -110,6 +113,7 @@ export default function StackNavigator() {
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
           {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
+          <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : (
         // Logged in as student (default)
@@ -117,6 +121,7 @@ export default function StackNavigator() {
           <Stack.Screen name="StudentHome" component={StudentTabs} />
           <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
           {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
+          <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       )}
     </Stack.Navigator>
