@@ -5,10 +5,10 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebaseconfig';
 import { useOrg } from '../org/OrgContext';
 
-type Role = 'student' | 'driver' | 'admin';
+type Role = 'student' | 'driver' | 'admin' | 'parent';
 
 function normalizeRole(value: unknown): Role {
-  if (value === 'driver' || value === 'admin' || value === 'student') return value;
+  if (value === 'driver' || value === 'admin' || value === 'student' || value === 'parent') return value;
   return 'student';
 }
 

@@ -132,38 +132,27 @@ service cloud.firestore {
         || resource.data.status == 'accepted'
       );
 
-      // Student creates their own pending request.
+      // Student creates their own request (auto-accepted — no pending state).
       allow create: if signedIn()
         && request.resource.data.studentUid == request.auth.uid
-        && request.resource.data.status == 'pending'
+        && request.resource.data.status == 'accepted'
         && request.resource.data.orgId == orgId
         && request.resource.data.stopId is string
         && orgIsActive(orgId);
 
       allow update: if signedIn() && (
         (
-          // Student cancels their own pending request.
+          // Student cancels their own accepted request.
           resource.data.studentUid == request.auth.uid
-          && resource.data.status == 'pending'
-          && request.resource.data.status in ['pending', 'cancelled']
+          && resource.data.status == 'accepted'
+          && request.resource.data.status == 'cancelled'
         )
         ||
         (
-          // Driver accepts an unclaimed request.
-          isDriver(orgId)
-          && resource.data.status == 'pending'
-          && resource.data.driverUid == null
-          && request.resource.data.status == 'accepted'
-          && request.resource.data.driverUid == request.auth.uid
-        )
-        ||
-        (
-          // Driver completes or cancels their own accepted request.
+          // Driver completes or cancels an accepted request.
           isDriver(orgId)
           && resource.data.status == 'accepted'
-          && resource.data.driverUid == request.auth.uid
           && request.resource.data.status in ['completed', 'cancelled']
-          && request.resource.data.driverUid == request.auth.uid
         )
       );
 

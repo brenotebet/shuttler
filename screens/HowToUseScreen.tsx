@@ -152,15 +152,50 @@ const ADMIN_STEPS: Step[] = [
   },
 ];
 
+const PARENT_STEPS: Step[] = [
+  {
+    icon: 'phone-iphone',
+    title: 'Sign In with Your Phone',
+    body: 'Open the app and select your school district. Enter your mobile number and we\'ll send a one-time code to verify it — no password needed.',
+    color: '#3B82F6',
+  },
+  {
+    icon: 'map',
+    title: 'See the Live Bus Map',
+    body: 'Once signed in you\'ll see the map with your child\'s bus stop and the shuttle\'s real-time position. The bus icon moves as the driver reports location.',
+    color: '#10B981',
+  },
+  {
+    icon: 'place',
+    title: 'Find Your Child\'s Stop',
+    body: 'Stop pins are shown on the map. Tap any stop to see its name and how many students are waiting there. Your child\'s regular stop is closest to your address.',
+    color: '#8B5CF6',
+  },
+  {
+    icon: 'notifications-active',
+    title: 'Get Notified When Bus Arrives',
+    body: 'You\'ll receive a push notification the moment the driver marks the bus as arrived at your child\'s stop — so you know exactly when to send them out.',
+    color: '#F59E0B',
+  },
+  {
+    icon: 'history',
+    title: 'View Past Rides',
+    body: 'Tap Menu → History to see a log of all completed pickups, including stop names and timestamps. Useful for confirming your child was picked up on time.',
+    color: '#64748B',
+  },
+];
+
 function stepsForRole(role: RootStackParamList['HowToUse']['role']): Step[] {
   if (role === 'student') return STUDENT_STEPS;
   if (role === 'admin') return ADMIN_STEPS;
+  if (role === 'parent') return PARENT_STEPS;
   return DRIVER_STEPS;
 }
 
 function titleForRole(role: RootStackParamList['HowToUse']['role']): string {
   if (role === 'student') return 'How to Ride';
   if (role === 'admin') return 'Admin Guide';
+  if (role === 'parent') return 'Parent Guide';
   return 'Driver Guide';
 }
 

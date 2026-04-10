@@ -25,7 +25,7 @@ import { useOrg, Stop, Route } from '../src/org/OrgContext';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
-import { getPlanLimits, vehicleLimitText, routeLimitText } from '../src/constants/planLimits';
+import { getPlanLimits, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -90,7 +90,7 @@ function ProfileTab() {
 
 // ---- Auth Settings Tab ----
 
-type AuthMethod = 'saml' | 'email';
+type AuthMethod = 'saml' | 'email' | 'phone';
 
 function AuthTab() {
   const { org, refreshOrg } = useOrg();
@@ -142,7 +142,7 @@ function AuthTab() {
     <ScrollView contentContainerStyle={styles.tabContent}>
       <Text style={styles.sectionLabel}>Authentication Method</Text>
 
-      {(['email', 'saml'] as AuthMethod[]).map((m) => (
+      {(['email', 'phone', 'saml'] as AuthMethod[]).map((m) => (
         <TouchableOpacity
           key={m}
           style={[styles.radioRow, authMethod === m && styles.radioRowActive]}
@@ -150,7 +150,11 @@ function AuthTab() {
         >
           <View style={[styles.radio, authMethod === m && styles.radioSelected]} />
           <Text style={styles.radioLabel}>
-            {m === 'email' ? 'Email / Password' : 'SAML SSO (IT-managed)'}
+            {m === 'email'
+              ? 'Email / Password'
+              : m === 'phone'
+              ? 'Phone Number (SMS) — K-12 parents'
+              : 'SAML SSO (IT-managed)'}
           </Text>
         </TouchableOpacity>
       ))}
@@ -273,6 +277,13 @@ function StopsTab() {
       Alert.alert('Coordinates required', 'Tap the map or enter latitude and longitude.');
       return;
     }
+    if (stops.length >= planLimits.maxStops) {
+      Alert.alert(
+        'Stop limit reached',
+        `Your ${planLimits.label} plan allows ${stopLimitText(planLimits)}. Upgrade to Campus for unlimited stops.`,
+      );
+      return;
+    }
     const newStop: Stop = {
       id: `stop_${Date.now()}`,
       name: pendingName.trim(),
@@ -283,7 +294,7 @@ function StopsTab() {
     setPendingName('');
     setPendingLat('');
     setPendingLng('');
-  }, [pendingCoords, pendingName]);
+  }, [pendingCoords, pendingName, stops.length, planLimits]);
 
   const handleDeleteStop = useCallback((id: string) => {
     Alert.alert('Remove stop', 'Remove this stop?', [
@@ -418,7 +429,12 @@ function StopsTab() {
 
       <ScrollView style={styles.stopsPanel} nestedScrollEnabled>
         {/* --- Stops section --- */}
-        <Text style={styles.sectionLabel}>Stops</Text>
+        <View style={styles.routesHeader}>
+          <Text style={styles.sectionLabel}>Stops</Text>
+          <Text style={styles.planLimitBadge}>
+            {stops.length}/{planLimits.maxStops === Infinity ? '∞' : planLimits.maxStops}
+          </Text>
+        </View>
         <Text style={styles.hint}>Tap the map to fill coordinates, or type them in directly.</Text>
 
         <View style={styles.addStopForm}>
@@ -602,12 +618,14 @@ const ROLE_LABELS: Record<string, string> = {
   student: 'Student',
   driver: 'Driver',
   admin: 'Admin',
+  parent: 'Parent',
 };
 
 const ROLE_COLORS: Record<string, string> = {
   student: '#3b82f6',
   driver: '#f59e0b',
   admin: PRIMARY_COLOR,
+  parent: '#10b981',
 };
 
 function UsersTab() {

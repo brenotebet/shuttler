@@ -37,7 +37,7 @@ export type RootStackParamList = {
   AdminDriver: undefined;
   AdminOrgSetup: undefined;
   SuperAdmin: undefined;
-  HowToUse: { role: 'student' | 'driver' | 'admin' };
+  HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent' };
 
   SubscriptionExpired: undefined;
 };
@@ -103,6 +103,13 @@ export default function StackNavigator() {
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
+          <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+        </>
+      ) : role === 'parent' ? (
+        // Parents see the same map as students (tracking-only UX can be refined later)
+        <>
+          <Stack.Screen name="StudentHome" component={StudentTabs} />
+          <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : role === 'driver' || role === 'admin' ? (

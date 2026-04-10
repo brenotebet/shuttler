@@ -10,12 +10,15 @@ import ScreenContainer from '../components/ScreenContainer';
 import MenuItem from '../components/MenuItem';
 import { auth } from '../firebase/firebaseconfig';
 import { clearSamlSession } from '../src/auth/samlAuth';
+import { useAuth } from '../src/auth/AuthProvider';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { spacing } from '../src/styles/common';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
 export default function StudentMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { role } = useAuth();
+  const isParent = role === 'parent';
 
   const handleLogout = () => {
     Alert.alert(
@@ -40,23 +43,25 @@ export default function StudentMenuScreen() {
   return (
     <ScreenContainer style={styles.container}>
       <View style={styles.hero}>
-        <Text style={styles.title}>Student Center</Text>
-        <Text style={styles.subtitle}>Manage your rides and profile</Text>
+        <Text style={styles.title}>{isParent ? 'Parent Center' : 'Student Center'}</Text>
+        <Text style={styles.subtitle}>
+          {isParent ? 'Track your child\'s shuttle' : 'Manage your rides and profile'}
+        </Text>
       </View>
 
       <View style={styles.menuSection}>
         <MenuItem
           icon="history"
           title="History"
-          description="Take a look at your past completed rides"
+          description={isParent ? 'View past shuttle pickups' : 'Take a look at your past completed rides'}
           onPress={() => navigation.navigate('StudentHistory')}
         />
 
         <MenuItem
           icon="help-outline"
           title="How to Use"
-          description="Step-by-step guide to requesting a ride"
-          onPress={() => navigation.navigate('HowToUse', { role: 'student' })}
+          description={isParent ? 'Guide for parents tracking the shuttle' : 'Step-by-step guide to requesting a ride'}
+          onPress={() => navigation.navigate('HowToUse', { role: isParent ? 'parent' : 'student' })}
         />
 
         <MenuItem

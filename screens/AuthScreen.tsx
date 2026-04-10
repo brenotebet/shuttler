@@ -18,8 +18,10 @@ import {
 } from 'react-native';
 import { type RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { signInWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification } from 'firebase/auth';
+import { signInWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+import { app } from '../firebase/firebaseconfig';
 import * as Linking from 'expo-linking';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import ScreenContainer from '../components/ScreenContainer';
@@ -389,6 +391,132 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
   );
 }
 
+// ---- Phone Panel ----
+// Used for K-12 parent sign-in. Sends an SMS OTP via Firebase Phone Auth.
+// First-time users are created with role:'parent' in the org's user collection.
+
+function PhonePanel({ orgId }: { orgId: string }) {
+  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [verificationId, setVerificationId] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSendCode = useCallback(async () => {
+    const cleaned = phoneNumber.trim();
+    if (!cleaned.startsWith('+')) {
+      showAlert('Enter your phone number in international format, e.g. +1 555 000 1234.', 'Format required');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const result = await signInWithPhoneNumber(auth, cleaned, recaptchaVerifier.current!);
+      setVerificationId(result.verificationId);
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Failed to send code. Check the number and try again.', 'Error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [phoneNumber]);
+
+  const handleVerifyCode = useCallback(async () => {
+    if (!verificationId || !code.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const credential = PhoneAuthProvider.credential(verificationId, code.trim());
+      const result = await signInWithCredential(auth, credential);
+      const userRef = doc(db, 'orgs', orgId, 'users', result.user.uid);
+      const snap = await getDoc(userRef);
+      if (!snap.exists()) {
+        await setDoc(userRef, {
+          uid: result.user.uid,
+          phone: result.user.phoneNumber ?? null,
+          displayName: result.user.displayName ?? result.user.phoneNumber ?? 'Parent',
+          role: 'parent',
+          lastLoginAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
+      }
+    } catch (e: any) {
+      const msg =
+        e?.code === 'auth/invalid-verification-code'
+          ? 'That code is incorrect. Please try again.'
+          : e?.code === 'auth/code-expired'
+          ? 'The code expired. Tap "Send Code" to get a new one.'
+          : e?.message ?? 'Verification failed.';
+      showAlert(msg, 'Error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [verificationId, code, orgId]);
+
+  return (
+    <View style={styles.card}>
+      <FirebaseRecaptchaVerifierModal
+        ref={recaptchaVerifier}
+        firebaseConfig={app.options}
+        attemptInvisibleVerification
+      />
+
+      <InfoBanner
+        icon="sms"
+        title="Parent sign-in"
+        description="Enter your phone number and we'll send a one-time code to verify it."
+        style={{ marginBottom: spacing.item }}
+      />
+
+      {!verificationId ? (
+        <>
+          <TextInput
+            style={styles.input}
+            placeholder="+1 555 000 1234"
+            value={phoneNumber}
+            onChangeText={setPhoneNumber}
+            keyboardType="phone-pad"
+            autoCorrect={false}
+            placeholderTextColor="#aaa"
+          />
+          <AppButton
+            label={isSubmitting ? 'Sending…' : 'Send Code'}
+            onPress={handleSendCode}
+            style={styles.primaryButton}
+            disabled={isSubmitting || !phoneNumber.trim()}
+          />
+        </>
+      ) : (
+        <>
+          <Text style={styles.phoneHint}>
+            Code sent to {phoneNumber}
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="6-digit code"
+            value={code}
+            onChangeText={setCode}
+            keyboardType="number-pad"
+            autoCorrect={false}
+            placeholderTextColor="#aaa"
+          />
+          <AppButton
+            label={isSubmitting ? 'Verifying…' : 'Verify & Sign In'}
+            onPress={handleVerifyCode}
+            style={styles.primaryButton}
+            disabled={isSubmitting || code.trim().length < 6}
+          />
+          <TouchableOpacity
+            onPress={() => { setVerificationId(null); setCode(''); }}
+            style={styles.forgotButton}
+          >
+            <Text style={styles.forgotText}>Wrong number? Start over</Text>
+          </TouchableOpacity>
+        </>
+      )}
+    </View>
+  );
+}
+
 // ---- Main AuthScreen ----
 
 export default function AuthScreen() {
@@ -408,6 +536,8 @@ export default function AuthScreen() {
         return <SamlPanel orgSlug={org.slug} />;
       case 'email':
         return <EmailPanel orgSlug={org.slug} orgId={org.orgId} />;
+      case 'phone':
+        return <PhonePanel orgId={org.orgId} />;
       default:
         return (
           <View style={styles.card}>
@@ -590,5 +720,11 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     fontSize: 14,
+  },
+  phoneHint: {
+    fontSize: 13,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: spacing.item,
   },
 });

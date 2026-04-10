@@ -24,7 +24,7 @@ export type Route = {
   stopIds: string[]; // ordered stop IDs referencing org.stops
 };
 
-export type AuthMethod = 'saml' | 'email' | 'google' | 'email+google';
+export type AuthMethod = 'saml' | 'email' | 'phone' | 'google' | 'email+google';
 
 export type OrgConfig = {
   orgId: string;
