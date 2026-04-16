@@ -246,7 +246,13 @@ export default function MapScreen() {
   const STOPS_BOUNDS = useMemo(() => getStopsBounds(stops), [stops]);
   const PADDED_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.3), [STOPS_BOUNDS]);
   const CLAMP_BOUNDS = useMemo(() => padBounds(STOPS_BOUNDS, 0.25), [STOPS_BOUNDS]);
-  const campusHull = useMemo(() => smoothHull(expandHull(convexHull(stops))), [stops]);
+  // Two-pass expansion: expand first so Chaikin has room to round corners,
+  // then expand again after smoothing to guarantee all stops sit inside the
+  // final shape (Chaikin cuts corners inward by up to ~25% of edge length).
+  const campusHull = useMemo(
+    () => expandHull(smoothHull(expandHull(convexHull(stops), 500)), 600),
+    [stops],
+  );
   const INITIAL_REGION = useMemo(() => {
     if (org?.mapCenter) {
       return {
@@ -533,19 +539,19 @@ export default function MapScreen() {
   };
 
   const fitActiveRide = () => {
-    if (!request || (request.status !== 'accepted' && request.status !== 'pending') || !driverId || !request.stop) return;
+    if (!request || (request.status !== 'accepted' && request.status !== 'pending') || !request.stop) return;
 
-    const d = busLocations[driverId] || lastCoords.current[driverId];
-    if (!d) return;
-
-    const points = [
-      { latitude: d.latitude, longitude: d.longitude },
+    const points: { latitude: number; longitude: number }[] = [
       { latitude: request.stop.latitude, longitude: request.stop.longitude },
     ];
 
-    if (userLocRef.current) {
-      points.push(userLocRef.current);
+    const busId = resolvedDriverId;
+    if (busId) {
+      const d = busLocations[busId] || lastCoords.current[busId];
+      if (d) points.push({ latitude: d.latitude, longitude: d.longitude });
     }
+
+    if (points.length < 2) return;
 
     markProgrammaticMove();
     setCameraMode('overview');
@@ -715,8 +721,7 @@ export default function MapScreen() {
 
           const prev = lastCoords.current[id];
           if (prev) {
-            const raw = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
-            headings.current[id] = quantizeBearing(raw);
+            headings.current[id] = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
           } else {
             headings.current[id] = 0;
           }
@@ -760,17 +765,6 @@ export default function MapScreen() {
         setActiveBusIds(recentIds);
 
         bumpBusTracks();
-
-        // Evict stale buses: write online: false for any bus that dropped out of the visible window
-        Object.keys(busRegions.current).forEach((evictedId) => {
-          if (!recentIds.includes(evictedId) && orgId) {
-            void setDoc(
-              doc(db, 'orgs', orgId, 'buses', evictedId),
-              { online: false, updatedAt: serverTimestamp() },
-              { merge: true },
-            );
-          }
-        });
 
         Object.keys(busRegions.current).forEach((key) => {
           if (!recentIds.includes(key)) delete busRegions.current[key];
@@ -1257,9 +1251,8 @@ const handleRequest = async (index: number) => {
           latitude: selectedStop.latitude,
           longitude: selectedStop.longitude,
         },
-        status: 'accepted',
+        status: 'pending',
         driverUid: null,
-        acceptedAt: serverTimestamp(),
         routeId: routeStopMap.get(selectedStop.id)?.routeId ?? null,
         createdAt: serverTimestamp(),
         expiresAtMs: Date.now() + STUDENT_REQUEST_TTL_MS,
@@ -1334,14 +1327,20 @@ const handleRequest = async (index: number) => {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {!rideActive && !selectedBusId && (
         <TouchableOpacity
-          style={[styles.searchContainer, { top: topOverlay }]}
-          onPress={() => setShowLocationList((prev) => !prev)}
+          style={[styles.searchContainer, { top: topOverlay }, !busOnline && styles.searchContainerOffline]}
+          onPress={() => {
+            if (!busOnline) {
+              showAlert('No buses are currently online. Please try again later.');
+              return;
+            }
+            setShowLocationList((prev) => !prev);
+          }}
           activeOpacity={0.8}
         >
-          <Text style={styles.searchText}>
-            {selectedStopIndex === null ? 'Request a stop' : stops[selectedStopIndex]?.name}
+          <Text style={[styles.searchText, !busOnline && styles.searchTextOffline]}>
+            {!busOnline ? 'No buses online' : selectedStopIndex === null ? 'Request a stop' : stops[selectedStopIndex]?.name}
           </Text>
-          <Icon name="keyboard-arrow-down" size={24} color="#888" />
+          <Icon name="keyboard-arrow-down" size={24} color={busOnline ? '#888' : '#bbb'} />
         </TouchableOpacity>
       )}
 
@@ -1722,6 +1721,8 @@ const styles = StyleSheet.create({
   },
   tipContainer: { position: 'absolute', left: 20, right: 20, zIndex: 90 },
   searchText: { flex: 1, fontSize: 16, color: '#888' },
+  searchContainerOffline: { backgroundColor: '#f3f4f6' },
+  searchTextOffline: { color: '#aaa' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 99 },
   transparentOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', zIndex: 99 },
 

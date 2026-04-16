@@ -125,15 +125,18 @@ function PasswordInput({
   onChangeText,
   placeholder,
   error,
+  label,
 }: {
   value: string;
   onChangeText: (v: string) => void;
   placeholder: string;
   error?: string;
+  label?: string;
 }) {
   const [visible, setVisible] = useState(false);
   return (
     <>
+      {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
       <View style={[styles.passwordRow, error ? styles.inputError : null]}>
         <TextInput
           style={styles.passwordInput}
@@ -310,68 +313,78 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
         <>
           <View style={styles.nameRow}>
             <View style={styles.nameField}>
+              <Text style={styles.fieldLabel}>First name</Text>
               <TextInput
                 style={[styles.input, errors.firstName ? styles.inputError : null]}
-                placeholder="First name"
+                placeholder="Jane"
                 value={firstName}
                 onChangeText={setFirstName}
                 autoCapitalize="words"
                 autoCorrect={false}
-                placeholderTextColor="#aaa"
+                placeholderTextColor="#bbb"
               />
               {errors.firstName ? <Text style={styles.errorText}>{errors.firstName}</Text> : null}
             </View>
             <View style={styles.nameField}>
+              <Text style={styles.fieldLabel}>Last name</Text>
               <TextInput
                 style={[styles.input, errors.lastName ? styles.inputError : null]}
-                placeholder="Last name"
+                placeholder="Doe"
                 value={lastName}
                 onChangeText={setLastName}
                 autoCapitalize="words"
                 autoCorrect={false}
-                placeholderTextColor="#aaa"
+                placeholderTextColor="#bbb"
               />
               {errors.lastName ? <Text style={styles.errorText}>{errors.lastName}</Text> : null}
             </View>
           </View>
 
-          <TextInput
-            style={[styles.input, errors.phone ? styles.inputError : null]}
-            placeholder="Phone number"
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-            placeholderTextColor="#aaa"
-          />
-          {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Phone number</Text>
+            <TextInput
+              style={[styles.input, errors.phone ? styles.inputError : null]}
+              placeholder="+1 555 000 1234"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              placeholderTextColor="#bbb"
+            />
+            {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
+          </View>
         </>
       )}
 
-      <TextInput
-        style={[styles.input, errors.email ? styles.inputError : null]}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholderTextColor="#aaa"
-      />
-      {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
+      <View style={styles.fieldGroup}>
+        <Text style={styles.fieldLabel}>Email address</Text>
+        <TextInput
+          style={[styles.input, errors.email ? styles.inputError : null]}
+          placeholder="you@example.com"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholderTextColor="#bbb"
+        />
+        {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
+      </View>
 
       <PasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Password"
+        placeholder="••••••••"
         error={errors.password}
+        label="Password"
       />
 
       {mode === 'signup' && (
         <PasswordInput
           value={confirmPassword}
           onChangeText={setConfirmPassword}
-          placeholder="Confirm password"
+          placeholder="••••••••"
           error={errors.confirmPassword}
+          label="Confirm password"
         />
       )}
 
@@ -604,11 +617,12 @@ const styles = StyleSheet.create({
   },
   orgHeader: {
     alignItems: 'center',
-    paddingVertical: spacing.section,
+    paddingTop: spacing.section * 3,
+    paddingBottom: spacing.section * 2,
   },
   orgLogo: {
-    width: 72,
-    height: 72,
+    width: 80,
+    height: 80,
     borderRadius: borderRadius.lg,
     marginBottom: spacing.item,
   },
@@ -618,10 +632,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   orgName: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '800',
     color: '#111',
     textAlign: 'center',
+    letterSpacing: -0.3,
   },
   banner: {
     marginHorizontal: spacing.section,
@@ -636,39 +651,50 @@ const styles = StyleSheet.create({
   },
   tabRow: {
     flexDirection: 'row',
-    marginBottom: spacing.item,
-    borderRadius: borderRadius.md,
-    backgroundColor: '#f2f2f2',
-    padding: 3,
+    marginBottom: spacing.item * 1.5,
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#f0f0f0',
   },
   tab: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 11,
     alignItems: 'center',
-    borderRadius: borderRadius.sm,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    marginBottom: -1.5,
   },
   tabActive: {
-    backgroundColor: '#fff',
-    ...cardShadow,
+    borderBottomColor: PRIMARY_COLOR,
   },
   tabText: {
-    fontSize: 13,
-    color: '#888',
+    fontSize: 14,
+    color: '#9ca3af',
     fontWeight: '500',
   },
   tabTextActive: {
     color: PRIMARY_COLOR,
     fontWeight: '700',
   },
+  fieldGroup: {
+    marginBottom: spacing.item / 2,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 5,
+    letterSpacing: 0.1,
+  },
   input: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: '#e5e7eb',
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.item,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 9,
+    paddingVertical: Platform.OS === 'ios' ? 13 : 10,
     fontSize: 15,
     color: '#111',
-    marginBottom: spacing.item / 2,
+    backgroundColor: '#fafafa',
+    marginBottom: 0,
   },
   inputError: {
     borderColor: '#dc2626',
@@ -682,7 +708,7 @@ const styles = StyleSheet.create({
   nameRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 0,
+    marginBottom: spacing.item / 2,
   },
   nameField: {
     flex: 1,
@@ -691,11 +717,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: '#e5e7eb',
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.item,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 9,
+    paddingVertical: Platform.OS === 'ios' ? 13 : 10,
     marginBottom: spacing.item / 2,
+    backgroundColor: '#fafafa',
   },
   passwordInput: {
     flex: 1,

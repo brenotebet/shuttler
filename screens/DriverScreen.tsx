@@ -290,7 +290,7 @@ export default function DriverScreen() {
         (snapshot) => {
           const buses = snapshot.docs
             .map((docSnap) => {
-              const data: any = docSnap.data();
+              const data: any = docSnap.data({ serverTimestamps: 'estimate' });
               const ts =
                 data?.updatedAt?.toDate?.() ||
                 data?.lastSeen?.toDate?.() ||
@@ -639,7 +639,7 @@ export default function DriverScreen() {
     missingUids.forEach((uid) => {
       userLookupInFlightRef.current.add(uid);
 
-      void getDoc(doc(db, 'publicUsers', uid))
+      void getDoc(doc(db, 'orgs', orgId, 'publicUsers', uid))
         .then((snap) => {
           if (!snap.exists()) return;
           const data = snap.data() as any;

@@ -87,9 +87,12 @@ export default function OrgSelectorScreen() {
 
   return (
     <ScreenContainer>
-      <View style={styles.header}>
+      <View style={styles.hero}>
+        <View style={styles.brandCircle}>
+          <Icon name="directions-bus" size={30} color="#fff" />
+        </View>
         <Text style={styles.title}>Shuttler</Text>
-        <Text style={styles.subtitle}>Select your organization to continue</Text>
+        <Text style={styles.subtitle}>Choose your school or venue</Text>
       </View>
 
       <View style={styles.searchRow}>
@@ -159,31 +162,52 @@ export default function OrgSelectorScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {
+  hero: {
     alignItems: 'center',
-    paddingTop: spacing.section,
-    paddingBottom: spacing.section,
+    paddingTop: spacing.section * 4,
+    paddingBottom: spacing.section * 2.5,
+  },
+  brandCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: PRIMARY_COLOR,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 18,
+    shadowColor: PRIMARY_COLOR,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: PRIMARY_COLOR,
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#111',
     letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: 14,
-    color: '#666',
+    color: '#6b7280',
     marginTop: 6,
   },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f2f2f2',
+    backgroundColor: '#fff',
     borderRadius: borderRadius.lg,
     marginHorizontal: spacing.section,
     marginBottom: spacing.item,
     paddingHorizontal: spacing.item,
-    height: 44,
+    height: 48,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
   searchIcon: {
     marginRight: 8,

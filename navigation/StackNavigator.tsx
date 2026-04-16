@@ -11,6 +11,7 @@ import StudentTabs from '../tabs/StudentTabs';
 import DriverTabs from '../tabs/DriverTabs';
 import DriverHistoryScreen from '../screens/DriverHistoryScreen';
 import AdminDriverScreen from '../screens/AdminDriverScreen';
+import AdminDashboardScreen from '../screens/AdminDashboardScreen';
 import StudentHistoryScreen from '../screens/StudentHistoryScreen';
 import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
 import CreateOrgScreen from '../screens/CreateOrgScreen';
@@ -35,6 +36,7 @@ export type RootStackParamList = {
   StudentHistory: undefined;
   DriverHistory: undefined;
   AdminDriver: undefined;
+  AdminDashboard: undefined;
   AdminOrgSetup: undefined;
   SuperAdmin: undefined;
   HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent' };
@@ -102,6 +104,7 @@ export default function StackNavigator() {
           <Stack.Screen name="DriverHome" component={DriverTabs} />
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+          <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
           {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
@@ -118,6 +121,7 @@ export default function StackNavigator() {
           <Stack.Screen name="DriverHome" component={DriverTabs} />
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+          <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
           <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
           {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />

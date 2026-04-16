@@ -106,7 +106,8 @@ async function assertDriverRole(uid: string, orgId: string) {
 }
 
 async function cancelActiveStopRequestsForDriver(uid: string, orgId: string) {
-  const reqCol = orgId ? collection(db, 'orgs', orgId, 'stopRequests') : collection(db, 'stopRequests');
+  if (!orgId) return;
+  const reqCol = collection(db, 'orgs', orgId, 'stopRequests');
   const byDriverUid = await getDocs(query(reqCol, where('driverUid', '==', uid)));
   const byDriverId = await getDocs(query(reqCol, where('driverId', '==', uid)));
 
@@ -132,8 +133,9 @@ async function cancelActiveStopRequestsForDriver(uid: string, orgId: string) {
 
 
 async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string, orgId: string) {
-  const busCol = orgId ? collection(db, 'orgs', orgId, 'buses') : collection(db, 'buses');
-  const reqCol = orgId ? collection(db, 'orgs', orgId, 'stopRequests') : collection(db, 'stopRequests');
+  if (!orgId) return;
+  const busCol = collection(db, 'orgs', orgId, 'buses');
+  const reqCol = collection(db, 'orgs', orgId, 'stopRequests');
 
   const busesSnap = await getDocs(busCol);
 
@@ -148,7 +150,7 @@ async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string, org
 
   if (hasAnotherOnlineBus) return;
 
-  const pendingSnap = await getDocs(query(reqCol, where('status', '==', 'pending')));
+  const pendingSnap = await getDocs(query(reqCol, where('status', 'in', ['pending', 'accepted'])));
   if (pendingSnap.empty) return;
 
   const batch = writeBatch(db);
@@ -182,7 +184,11 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     });
   };
 
-  const writeBusDoc = async (uid: string, coords: { latitude: number; longitude: number }) => {
+  const writeBusDoc = async (
+    uid: string,
+    coords: { latitude: number; longitude: number },
+    isSessionStart = false,
+  ) => {
     const busRef = orgId ? doc(db, 'orgs', orgId, 'buses', uid) : doc(db, 'buses', uid);
     await setDoc(
       busRef,
@@ -193,6 +199,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         online: true,
         lastSeen: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        ...(isSessionStart && { sessionStartAt: serverTimestamp() }),
       },
       { merge: true },
     );
@@ -301,7 +308,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       smoothedCoords.current = coords;
-      await writeBusDoc(uid, coords);
+      await writeBusDoc(uid, coords, true);
       lastWrittenAt.current = Date.now();
       lastWrittenCoords.current = coords;
     } catch (err) {

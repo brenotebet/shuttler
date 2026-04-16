@@ -78,8 +78,8 @@ service cloud.firestore {
 
     // ---------- Users ----------
     match /orgs/{orgId}/users/{uid} {
-      // Users read their own doc only.
-      allow read: if signedIn() && request.auth.uid == uid;
+      // Users read their own doc; admins can read all user docs (needed for dashboard).
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin(orgId));
 
       // Create own profile on first login (role must be student; elevated roles only via backend).
       allow create: if signedIn()
@@ -132,27 +132,26 @@ service cloud.firestore {
         || resource.data.status == 'accepted'
       );
 
-      // Student creates their own request (auto-accepted — no pending state).
+      // Student creates their own request.
       allow create: if signedIn()
         && request.resource.data.studentUid == request.auth.uid
-        && request.resource.data.status == 'accepted'
+        && request.resource.data.status in ['pending', 'accepted']
         && request.resource.data.orgId == orgId
         && request.resource.data.stopId is string
         && orgIsActive(orgId);
 
       allow update: if signedIn() && (
         (
-          // Student cancels their own accepted request.
+          // Student cancels their own active request.
           resource.data.studentUid == request.auth.uid
-          && resource.data.status == 'accepted'
+          && resource.data.status in ['pending', 'accepted']
           && request.resource.data.status == 'cancelled'
         )
         ||
         (
-          // Driver completes or cancels an accepted request.
+          // Driver updates an active request (arrivedAt, completion, cancellation, driverUid).
           isDriver(orgId)
-          && resource.data.status == 'accepted'
-          && request.resource.data.status in ['completed', 'cancelled']
+          && resource.data.status in ['pending', 'accepted']
         )
       );
 

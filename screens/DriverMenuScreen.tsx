@@ -85,6 +85,15 @@ export default function DriverMenuScreen() {
 
         {role === 'admin' && (
           <MenuItem
+            icon="dashboard"
+            title="Dashboard"
+            description="Live driver activity, pickups, and stop trends"
+            onPress={() => navigation.navigate('AdminDashboard')}
+          />
+        )}
+
+        {role === 'admin' && (
+          <MenuItem
             icon="settings"
             title="Org Setup"
             description={
