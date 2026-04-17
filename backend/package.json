@@ -1,0 +1,26 @@
+{
+  "name": "shuttler-backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/samlServer.js",
+    "dev": "ts-node --project tsconfig.json samlServer.ts"
+  },
+  "dependencies": {
+    "@sentry/node": "^10.46.0",
+    "@xmldom/xmldom": "^0.8.6",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "firebase-admin": "^13.6.0",
+    "samlify": "^2.10.2",
+    "stripe": "^17.7.0",
+    "xpath": "0.0.32"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
