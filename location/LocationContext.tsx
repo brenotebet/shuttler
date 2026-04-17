@@ -189,7 +189,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     coords: { latitude: number; longitude: number },
     isSessionStart = false,
   ) => {
-    const busRef = orgId ? doc(db, 'orgs', orgId, 'buses', uid) : doc(db, 'buses', uid);
+    if (!orgId) return;
+    const busRef = doc(db, 'orgs', orgId, 'buses', uid);
     await setDoc(
       busRef,
       {
@@ -206,8 +207,9 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   };
 
   const markOffline = async (uid: string) => {
+    if (!orgId) return;
     // delete is forbidden by rules; set online=false instead
-    const busRef = orgId ? doc(db, 'orgs', orgId, 'buses', uid) : doc(db, 'buses', uid);
+    const busRef = doc(db, 'orgs', orgId, 'buses', uid);
     await setDoc(
       busRef,
       {

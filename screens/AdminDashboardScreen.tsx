@@ -6,7 +6,12 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  TouchableOpacity,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation/StackNavigator';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 import {
   collection,
   onSnapshot,
@@ -66,6 +71,7 @@ function getDayLabel(date: Date): string {
 }
 
 export default function AdminDashboardScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { org } = useOrg();
   const { orgId } = useAuth();
   const orgRoutes = org?.routes ?? [];
@@ -291,6 +297,17 @@ export default function AdminDashboardScreen() {
   return (
     <ScreenContainer padded={false}>
       <HeaderBar title="Dashboard" />
+      {org?.subscriptionStatus === 'past_due' && (
+        <TouchableOpacity
+          style={styles.pastDueBanner}
+          onPress={() => navigation.navigate('AdminOrgSetup')}
+          activeOpacity={0.8}
+        >
+          <Icon name="warning" size={16} color="#7c2d12" />
+          <Text style={styles.pastDueBannerText}>Payment failed — subscription past due.</Text>
+          <Text style={styles.pastDueBannerLink}>Fix billing →</Text>
+        </TouchableOpacity>
+      )}
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -475,6 +492,18 @@ export default function AdminDashboardScreen() {
 }
 
 const styles = StyleSheet.create({
+  pastDueBanner: {
+    backgroundColor: '#fef2f2',
+    borderBottomWidth: 1,
+    borderBottomColor: '#fca5a5',
+    paddingHorizontal: spacing.screenPadding,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pastDueBannerText: { flex: 1, fontSize: 13, color: '#7c2d12', fontWeight: '500' },
+  pastDueBannerLink: { fontSize: 13, color: '#dc2626', fontWeight: '700' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scroll: {
     paddingHorizontal: spacing.screenPadding,

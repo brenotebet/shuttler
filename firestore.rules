@@ -36,7 +36,7 @@ service cloud.firestore {
 
     function orgIsActive(orgId) {
       return get(/databases/$(database)/documents/orgs/$(orgId)).data.subscriptionStatus
-        in ['trialing', 'active'];
+        in ['trialing', 'active', 'past_due'];
     }
 
     // ---------- Public org slug lookup (org selector screen) ----------
@@ -88,11 +88,18 @@ service cloud.firestore {
         && request.resource.data.role == 'student';
 
       // Update own profile but never change role or orgId.
-      allow update: if signedIn()
-        && request.auth.uid == uid
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.orgId == orgId
-        && orgIsActive(orgId);
+      // Admins may also set defaultRouteId on any member's doc.
+      allow update: if signedIn() && (
+        (
+          request.auth.uid == uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.orgId == orgId
+          && orgIsActive(orgId)
+        ) || (
+          isAdmin(orgId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['defaultRouteId'])
+        )
+      );
 
       allow delete: if false;
     }
@@ -129,7 +136,6 @@ service cloud.firestore {
       allow read: if signedIn() && (
         isDriver(orgId)
         || resource.data.studentUid == request.auth.uid
-        || resource.data.status == 'accepted'
       );
 
       // Student creates their own request.

@@ -18,7 +18,7 @@ import {
   View,
 } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
-import { doc, updateDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, getDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import * as WebBrowser from 'expo-web-browser';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route } from '../src/org/OrgContext';
@@ -285,7 +285,7 @@ function StopsTab() {
       return;
     }
     const newStop: Stop = {
-      id: `stop_${Date.now()}`,
+      id: `stop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
       name: pendingName.trim(),
       latitude: pendingCoords.latitude,
       longitude: pendingCoords.longitude,
@@ -346,7 +346,7 @@ function StopsTab() {
     }
     setRoutes((prev) => [
       ...prev,
-      { id: `route_${Date.now()}`, name: newRouteName.trim(), stopIds: [] },
+      { id: `route_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, name: newRouteName.trim(), stopIds: [] },
     ]);
     setNewRouteName('');
     setShowRouteForm(false);
@@ -612,6 +612,7 @@ type OrgMember = {
   email: string;
   displayName?: string;
   role: 'student' | 'driver' | 'admin';
+  defaultRouteId?: string | null;
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -633,6 +634,11 @@ function UsersTab() {
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // uid → defaultRouteId currently saved in Firestore for drivers
+  const [driverDefaults, setDriverDefaults] = useState<Record<string, string | null>>({});
+  const [savingRoute, setSavingRoute] = useState<string | null>(null);
+
+  const orgRoutes = org?.routes ?? [];
 
   const loadMembers = useCallback(async () => {
     if (!org) return;
@@ -644,7 +650,23 @@ function UsersTab() {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
-      setMembers(await res.json());
+      const data: OrgMember[] = await res.json();
+      setMembers(data);
+
+      // Load defaultRouteId for each driver/admin from Firestore
+      const drivers = data.filter((m) => m.role === 'driver' || m.role === 'admin');
+      const defaults: Record<string, string | null> = {};
+      await Promise.all(
+        drivers.map(async (m) => {
+          try {
+            const snap = await getDoc(doc(db, 'orgs', org.orgId, 'users', m.uid));
+            defaults[m.uid] = snap.exists() ? (snap.data()?.defaultRouteId ?? null) : null;
+          } catch {
+            defaults[m.uid] = null;
+          }
+        }),
+      );
+      setDriverDefaults(defaults);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load members.');
     } finally {
@@ -653,6 +675,46 @@ function UsersTab() {
   }, [org]);
 
   useEffect(() => { loadMembers(); }, [loadMembers]);
+
+  const handleAssignRoute = useCallback(
+    (member: OrgMember) => {
+      if (!org || orgRoutes.length === 0) return;
+      const current = driverDefaults[member.uid] ?? null;
+      Alert.alert(
+        `Assign default route`,
+        `${member.displayName ?? member.email}`,
+        [
+          ...orgRoutes.map((r) => ({
+            text: r.id === current ? `✓ ${r.name}` : r.name,
+            onPress: () => saveDefaultRoute(member.uid, r.id),
+          })),
+          { text: 'Clear assignment', onPress: () => saveDefaultRoute(member.uid, null) },
+          { text: 'Cancel', style: 'cancel' as const },
+        ],
+      );
+    },
+    [org, orgRoutes, driverDefaults],
+  );
+
+  const saveDefaultRoute = useCallback(
+    async (uid: string, routeId: string | null) => {
+      if (!org) return;
+      setSavingRoute(uid);
+      try {
+        await setDoc(
+          doc(db, 'orgs', org.orgId, 'users', uid),
+          { defaultRouteId: routeId ?? null },
+          { merge: true },
+        );
+        setDriverDefaults((prev) => ({ ...prev, [uid]: routeId }));
+      } catch (e: any) {
+        Alert.alert('Error', e?.message ?? 'Could not save route assignment.');
+      } finally {
+        setSavingRoute(null);
+      }
+    },
+    [org],
+  );
 
   const handleChangeRole = useCallback(
     (member: OrgMember) => {
@@ -743,37 +805,57 @@ function UsersTab() {
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
       <Text style={styles.hint}>
-        Tap a member's role badge to change it. All members start as Student after registering.
+        Tap a member's role badge to change it. Tap the route badge on drivers to assign a default route.
       </Text>
       {members.length === 0 && (
         <Text style={styles.hint}>No members yet. Share your org slug so people can register.</Text>
       )}
-      {members.map((member) => (
-        <View key={member.uid} style={styles.memberRow}>
-          <View style={styles.memberAvatar}>
-            <Text style={styles.memberAvatarText}>
-              {(member.displayName ?? member.email).charAt(0).toUpperCase()}
-            </Text>
+      {members.map((member) => {
+        const isDriver = member.role === 'driver' || member.role === 'admin';
+        const assignedRouteId = driverDefaults[member.uid] ?? null;
+        const assignedRoute = assignedRouteId ? orgRoutes.find((r) => r.id === assignedRouteId) : null;
+        return (
+          <View key={member.uid} style={styles.memberRow}>
+            <View style={styles.memberAvatar}>
+              <Text style={styles.memberAvatarText}>
+                {(member.displayName ?? member.email).charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <View style={styles.memberInfo}>
+              <Text style={styles.memberName} numberOfLines={1}>
+                {member.displayName ?? '—'}
+              </Text>
+              <Text style={styles.memberEmail} numberOfLines={1}>{member.email}</Text>
+            </View>
+            {isDriver && orgRoutes.length > 0 && (
+              <TouchableOpacity
+                style={styles.routeBadge}
+                onPress={() => handleAssignRoute(member)}
+                disabled={savingRoute === member.uid}
+              >
+                {savingRoute === member.uid ? (
+                  <ActivityIndicator size="small" color={PRIMARY_COLOR} />
+                ) : (
+                  <Text style={styles.routeBadgeText} numberOfLines={1}>
+                    {assignedRoute ? assignedRoute.name : 'Route…'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.roleBadge, { backgroundColor: `${ROLE_COLORS[member.role]}20` }]}
+              onPress={() => handleChangeRole(member)}
+            >
+              <Text style={[styles.roleBadgeText, { color: ROLE_COLORS[member.role] }]}>
+                {ROLE_LABELS[member.role]}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleRemoveUser(member)} style={styles.removeUserBtn}>
+              <Icon name="person-remove" size={18} color="#e53935" />
+            </TouchableOpacity>
           </View>
-          <View style={styles.memberInfo}>
-            <Text style={styles.memberName} numberOfLines={1}>
-              {member.displayName ?? '—'}
-            </Text>
-            <Text style={styles.memberEmail} numberOfLines={1}>{member.email}</Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.roleBadge, { backgroundColor: `${ROLE_COLORS[member.role]}20` }]}
-            onPress={() => handleChangeRole(member)}
-          >
-            <Text style={[styles.roleBadgeText, { color: ROLE_COLORS[member.role] }]}>
-              {ROLE_LABELS[member.role]}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => handleRemoveUser(member)} style={styles.removeUserBtn}>
-            <Icon name="person-remove" size={18} color="#e53935" />
-          </TouchableOpacity>
-        </View>
-      ))}
+        );
+      })}
     </ScrollView>
   );
 }
@@ -798,9 +880,11 @@ function BillingTab() {
         const { url, error } = await res.json();
         if (error) throw new Error(error);
         await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
-        // Give the webhook a moment to process, then pull latest subscription state
-        await new Promise((r) => setTimeout(r, 2000));
-        await refreshOrg();
+        // Poll for webhook to process — retry up to 5× at 2s intervals (~10s total)
+        for (let i = 0; i < 5; i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          await refreshOrg();
+        }
       } catch (e: any) {
         Alert.alert('Error', e?.message ?? 'Failed to open billing.');
       } finally {
@@ -823,8 +907,11 @@ function BillingTab() {
       const { url, error } = await res.json();
       if (error) throw new Error(error);
       await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
-      await new Promise((r) => setTimeout(r, 2000));
-      await refreshOrg();
+      // Poll for portal changes (e.g. plan upgrade/cancel) to reflect in app
+      for (let i = 0; i < 3; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        await refreshOrg();
+      }
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Failed to open billing portal.');
     } finally {
@@ -1352,6 +1439,21 @@ const styles = StyleSheet.create({
   roleBadgeText: {
     fontSize: 12,
     fontWeight: '700',
+  },
+  routeBadge: {
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#e0f2fe',
+    marginRight: 4,
+    maxWidth: 90,
+    minWidth: 36,
+    alignItems: 'center',
+  },
+  routeBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0369a1',
   },
   tabContent: {
     padding: spacing.section,

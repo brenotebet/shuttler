@@ -2,6 +2,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation/StackNavigator';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useLocationSharing } from '../location/LocationContext';
@@ -119,6 +122,7 @@ function nextStopFromNearest(nearestStopId: string | null, stops: Stop[]) {
 
 export default function DriverScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { isSharing, startSharing, stopSharing } = useLocationSharing();
   const { driverId, loading } = useDriver();
   const { org } = useOrg();
@@ -137,6 +141,7 @@ export default function DriverScreen() {
 
   const [boardingCount, setBoardingCount] = useState(0);
   const [showBoardingCard, setShowBoardingCard] = useState(false);
+  const [isSavingBoarding, setIsSavingBoarding] = useState(false);
   const [totalBoardedSession, setTotalBoardedSession] = useState(0);
   const boardingSlideAnim = useRef(new Animated.Value(0)).current;
   const [boardingCardHeight, setBoardingCardHeight] = useState(220);
@@ -177,6 +182,16 @@ export default function DriverScreen() {
     if (orgRoutes.length === 0) return null;
     return orgRoutes.find((r) => r.id === selectedRouteId) ?? orgRoutes[0];
   }, [orgRoutes, selectedRouteId]);
+
+  // Pre-select the admin-assigned default route on mount.
+  useEffect(() => {
+    if (!driverId || !orgId) return;
+    getDoc(doc(db, 'orgs', orgId, 'users', driverId)).then((snap) => {
+      if (!snap.exists()) return;
+      const defaultRouteId: string | undefined = snap.data()?.defaultRouteId;
+      if (defaultRouteId) setSelectedRouteId(defaultRouteId);
+    }).catch(() => {});
+  }, [driverId, orgId]);
 
   // Keep the bus doc's routeId field in sync so MapScreen can do route-aware bus matching.
   useEffect(() => {
@@ -657,7 +672,8 @@ export default function DriverScreen() {
   }, [recentFeed, userNameByUid]);
 
   const saveBoardingCount = async () => {
-    if (!driverId) return;
+    if (!driverId || isSavingBoarding) return;
+    setIsSavingBoarding(true);
 
     const loc = lastCoords.current[driverId] ?? busLocationsRef.current[driverId];
     if (!loc) {
@@ -719,6 +735,8 @@ export default function DriverScreen() {
     } catch (error) {
       console.error('Failed to save boarding count:', error);
       showAlert('Failed to save boarding count');
+    } finally {
+      setIsSavingBoarding(false);
     }
   };
 
@@ -754,7 +772,14 @@ export default function DriverScreen() {
                       where('online', '==', true),
                     ),
                   );
-                  const otherOnline = busSnap.docs.filter((d) => d.id !== driverId).length;
+                  const now = Date.now();
+                  const otherOnline = busSnap.docs.filter((d) => {
+                    if (d.id === driverId) return false;
+                    const data = d.data({ serverTimestamps: 'estimate' });
+                    const tsMs = data?.updatedAt?.toMillis?.() ?? data?.lastSeen?.toMillis?.() ?? null;
+                    if (tsMs === null) return false;
+                    return (now - tsMs) / 1000 < STALE_WINDOW_SECONDS;
+                  }).length;
                   if (otherOnline >= limits.maxVehicles) {
                     showAlert(
                       `Your ${limits.label} plan allows up to ${limits.maxVehicles} vehicles online at once. Upgrade to Campus to add more.`,
@@ -785,6 +810,22 @@ export default function DriverScreen() {
       </View>
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + 12, paddingBottom: 140 }]}>
+        {org?.subscriptionStatus === 'past_due' && (
+          <View style={styles.pastDueBanner}>
+            <Icon name="warning" size={16} color="#7c2d12" />
+            <Text style={styles.pastDueBannerText}>
+              {authRole === 'admin'
+                ? 'Payment failed — subscription is past due.'
+                : 'Service may be interrupted — contact your administrator.'}
+            </Text>
+            {authRole === 'admin' && (
+              <TouchableOpacity onPress={() => navigation.navigate('AdminOrgSetup')}>
+                <Text style={styles.pastDueBannerLink}>Fix billing →</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {!isSharing && hasLocationPermission && (
           <View style={styles.banner}>
             <Text style={styles.bannerText}>Not sharing location. Tap Start Sharing to go online.</Text>
@@ -957,8 +998,12 @@ export default function DriverScreen() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.actionButton} onPress={saveBoardingCount}>
-            <Text style={styles.actionButtonText}>Save</Text>
+          <TouchableOpacity
+            style={[styles.actionButton, isSavingBoarding && styles.actionButtonDisabled]}
+            onPress={saveBoardingCount}
+            disabled={isSavingBoarding}
+          >
+            <Text style={styles.actionButtonText}>{isSavingBoarding ? 'Saving…' : 'Save'}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -1013,6 +1058,19 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     fontWeight: '600',
   },
+  pastDueBanner: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    borderRadius: 10,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  pastDueBannerText: { flex: 1, fontSize: 13, color: '#7c2d12', fontWeight: '500' },
+  pastDueBannerLink: { fontSize: 13, color: '#dc2626', fontWeight: '700' },
   banner: {
     backgroundColor: 'rgba(255,165,0,0.9)',
     padding: 12,

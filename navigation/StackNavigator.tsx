@@ -1,7 +1,10 @@
 // navigation/StackNavigator.tsx
 
 import React from 'react';
-import { ActivityIndicator, Text, View, StyleSheet } from 'react-native';
+import { ActivityIndicator, Text, View, StyleSheet, TouchableOpacity } from 'react-native';
+import { signOut } from 'firebase/auth';
+import { auth } from '../firebase/firebaseconfig';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import OrgSelectorScreen from '../screens/OrgSelectorScreen';
@@ -55,13 +58,22 @@ function LoadingScreen() {
 }
 
 function SubscriptionExpiredScreen() {
+  const { org } = useOrg();
   return (
     <View style={styles.expiredContainer}>
+      <Icon name="credit-card-off" size={52} color="#ef4444" style={{ marginBottom: 16 }} />
       <Text style={styles.expiredTitle}>Subscription Inactive</Text>
+      {org?.name ? (
+        <Text style={styles.expiredOrgName}>{org.name}</Text>
+      ) : null}
       <Text style={styles.expiredBody}>
         Your organization's Shuttler subscription is no longer active.
         Please contact your administrator to renew the plan.
       </Text>
+      <TouchableOpacity style={styles.expiredSignOutBtn} onPress={() => signOut(auth).catch(() => {})}>
+        <Icon name="logout" size={16} color={PRIMARY_COLOR} />
+        <Text style={styles.expiredSignOutText}>Sign out</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -74,8 +86,8 @@ export default function StackNavigator() {
     return <LoadingScreen />;
   }
 
-  // Authenticated but org subscription lapsed (admins can always log in to manage the org)
-  if (user && org && role !== 'admin' && !['trialing', 'active'].includes(org.subscriptionStatus ?? 'trialing')) {
+  // Hard-block non-admins only on fully canceled/unpaid (past_due gets a grace period)
+  if (user && org && role !== 'admin' && ['canceled', 'unpaid'].includes(org.subscriptionStatus ?? '')) {
     return <SubscriptionExpiredScreen />;
   }
 
@@ -159,5 +171,27 @@ const styles = StyleSheet.create({
     color: '#555',
     textAlign: 'center',
     lineHeight: 22,
+    marginBottom: 28,
+  },
+  expiredOrgName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 12,
+  },
+  expiredSignOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: PRIMARY_COLOR,
+  },
+  expiredSignOutText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: PRIMARY_COLOR,
   },
 });
