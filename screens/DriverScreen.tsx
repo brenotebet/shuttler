@@ -183,13 +183,23 @@ export default function DriverScreen() {
     return orgRoutes.find((r) => r.id === selectedRouteId) ?? orgRoutes[0];
   }, [orgRoutes, selectedRouteId]);
 
-  // Pre-select the admin-assigned default route on mount.
+  // Pre-select the admin-assigned default route on mount + write public profile so
+  // students see the driver's name when they tap the bus.
   useEffect(() => {
     if (!driverId || !orgId) return;
     getDoc(doc(db, 'orgs', orgId, 'users', driverId)).then((snap) => {
       if (!snap.exists()) return;
       const defaultRouteId: string | undefined = snap.data()?.defaultRouteId;
       if (defaultRouteId) setSelectedRouteId(defaultRouteId);
+
+      const storedName: string | null = snap.data()?.displayName ?? auth.currentUser?.displayName ?? null;
+      if (storedName) {
+        setDoc(
+          doc(db, 'orgs', orgId, 'publicUsers', driverId),
+          { displayName: storedName, updatedAt: serverTimestamp() },
+          { merge: true },
+        ).catch(() => {});
+      }
     }).catch(() => {});
   }, [driverId, orgId]);
 

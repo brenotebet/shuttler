@@ -284,19 +284,67 @@ export default function MapScreen() {
   const [busOnline, setBusOnline] = useState<boolean>(false);
   const [busRouteIds, setBusRouteIds] = useState<Record<string, string | null>>({});
 
-  // Map from stopId → { routeId, routeName, position (1-based), totalStops }
-  // Used to show route position in the stop list and ride card.
+  type RequestableStop = {
+    key: string; // unique: stopId or stopId+routeId
+    stop: typeof stops[0];
+    routeId: string | null;
+    routeName: string | null;
+    position: number | null;
+    totalStops: number | null;
+  };
+
+  // One entry per stop-route combination.
+  // A stop on two routes expands into two list entries so the student picks the route explicitly.
+  // Stops not assigned to any route appear once with no route metadata.
+  const requestableStops = useMemo((): RequestableStop[] => {
+    if (orgRoutes.length === 0) {
+      return stops.map((stop) => ({
+        key: stop.id,
+        stop,
+        routeId: null,
+        routeName: null,
+        position: null,
+        totalStops: null,
+      }));
+    }
+
+    const stopById = new Map(stops.map((s) => [s.id, s]));
+    const seenStopIds = new Set<string>();
+    const entries: RequestableStop[] = [];
+
+    for (const route of orgRoutes) {
+      route.stopIds.forEach((stopId, idx) => {
+        const stop = stopById.get(stopId);
+        if (!stop) return;
+        seenStopIds.add(stopId);
+        entries.push({
+          key: `${stopId}::${route.id}`,
+          stop,
+          routeId: route.id,
+          routeName: route.name,
+          position: idx + 1,
+          totalStops: route.stopIds.length,
+        });
+      });
+    }
+
+    // Stops not on any route
+    for (const stop of stops) {
+      if (!seenStopIds.has(stop.id)) {
+        entries.push({ key: stop.id, stop, routeId: null, routeName: null, position: null, totalStops: null });
+      }
+    }
+
+    return entries;
+  }, [orgRoutes, stops]);
+
+  // Legacy lookup used by the active-ride bottom card (request already has routeId stamped).
   const routeStopMap = useMemo(() => {
     const map = new Map<string, { routeId: string; routeName: string; position: number; totalStops: number }>();
     for (const route of orgRoutes) {
       route.stopIds.forEach((stopId, idx) => {
         if (!map.has(stopId)) {
-          map.set(stopId, {
-            routeId: route.id,
-            routeName: route.name,
-            position: idx + 1,
-            totalStops: route.stopIds.length,
-          });
+          map.set(stopId, { routeId: route.id, routeName: route.name, position: idx + 1, totalStops: route.stopIds.length });
         }
       });
     }
@@ -315,7 +363,7 @@ export default function MapScreen() {
   }>({});
 
   const [showLocationList, setShowLocationList] = useState(false);
-  const [selectedStopIndex, setSelectedStopIndex] = useState<number | null>(null);
+  const [selectedStopKey, setSelectedStopKey] = useState<string | null>(null);
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [selectedBusPopup, setSelectedBusPopup] = useState<BusPopup | null>(null);
@@ -1199,7 +1247,7 @@ export default function MapScreen() {
     );
   };
 
-const handleRequest = async (index: number) => {
+const handleRequest = async (entry: RequestableStop) => {
   if (!busOnline) {
     showAlert('No buses are currently online. Please try again later.');
     return;
@@ -1209,12 +1257,11 @@ const handleRequest = async (index: number) => {
     return;
   }
 
-  const selectedStop = stops[index];
+  const { stop: selectedStop, routeId: entryRouteId } = entry;
 
   try {
     if (__DEV__) console.log('[handleRequest] auth.uid =', auth.currentUser?.uid, 'studentUid =', studentUid);
 
-    // (A) Check existing
     let existing;
     try {
       existing = await getDocs(
@@ -1234,11 +1281,10 @@ const handleRequest = async (index: number) => {
     if (!existing.empty) {
       showAlert('You already have a stop in progress.');
       setShowLocationList(false);
-      setSelectedStopIndex(null);
+      setSelectedStopKey(null);
       return;
     }
 
-    // Create request
     try {
       const ref = await addDoc(orgCol('stopRequests'), {
         orgId: orgId ?? '',
@@ -1253,7 +1299,7 @@ const handleRequest = async (index: number) => {
         },
         status: 'pending',
         driverUid: null,
-        routeId: routeStopMap.get(selectedStop.id)?.routeId ?? null,
+        routeId: entryRouteId ?? null,
         createdAt: serverTimestamp(),
         expiresAtMs: Date.now() + STUDENT_REQUEST_TTL_MS,
       });
@@ -1267,7 +1313,7 @@ const handleRequest = async (index: number) => {
 
     showAlert('Stop requested successfully!');
     setShowLocationList(false);
-    setSelectedStopIndex(null);
+    setSelectedStopKey(null);
   } catch (err: any) {
     console.error('[MapScreen][handleRequest] FAILED', {
       code: err?.code,
@@ -1338,7 +1384,7 @@ const handleRequest = async (index: number) => {
           activeOpacity={0.8}
         >
           <Text style={[styles.searchText, !busOnline && styles.searchTextOffline]}>
-            {!busOnline ? 'No buses online' : selectedStopIndex === null ? 'Request a stop' : stops[selectedStopIndex]?.name}
+            {!busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
           </Text>
           <Icon name="keyboard-arrow-down" size={24} color={busOnline ? '#888' : '#bbb'} />
         </TouchableOpacity>
@@ -1359,26 +1405,22 @@ const handleRequest = async (index: number) => {
           <View style={styles.overlay}>
             <View style={[styles.locationListContainer, { top: topOverlay + 60 }]}>
               <FlatList
-                data={stops}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item, index }) => (
+                data={requestableStops}
+                keyExtractor={(item) => item.key}
+                renderItem={({ item }) => (
                   <TouchableOpacity
                     style={styles.locationItem}
                     onPress={() => {
-                      setSelectedStopIndex(index);
-                      handleRequest(index);
+                      setSelectedStopKey(item.key);
+                      handleRequest(item);
                     }}
                   >
-                    <Text style={styles.locationText}>{item.name}</Text>
-                    {(() => {
-                      const info = routeStopMap.get(item.id);
-                      if (!info) return null;
-                      return (
-                        <Text style={styles.locationRouteMeta}>
-                          Stop {info.position} of {info.totalStops} · {info.routeName}
-                        </Text>
-                      );
-                    })()}
+                    <Text style={styles.locationText}>{item.stop.name}</Text>
+                    {item.routeName ? (
+                      <Text style={styles.locationRouteMeta}>
+                        {item.position !== null ? `Stop ${item.position} of ${item.totalStops} · ` : ''}{item.routeName}
+                      </Text>
+                    ) : null}
                   </TouchableOpacity>
                 )}
               />

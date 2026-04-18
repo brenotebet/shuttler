@@ -189,7 +189,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const data = snap.data() as any;
           setOrg((prev) => {
             if (!prev) return prev;
-            return {
+            const updated: OrgConfig = {
               ...prev,
               stops: Array.isArray(data.stops) ? data.stops : prev.stops,
               routes: Array.isArray(data.routes) ? data.routes : prev.routes,
@@ -200,7 +200,13 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               approved: data.approved ?? prev.approved,
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
             };
+            writeCachedOrg(updated);
+            return updated;
           });
+        },
+        (error) => {
+          console.warn('[OrgContext] org snapshot error — will retry on next auth event:', error.message);
+          snapshotUnsub = null;
         },
       );
     });

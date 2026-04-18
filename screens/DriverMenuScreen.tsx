@@ -23,7 +23,8 @@ export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout: clearDriverContext } = useDriver();
   const { stopSharing, isSharing } = useLocationSharing();
-  const { role, isSuperAdmin } = useAuth();
+  const { role, isSuperAdmin, displayName } = useAuth();
+  const firstName = displayName?.split(' ')[0] ?? null;
   const { org } = useOrg();
   const needsSetup = role === 'admin' && (org?.stops?.length ?? 0) === 0;
 
@@ -64,6 +65,9 @@ export default function DriverMenuScreen() {
   return (
     <ScreenContainer style={styles.container}>
       <View style={styles.hero}>
+        {firstName ? (
+          <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
+        ) : null}
         <Text style={styles.title}>Driver Hub</Text>
         <Text style={styles.subtitle}>Stay on top of requests and routes</Text>
       </View>
@@ -140,6 +144,12 @@ const styles = StyleSheet.create({
   },
   hero: {
     marginBottom: spacing.section * 1.5,
+  },
+  greeting: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginBottom: 4,
   },
   title: {
     fontSize: 28,

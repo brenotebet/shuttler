@@ -17,8 +17,9 @@ import type { RootStackParamList } from '../navigation/StackNavigator';
 
 export default function StudentMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { role } = useAuth();
+  const { role, displayName } = useAuth();
   const isParent = role === 'parent';
+  const firstName = displayName?.split(' ')[0] ?? null;
 
   const handleLogout = () => {
     Alert.alert(
@@ -43,6 +44,9 @@ export default function StudentMenuScreen() {
   return (
     <ScreenContainer style={styles.container}>
       <View style={styles.hero}>
+        {firstName ? (
+          <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
+        ) : null}
         <Text style={styles.title}>{isParent ? 'Parent Center' : 'Student Center'}</Text>
         <Text style={styles.subtitle}>
           {isParent ? 'Track your child\'s shuttle' : 'Manage your rides and profile'}
@@ -82,6 +86,12 @@ const styles = StyleSheet.create({
   },
   hero: {
     marginBottom: spacing.section * 1.5,
+  },
+  greeting: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginBottom: 4,
   },
   title: {
     fontSize: 28,

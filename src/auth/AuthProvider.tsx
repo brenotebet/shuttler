@@ -16,6 +16,7 @@ type AuthContextType = {
   user: User | null;
   role: Role | null;
   orgId: string | null;
+  displayName: string | null;
   initializing: boolean;
   emailVerified: boolean;
   isSuperAdmin: boolean;
@@ -26,6 +27,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   role: null,
   orgId: null,
+  displayName: null,
   initializing: true,
   emailVerified: false,
   isSuperAdmin: false,
@@ -36,6 +38,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { org } = useOrg();
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [emailVerified, setEmailVerified] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
@@ -47,6 +50,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (!firebaseUser) {
         setRole(null);
+        setDisplayName(null);
         setIsSuperAdmin(false);
         setInitializing(false);
         return;
@@ -72,8 +76,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const snap = await getDoc(doc(db, 'orgs', orgId, 'users', firebaseUser.uid));
         setRole(normalizeRole(snap.data()?.role));
+        const storedName: string | null = snap.data()?.displayName ?? null;
+        setDisplayName(storedName ?? firebaseUser.displayName ?? null);
       } catch {
         setRole('student');
+        setDisplayName(firebaseUser.displayName ?? null);
       } finally {
         setInitializing(false);
       }
@@ -91,7 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const orgId = org?.orgId ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, role, orgId, initializing, emailVerified, isSuperAdmin, reloadUser }}>
+    <AuthContext.Provider value={{ user, role, orgId, displayName, initializing, emailVerified, isSuperAdmin, reloadUser }}>
       {children}
     </AuthContext.Provider>
   );

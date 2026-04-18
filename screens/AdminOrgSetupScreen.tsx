@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
 import { doc, updateDoc, setDoc, getDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route } from '../src/org/OrgContext';
@@ -242,20 +243,79 @@ function StopsTab() {
   const mapRef = useRef<MapView>(null);
   const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
   const [routes, setRoutes] = useState<Route[]>(org?.routes ?? []);
+
+  // Keep local state in sync when org updates via real-time Firestore listener
+  useEffect(() => { setStops(org?.stops ?? []); }, [org?.stops]);
+  useEffect(() => { setRoutes(org?.routes ?? []); }, [org?.routes]);
+
   const hasOrgCenter = org?.mapCenter && (org.mapCenter.latitude !== 0 || org.mapCenter.longitude !== 0);
   const [mapCenter, setMapCenter] = useState(
     hasOrgCenter ? org!.mapCenter : { latitude: 39.5, longitude: -98.35 },
   );
   const [pendingName, setPendingName] = useState('');
-  const [pendingLat, setPendingLat] = useState('');
-  const [pendingLng, setPendingLng] = useState('');
+  const [pendingCoords, setPendingCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const pendingCoords =
-    pendingLat && pendingLng &&
-    !Number.isNaN(parseFloat(pendingLat)) && !Number.isNaN(parseFloat(pendingLng))
-      ? { latitude: parseFloat(pendingLat), longitude: parseFloat(pendingLng) }
-      : null;
+  // Location search state
+  type PlaceSuggestion = { placeId: string; description: string };
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<PlaceSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  const searchPlaces = useCallback(async (input: string) => {
+    if (!input.trim() || input.length < 3) { setSearchResults([]); return; }
+    setIsSearching(true);
+    try {
+      const bias = `${mapCenter.latitude},${mapCenter.longitude}`;
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&location=${bias}&radius=50000&key=${GOOGLE_MAPS_API_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.status === 'OK') {
+        setSearchResults(
+          (json.predictions ?? []).slice(0, 5).map((p: any) => ({
+            placeId: p.place_id,
+            description: p.description,
+          })),
+        );
+      } else {
+        setSearchResults([]);
+      }
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [mapCenter]);
+
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchQuery(text);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => searchPlaces(text), 350);
+  }, [searchPlaces]);
+
+  const handleSelectPlace = useCallback(async (suggestion: PlaceSuggestion) => {
+    setSearchResults([]);
+    setSearchQuery('');
+    try {
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${suggestion.placeId}&fields=geometry,name&key=${GOOGLE_MAPS_API_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.status === 'OK') {
+        const loc = json.result.geometry.location;
+        const coords = { latitude: loc.lat, longitude: loc.lng };
+        setPendingCoords(coords);
+        // Pre-fill name from the first part of the description (before the first comma)
+        const autoName = suggestion.description.split(',')[0].trim();
+        if (!pendingName) setPendingName(autoName);
+        // Pan map to the pin
+        mapRef.current?.animateToRegion(
+          { ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+          500,
+        );
+      }
+    } catch {}
+  }, [pendingName]);
 
   // Route editing state
   const [newRouteName, setNewRouteName] = useState('');
@@ -264,8 +324,8 @@ function StopsTab() {
 
   const handleMapPress = useCallback((e: any) => {
     const { latitude, longitude } = e.nativeEvent.coordinate;
-    setPendingLat(latitude.toFixed(6));
-    setPendingLng(longitude.toFixed(6));
+    setPendingCoords({ latitude, longitude });
+    setSearchResults([]);
   }, []);
 
   const handleAddStop = useCallback(() => {
@@ -292,8 +352,8 @@ function StopsTab() {
     };
     setStops((prev) => [...prev, newStop]);
     setPendingName('');
-    setPendingLat('');
-    setPendingLng('');
+    setPendingCoords(null);
+    setSearchQuery('');
   }, [pendingCoords, pendingName, stops.length, planLimits]);
 
   const handleDeleteStop = useCallback((id: string) => {
@@ -435,7 +495,43 @@ function StopsTab() {
             {stops.length}/{planLimits.maxStops === Infinity ? '∞' : planLimits.maxStops}
           </Text>
         </View>
-        <Text style={styles.hint}>Tap the map to fill coordinates, or type them in directly.</Text>
+        <Text style={styles.hint}>Search for a location or tap the map to place a pin.</Text>
+
+        {/* Search bar */}
+        <View style={styles.searchBarRow}>
+          <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 6 }} />
+          <TextInput
+            style={styles.searchBarInput}
+            placeholder="Search address or place…"
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            placeholderTextColor="#aaa"
+            returnKeyType="search"
+            autoCorrect={false}
+          />
+          {isSearching && <ActivityIndicator size="small" color={PRIMARY_COLOR} style={{ marginLeft: 6 }} />}
+          {searchQuery.length > 0 && !isSearching && (
+            <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+              <Icon name="close" size={16} color="#9ca3af" style={{ marginLeft: 6 }} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Autocomplete dropdown */}
+        {searchResults.length > 0 && (
+          <View style={styles.searchDropdown}>
+            {searchResults.map((s) => (
+              <TouchableOpacity
+                key={s.placeId}
+                style={styles.searchDropdownItem}
+                onPress={() => handleSelectPlace(s)}
+              >
+                <Icon name="place" size={14} color="#9ca3af" style={{ marginRight: 8, marginTop: 1 }} />
+                <Text style={styles.searchDropdownText} numberOfLines={2}>{s.description}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         <View style={styles.addStopForm}>
           <TextInput
@@ -445,27 +541,15 @@ function StopsTab() {
             onChangeText={setPendingName}
             placeholderTextColor="#aaa"
           />
-          <View style={styles.coordRow}>
-            <TextInput
-              style={[styles.input, styles.coordInput]}
-              placeholder="Latitude"
-              value={pendingLat}
-              onChangeText={setPendingLat}
-              keyboardType="numeric"
-              placeholderTextColor="#aaa"
-            />
-            <TextInput
-              style={[styles.input, styles.coordInput]}
-              placeholder="Longitude"
-              value={pendingLng}
-              onChangeText={setPendingLng}
-              keyboardType="numeric"
-              placeholderTextColor="#aaa"
-            />
-          </View>
+          {pendingCoords && (
+            <Text style={styles.coordPreview}>
+              📍 {pendingCoords.latitude.toFixed(5)}, {pendingCoords.longitude.toFixed(5)}
+            </Text>
+          )}
           <TouchableOpacity
             style={[styles.addStopBtn, (!pendingName.trim() || !pendingCoords) && styles.addStopBtnDisabled]}
             onPress={handleAddStop}
+            disabled={!pendingName.trim() || !pendingCoords}
           >
             <Icon name="add" size={20} color="#fff" />
             <Text style={styles.addStopBtnText}>Add Stop</Text>
@@ -1555,17 +1639,54 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: spacing.item,
   },
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 4,
+  },
+  searchBarInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111',
+    padding: 0,
+  },
+  searchDropdown: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  searchDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  searchDropdownText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
+  },
+  coordPreview: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: -4,
+    marginBottom: 2,
+  },
   addStopForm: {
     marginBottom: spacing.item,
     gap: 8,
-  },
-  coordRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  coordInput: {
-    flex: 1,
-    marginBottom: 0,
   },
   addStopRow: {
     flexDirection: 'row',
