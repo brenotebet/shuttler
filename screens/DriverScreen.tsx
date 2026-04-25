@@ -1,7 +1,7 @@
 // DriverScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -143,6 +143,9 @@ export default function DriverScreen() {
   const [showBoardingCard, setShowBoardingCard] = useState(false);
   const [isSavingBoarding, setIsSavingBoarding] = useState(false);
   const [totalBoardedSession, setTotalBoardedSession] = useState(0);
+  const [todayBoardedTotal, setTodayBoardedTotal] = useState(0);
+  const [shiftStartMs, setShiftStartMs] = useState<number | null>(null);
+  const [showShiftCard, setShowShiftCard] = useState(false);
   const boardingSlideAnim = useRef(new Animated.Value(0)).current;
   const [boardingCardHeight, setBoardingCardHeight] = useState(220);
 
@@ -629,8 +632,35 @@ export default function DriverScreen() {
     Animated.timing(boardingSlideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   }, [showBoardingCard, boardingSlideAnim]);
 
+  const refreshTodayBoardings = async () => {
+    if (!driverId || !orgId) return;
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'orgs', orgId, 'boardingCounts'), where('driverUid', '==', driverId)),
+      );
+      const midnight = new Date();
+      midnight.setHours(0, 0, 0, 0);
+      const midnightMs = midnight.getTime();
+      let total = 0;
+      snap.docs.forEach((d) => {
+        const ms = d.data()?.createdAt?.toMillis?.() ?? 0;
+        if (ms >= midnightMs) total += d.data()?.count ?? 0;
+      });
+      setTodayBoardedTotal(total);
+    } catch (e) {
+      console.error('refreshTodayBoardings failed', e);
+    }
+  };
+
   useEffect(() => {
-    if (isSharing) setTotalBoardedSession(0);
+    if (isSharing) {
+      setTotalBoardedSession(0);
+      setShiftStartMs(Date.now());
+      refreshTodayBoardings();
+    } else {
+      setShiftStartMs(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSharing]);
 
   useEffect(() => {
@@ -739,6 +769,7 @@ export default function DriverScreen() {
       });
 
       setTotalBoardedSession((prev) => prev + boardingCount);
+      void refreshTodayBoardings();
       showAlert('Boarding count saved!');
       setShowBoardingCard(false);
       setBoardingCount(0);
@@ -851,6 +882,9 @@ export default function DriverScreen() {
         {!hasLocationPermission && (
           <View style={styles.banner}>
             <Text style={styles.bannerText}>Location permission denied. Enable location to share your position.</Text>
+            <TouchableOpacity onPress={() => Linking.openSettings()} style={{ marginTop: 6 }}>
+              <Text style={[styles.bannerText, { fontWeight: '700', textDecorationLine: 'underline' }]}>Open Settings →</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -894,6 +928,44 @@ export default function DriverScreen() {
           <Text style={styles.cardMeta}>Latest: {nextStats?.latestMs ? formatTimeAgo(nextStats.latestMs) : '—'}</Text>
         </View>
 
+        {isSharing && (
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => setShowShiftCard((v) => !v)}
+            activeOpacity={0.85}
+          >
+            <View style={styles.shiftCardHeader}>
+              <Text style={styles.cardTitle}>My Shift</Text>
+              <Icon name={showShiftCard ? 'expand-less' : 'expand-more'} size={20} color="#9ca3af" />
+            </View>
+            {showShiftCard && (
+              <View style={styles.shiftStats}>
+                <View style={styles.shiftStat}>
+                  <Text style={styles.shiftStatValue}>{totalBoardedSession}</Text>
+                  <Text style={styles.shiftStatLabel}>This session</Text>
+                </View>
+                <View style={styles.shiftStatDivider} />
+                <View style={styles.shiftStat}>
+                  <Text style={styles.shiftStatValue}>{todayBoardedTotal}</Text>
+                  <Text style={styles.shiftStatLabel}>Today total</Text>
+                </View>
+                <View style={styles.shiftStatDivider} />
+                <View style={styles.shiftStat}>
+                  <Text style={styles.shiftStatValue}>
+                    {shiftStartMs
+                      ? (() => {
+                          const mins = Math.floor((Date.now() - shiftStartMs) / 60000);
+                          return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+                        })()
+                      : '—'}
+                  </Text>
+                  <Text style={styles.shiftStatLabel}>Time online</Text>
+                </View>
+              </View>
+            )}
+          </TouchableOpacity>
+        )}
+
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Recent Requests Feed</Text>
           <View style={styles.feedWrap}>
@@ -904,8 +976,7 @@ export default function DriverScreen() {
                 const stopName = req?.stop?.name ?? req?.stopId ?? 'Unknown stop';
                 const createdAtMs = req?.createdAt?.toMillis?.() ?? Date.now();
                 const displayName = req?.studentUid ? userNameByUid[req.studentUid] : null;
-                const fallbackIdentifier = req?.studentEmail || req?.studentUid || 'Unknown student';
-                const studentLabel = displayName ? `${displayName} (${fallbackIdentifier})` : fallbackIdentifier;
+                const studentLabel = displayName ?? req?.studentEmail?.split('@')[0] ?? 'Student';
 
                 return (
                   <View key={req.id} style={styles.feedRow}>
@@ -998,10 +1069,22 @@ export default function DriverScreen() {
 
           <View style={styles.counterRow}>
             <TouchableOpacity style={styles.counterButton} onPress={() => setBoardingCount(Math.max(0, boardingCount - 1))}>
-              <Text style={styles.counterButtonText}>-</Text>
+              <Text style={styles.counterButtonText}>−</Text>
             </TouchableOpacity>
 
-            <Text style={styles.countText}>{boardingCount}</Text>
+            <TextInput
+              style={styles.countText}
+              value={boardingCount > 0 ? String(boardingCount) : ''}
+              onChangeText={(v) => {
+                const n = parseInt(v.replace(/[^0-9]/g, ''), 10);
+                setBoardingCount(isNaN(n) ? 0 : Math.min(999, n));
+              }}
+              keyboardType="number-pad"
+              placeholder="0"
+              placeholderTextColor="#bbb"
+              textAlign="center"
+              selectTextOnFocus
+            />
 
             <TouchableOpacity style={styles.counterButton} onPress={() => setBoardingCount(boardingCount + 1)}>
               <Text style={styles.counterButtonText}>+</Text>
@@ -1097,6 +1180,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 16,
   },
+  shiftCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  shiftStats: { flexDirection: 'row', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
+  shiftStat: { flex: 1, alignItems: 'center' },
+  shiftStatValue: { fontSize: 22, fontWeight: '700', color: PRIMARY_COLOR },
+  shiftStatLabel: { fontSize: 11, color: '#9ca3af', marginTop: 3 },
+  shiftStatDivider: { width: 1, backgroundColor: '#e5e7eb', marginVertical: 4 },
   cardTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6, color: '#111' },
   cardMainValue: { fontSize: 20, fontWeight: '700', color: PRIMARY_COLOR, marginBottom: 6 },
   cardMeta: { fontSize: 14, color: '#4d4d4d', marginBottom: 2 },
@@ -1182,20 +1271,21 @@ const styles = StyleSheet.create({
   },
   counterButton: {
     backgroundColor: PRIMARY_COLOR,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  counterButtonText: { color: '#fff', fontSize: 24, fontWeight: '600' },
-  countText: { fontSize: 24, marginHorizontal: 20, fontWeight: '500' },
+  counterButtonText: { color: '#fff', fontSize: 26, fontWeight: '600', lineHeight: 30 },
+  countText: { fontSize: 32, marginHorizontal: 16, fontWeight: '700', color: '#111', minWidth: 64, textAlign: 'center' },
   cancelButton: {
-    backgroundColor: PRIMARY_COLOR,
+    borderWidth: 1.5,
+    borderColor: '#d1d5db',
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 12,
   },
-  cancelButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  cancelButtonText: { color: '#6b7280', fontSize: 16, fontWeight: '600' },
 });

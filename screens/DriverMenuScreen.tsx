@@ -82,10 +82,16 @@ export default function DriverMenuScreen() {
 
         <MenuItem
           icon="list"
-          title="Requested Rides"
-          description="View and manage current ride requests"
+          title="Stop Requests"
+          description="See and act on active stop requests"
           onPress={() => navigation.navigate('AdminDriver')}
         />
+
+        {role === 'admin' && (
+          <View style={styles.sectionDivider}>
+            <Text style={styles.sectionLabel}>Admin</Text>
+          </View>
+        )}
 
         {role === 'admin' && (
           <MenuItem
@@ -102,7 +108,7 @@ export default function DriverMenuScreen() {
             title="Org Setup"
             description={
               needsSetup
-                ? '⚠️ No stops configured — tap to set up your org'
+                ? 'No stops configured yet — tap to get started'
                 : 'Manage stops, routes, users and billing'
             }
             onPress={() => navigation.navigate('AdminOrgSetup')}
@@ -163,5 +169,17 @@ const styles = StyleSheet.create({
   },
   menuSection: {
     marginTop: spacing.section,
+  },
+  sectionDivider: {
+    marginTop: spacing.section,
+    marginBottom: spacing.item / 2,
+    paddingHorizontal: 4,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
 });

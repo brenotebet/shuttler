@@ -54,6 +54,15 @@ export default function StudentMenuScreen() {
       </View>
 
       <View style={styles.menuSection}>
+        {isParent && (
+          <MenuItem
+            icon="people"
+            title="My Children"
+            description="Link your child's account to track their shuttle"
+            onPress={() => navigation.navigate('ParentChildLink')}
+          />
+        )}
+
         <MenuItem
           icon="history"
           title="History"
@@ -73,6 +82,7 @@ export default function StudentMenuScreen() {
           title="Logout"
           description="Sign out of your account"
           onPress={handleLogout}
+          variant="danger"
         />
       </View>
     </ScreenContainer>

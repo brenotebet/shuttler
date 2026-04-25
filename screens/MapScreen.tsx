@@ -12,6 +12,7 @@ import {
   FlatList,
   TouchableWithoutFeedback,
   Dimensions,
+  Alert,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -28,11 +29,7 @@ import MapMarker from '../components/MapMarker';
 import { grayscaleMapStyle, MAX_LAT_DELTA, MAX_LON_DELTA } from '../src/constants/mapConfig';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
 import * as Location from 'expo-location';
-import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { CompositeNavigationProp, useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { StudentTabParamList } from '../tabs/StudentTabs';
-import { RootStackParamList } from '../navigation/StackNavigator';
 import {
   collection,
   query,
@@ -57,10 +54,10 @@ import { notifyDriversNewRequest } from '../src/utils/pushNotifications';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
-import { useOrg } from '../src/org/OrgContext';
+import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 
-const STALE_WINDOW_SECONDS = 180;
+const STALE_WINDOW_SECONDS = 600;
 
 function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -226,15 +223,8 @@ type BusPopup = {
 };
 
 export default function MapScreen() {
-  const navigation = useNavigation<
-    CompositeNavigationProp<
-      BottomTabNavigationProp<StudentTabParamList, 'Map'>,
-      NativeStackNavigationProp<RootStackParamList>
-    >
-  >();
-
   const { org } = useOrg();
-  const { orgId } = useAuth();
+  const { orgId, role } = useAuth();
   const stops = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
   // Returns a Firestore CollectionReference scoped to the current org
@@ -270,6 +260,7 @@ export default function MapScreen() {
 
   const [studentUid, setStudentUid] = useState<string | null>(null);
   const [studentEmail, setStudentEmail] = useState<string | null>(null);
+  const [linkedChildUids, setLinkedChildUids] = useState<string[]>([]);
 
   const [request, setRequest] = useState<any>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -364,6 +355,7 @@ export default function MapScreen() {
 
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedStopKey, setSelectedStopKey] = useState<string | null>(null);
+  const [ttlCountdown, setTtlCountdown] = useState<string | null>(null);
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [selectedBusPopup, setSelectedBusPopup] = useState<BusPopup | null>(null);
@@ -527,12 +519,12 @@ export default function MapScreen() {
     return routeMatchId ?? anyBestId;
   }, [activeBusIds, busLocations, busRouteIds, driverId, request?.routeId, request?.stop]);
 
-  // ✅ NEW: for “hide only destination stop marker while active”
+  // ✅ NEW: for "hide only destination stop marker while active"
   const destinationStopId = request?.stop?.id ?? request?.stopId ?? null;
 
   const userLocRef = useRef<{ latitude: number; longitude: number } | null>(null);
 
-  // Map padding so “fit” respects the bottom card
+  // Map padding so "fit" respects the bottom card
   const mapBottomPadding = insets.bottom + (request ? bottomCardHeight : 0) + 18;
   const mapPadding = useMemo(
     () => ({
@@ -636,6 +628,13 @@ export default function MapScreen() {
   }, []);
 
   useEffect(() => {
+    if (role !== 'parent' || !studentUid || !orgId) { setLinkedChildUids([]); return; }
+    getDoc(doc(db, 'orgs', orgId, 'users', studentUid)).then((snap) => {
+      setLinkedChildUids(snap.data()?.linkedChildUids ?? []);
+    }).catch(() => setLinkedChildUids([]));
+  }, [role, studentUid, orgId]);
+
+  useEffect(() => {
     let mounted = true;
     let unsubBus: (() => void) | undefined;
     let locationSub: Location.LocationSubscription | null = null;
@@ -661,6 +660,10 @@ export default function MapScreen() {
       const sub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation },
         (pos) => {
+          // Only store readings with acceptable accuracy to prevent a bad initial
+          // fix from falsely triggering the "outside service area" boundary check.
+          const acc = pos.coords.accuracy;
+          if (acc !== null && acc > 100) return;
           userLocRef.current = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         },
       );
@@ -844,7 +847,10 @@ export default function MapScreen() {
   useEffect(() => {
     setOwnRequestReady(false);
 
-    if (!studentUid) {
+    // For parents, watch the first linked child's request; otherwise watch own.
+    const watchUid = role === 'parent' ? (linkedChildUids[0] ?? null) : studentUid;
+
+    if (!watchUid) {
       setOwnRequest(null);
       setOwnRequestReady(true);
       return;
@@ -863,7 +869,7 @@ export default function MapScreen() {
 
     const qActive = query(
       orgCol('stopRequests'),
-      where('studentUid', '==', studentUid),
+      where('studentUid', '==', watchUid),
       where('status', 'in', ['pending', 'accepted']),
       orderBy('createdAt', 'desc'),
       limit(1),
@@ -871,7 +877,7 @@ export default function MapScreen() {
 
     const qExpiredCancelled = query(
       orgCol('stopRequests'),
-      where('studentUid', '==', studentUid),
+      where('studentUid', '==', watchUid),
       where('status', '==', 'cancelled'),
       where('cancelledReason', '==', 'ttl_expired_15m'),
       orderBy('cancelledAt', 'desc'),
@@ -910,7 +916,8 @@ export default function MapScreen() {
       unsubActive();
       unsubExpired();
     };
-  }, [studentUid]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentUid, role, linkedChildUids[0]]);
 
   useEffect(() => {
     if (!ownRequestReady) return;
@@ -1185,6 +1192,27 @@ export default function MapScreen() {
     return () => clearTimeout(timeout);
   }, [request, requestId]);
 
+  useEffect(() => {
+    if (!request || (request.status !== 'pending' && request.status !== 'accepted')) {
+      setTtlCountdown(null);
+      return;
+    }
+    const update = () => {
+      const createdAtMs = request?.createdAt?.toMillis?.() ?? null;
+      if (!createdAtMs) { setTtlCountdown(null); return; }
+      const expiresAtMs = typeof request?.expiresAtMs === 'number'
+        ? request.expiresAtMs
+        : createdAtMs + STUDENT_REQUEST_TTL_MS;
+      const remainingMs = expiresAtMs - Date.now();
+      if (remainingMs <= 0) { setTtlCountdown(null); return; }
+      const mins = Math.ceil(remainingMs / 60000);
+      setTtlCountdown(mins <= 1 ? 'Less than 1 min left' : `${mins} min left`);
+    };
+    update();
+    const timer = setInterval(update, 10000);
+    return () => clearInterval(timer);
+  }, [request?.id, request?.status]);
+
   const handleBusPress = async (id: string) => {
     const loc = busLocations[id];
     if (!loc) return;
@@ -1258,6 +1286,25 @@ const handleRequest = async (entry: RequestableStop) => {
   }
 
   const { stop: selectedStop, routeId: entryRouteId } = entry;
+
+  // Block requests from outside the service area
+  if (org?.mapBoundingBox && userLocRef.current) {
+    const { ne, sw } = org.mapBoundingBox;
+    const PADDING = 0.005; // ~500m buffer so edge-of-campus users aren't rejected
+    const { latitude: ulat, longitude: ulng } = userLocRef.current;
+    const inBounds =
+      ulat >= sw.latitude - PADDING &&
+      ulat <= ne.latitude + PADDING &&
+      ulng >= sw.longitude - PADDING &&
+      ulng <= ne.longitude + PADDING;
+    if (!inBounds) {
+      showAlert(
+        'You appear to be outside the service area. Stop requests are only available on campus.',
+        'Outside service area',
+      );
+      return;
+    }
+  }
 
   try {
     if (__DEV__) console.log('[handleRequest] auth.uid =', auth.currentUser?.uid, 'studentUid =', studentUid);
@@ -1371,7 +1418,7 @@ const handleRequest = async (entry: RequestableStop) => {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
-      {!rideActive && !selectedBusId && (
+      {role !== 'parent' && !rideActive && !selectedBusId && (
         <TouchableOpacity
           style={[styles.searchContainer, { top: topOverlay }, !busOnline && styles.searchContainerOffline]}
           onPress={() => {
@@ -1383,24 +1430,56 @@ const handleRequest = async (entry: RequestableStop) => {
           }}
           activeOpacity={0.8}
         >
+          <Icon name="place" size={18} color={busOnline ? PRIMARY_COLOR : '#bbb'} style={{ marginRight: 6 }} />
           <Text style={[styles.searchText, !busOnline && styles.searchTextOffline]}>
             {!busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
           </Text>
-          <Icon name="keyboard-arrow-down" size={24} color={busOnline ? '#888' : '#bbb'} />
+          <Icon name="keyboard-arrow-down" size={24} color={busOnline ? PRIMARY_COLOR : '#bbb'} />
         </TouchableOpacity>
       )}
 
       {!rideActive && !showLocationList && !selectedBusId && (
         <View style={[styles.tipContainer, { top: topOverlay + 60 }]}>
-          <InfoBanner
-            icon="lightbulb-outline"
-            title="Quick pointers"
-            description="Tap “Request a stop” to pick your pickup or tap a bus to see its ETA and next stop."
-          />
+          {!busOnline && (orgRoutes ?? []).some((r) => (r.hoursOfOperation ?? []).length > 0) ? (
+            <View style={styles.hoursCard}>
+              <View style={styles.hoursCardHeader}>
+                <Icon name="schedule" size={16} color="#374151" />
+                <Text style={styles.hoursCardTitle}>Service Hours</Text>
+              </View>
+              {(orgRoutes ?? [])
+                .filter((r) => (r.hoursOfOperation ?? []).length > 0)
+                .map((r) => (
+                  <View key={r.id} style={styles.hoursRouteBlock}>
+                    <Text style={styles.hoursRouteName}>{r.name}</Text>
+                    {(r.hoursOfOperation ?? []).map((h, i) => (
+                      <Text key={i} style={styles.hoursEntry}>
+                        {h.days}  {h.open} – {h.close}
+                      </Text>
+                    ))}
+                  </View>
+                ))}
+            </View>
+          ) : (
+            <InfoBanner
+              icon="lightbulb-outline"
+              title={role === 'parent' ? 'Live tracking' : 'Quick pointers'}
+              description={role === 'parent'
+                ? 'Tap a bus to see its ETA and next stop. Your child\'s pickup status will appear below.'
+                : 'Tap "Request a stop" to pick your pickup, or tap a bus to see its ETA and next stop.'}
+            />
+          )}
+          {activeBusIds.length > 0 && (
+            <View style={styles.busCountChip}>
+              <View style={styles.busCountDot} />
+              <Text style={styles.busCountText}>
+                {activeBusIds.length} bus{activeBusIds.length !== 1 ? 'es' : ''} online
+              </Text>
+            </View>
+          )}
         </View>
       )}
 
-      {!rideActive && showLocationList && !selectedBusId && (
+      {role !== 'parent' && !rideActive && showLocationList && !selectedBusId && (
         <TouchableWithoutFeedback onPress={() => setShowLocationList(false)}>
           <View style={styles.overlay}>
             <View style={[styles.locationListContainer, { top: topOverlay + 60 }]}>
@@ -1411,8 +1490,21 @@ const handleRequest = async (entry: RequestableStop) => {
                   <TouchableOpacity
                     style={styles.locationItem}
                     onPress={() => {
-                      setSelectedStopKey(item.key);
-                      handleRequest(item);
+                      const routeLabel = item.routeName ? ` · ${item.routeName}` : '';
+                      Alert.alert(
+                        'Request pickup',
+                        `Request a pickup at ${item.stop.name}${routeLabel}?`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Request',
+                            onPress: () => {
+                              setSelectedStopKey(item.key);
+                              handleRequest(item);
+                            },
+                          },
+                        ],
+                      );
                     }}
                   >
                     <Text style={styles.locationText}>{item.stop.name}</Text>
@@ -1470,12 +1562,13 @@ const handleRequest = async (entry: RequestableStop) => {
         {/* ✅ Campus stops always visible, but hide the destination stop marker while ride is active */}
         {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
           <Marker
-            description={stop.name}
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
+            zIndex={1}
+            tracksViewChanges={false}
           >
-            <MapMarker icon="location-on" />
+            <MapMarker icon="location-on" label={stop.name} />
           </Marker>
         ))}
 
@@ -1495,6 +1588,7 @@ const handleRequest = async (entry: RequestableStop) => {
                 anchor={{ x: 0.5, y: 0.5 }}
                 onPress={() => handleBusPress(id)}
                 tracksViewChanges={isSelected || forceBusTracks}
+                zIndex={5}
               >
                 <Image
                   source={busIcon}
@@ -1504,11 +1598,12 @@ const handleRequest = async (entry: RequestableStop) => {
               </MarkerAnimated>
 
               {isSelected && (
-                <Marker
-                  coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
+                <MarkerAnimated
+                  coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
                   anchor={{ x: 0.5, y: 1.42 }}
                   tappable={false}
                   tracksViewChanges
+                  zIndex={10}
                 >
                   <Animated.View
                     style={{
@@ -1541,7 +1636,7 @@ const handleRequest = async (entry: RequestableStop) => {
                       <View style={styles.busCloudTail} />
                     </View>
                   </Animated.View>
-                </Marker>
+                </MarkerAnimated>
               )}
             </React.Fragment>
           );
@@ -1556,8 +1651,9 @@ const handleRequest = async (entry: RequestableStop) => {
             }}
             anchor={{ x: 0.5, y: 1 }}
             tracksViewChanges={false}
+            zIndex={3}
           >
-            <MapMarker icon="flag" label={request.stop.name} />
+            <MapMarker icon="flag" label={request.stop.name} color="#22c55e" />
           </Marker>
         )}
 
@@ -1663,10 +1759,12 @@ const handleRequest = async (entry: RequestableStop) => {
 
             <Text style={styles.cardSubtitle}>
               {request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
-                ? 'Your request timed out after 15 minutes.'
+                ? 'The request timed out after 15 minutes.'
                 : request.status === 'completed'
-                  ? 'The bus has passed your stop.'
-                  : 'Your stop is confirmed. The bus will pick you up.'}
+                  ? 'The bus has passed this stop.'
+                  : role === 'parent'
+                    ? 'Your child\'s stop is confirmed. The bus will pick them up.'
+                    : 'Your stop is confirmed. The bus will pick you up.'}
             </Text>
 
             {(eta || stopsBefore !== null) && (
@@ -1679,21 +1777,38 @@ const handleRequest = async (entry: RequestableStop) => {
               </View>
             )}
 
+            {ttlCountdown && (
+              <View style={[styles.cardInfoRow, { marginTop: 2 }]}>
+                <Icon name="timer" size={13} color="#9CA3AF" />
+                <Text style={[styles.cardInfoMeta, { marginLeft: 4 }]}>{ttlCountdown}</Text>
+              </View>
+            )}
+
             {request.studentUid === studentUid && (request.status === 'accepted' || request.status === 'pending') && (
               <TouchableOpacity
                 style={styles.cancelButton}
-                onPress={async () => {
-                  if (!requestId) return;
-
-                  await updateDoc(doc(db, 'orgs', orgId ?? '', 'stopRequests', requestId), { status: 'cancelled' });
-
-                  setRequest(null);
-                  setRequestId(null);
-                  setRouteCoords([]);
-                  fullRouteRef.current = [];
-                  setEta(null);
-                  setStopsBefore(null);
-                  showAlert('Stop request canceled.');
+                onPress={() => {
+                  Alert.alert(
+                    'Cancel request?',
+                    'Are you sure you want to cancel your stop request?',
+                    [
+                      { text: 'Keep it', style: 'cancel' },
+                      {
+                        text: 'Cancel request',
+                        style: 'destructive',
+                        onPress: async () => {
+                          if (!requestId) return;
+                          await updateDoc(doc(db, 'orgs', orgId ?? '', 'stopRequests', requestId), { status: 'cancelled' });
+                          setRequest(null);
+                          setRequestId(null);
+                          setRouteCoords([]);
+                          fullRouteRef.current = [];
+                          setEta(null);
+                          setStopsBefore(null);
+                        },
+                      },
+                    ],
+                  );
                 }}
               >
                 <Text style={styles.cancelButtonText}>Cancel Request</Text>
@@ -1753,16 +1868,56 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: BACKGROUND_COLOR,
-    paddingHorizontal: 20,
-    shadowColor: '#000',
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: PRIMARY_COLOR + '30',
+    shadowColor: PRIMARY_COLOR,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
     elevation: 5,
     zIndex: 100,
   },
   tipContainer: { position: 'absolute', left: 20, right: 20, zIndex: 90 },
-  searchText: { flex: 1, fontSize: 16, color: '#888' },
+  busCountChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  busCountDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#16a34a',
+    marginRight: 5,
+  },
+  busCountText: { fontSize: 12, fontWeight: '600', color: '#374151' },
+  hoursCard: {
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 14,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  hoursCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  hoursCardTitle: { fontSize: 14, fontWeight: '700', color: '#111' },
+  hoursRouteBlock: { marginBottom: 8 },
+  hoursRouteName: { fontSize: 13, fontWeight: '600', color: PRIMARY_COLOR, marginBottom: 2 },
+  hoursEntry: { fontSize: 13, color: '#374151' },
+  searchText: { flex: 1, fontSize: 15, fontWeight: '500', color: '#374151' },
   searchContainerOffline: { backgroundColor: '#f3f4f6' },
   searchTextOffline: { color: '#aaa' },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 99 },

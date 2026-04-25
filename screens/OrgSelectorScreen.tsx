@@ -14,6 +14,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  RefreshControl,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -49,24 +50,24 @@ export default function OrgSelectorScreen() {
     return () => { isMounted.current = false; };
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setIsLoading(true);
-        setError(null);
-        const res = await fetch(`${SHUTTLER_API_URL}/orgs`);
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
-        const data: OrgConfig[] = await res.json();
-        if (!isMounted.current) return;
-        setOrgs(data);
-        setFiltered(data);
-      } catch (e: any) {
-        if (isMounted.current) setError('Could not load organizations. Check your connection.');
-      } finally {
-        if (isMounted.current) setIsLoading(false);
-      }
-    })();
+  const loadOrgs = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const res = await fetch(`${SHUTTLER_API_URL}/orgs`);
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data: OrgConfig[] = await res.json();
+      if (!isMounted.current) return;
+      setOrgs(data);
+      setFiltered(data);
+    } catch (e: any) {
+      if (isMounted.current) setError('Could not load organizations. Check your connection.');
+    } finally {
+      if (isMounted.current) setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => { loadOrgs(); }, []);
 
   const handleSearch = useCallback(
     (text: string) => {
@@ -114,16 +115,24 @@ export default function OrgSelectorScreen() {
         <View style={styles.centered}>
           <Icon name="wifi-off" size={40} color="#ccc" />
           <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={loadOrgs}>
+            <Text style={styles.retryBtnText}>Try again</Text>
+          </TouchableOpacity>
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.centered}>
+          <Icon name="search-off" size={40} color="#ccc" />
           <Text style={styles.emptyText}>No organizations found.</Text>
+          {query.length > 0 && (
+            <Text style={styles.emptyHint}>Try a different search term.</Text>
+          )}
         </View>
       ) : (
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.orgId}
           contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadOrgs} tintColor={PRIMARY_COLOR} />}
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.orgCard} onPress={() => handleSelect(item)} activeOpacity={0.75}>
               {item.logoUrl ? (
@@ -295,5 +304,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: PRIMARY_COLOR,
+  },
+  retryBtn: {
+    marginTop: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    backgroundColor: PRIMARY_COLOR,
+    borderRadius: borderRadius.lg,
+  },
+  retryBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  emptyHint: {
+    color: '#bbb',
+    fontSize: 13,
+    marginTop: 4,
   },
 });

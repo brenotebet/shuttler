@@ -22,7 +22,7 @@ import { doc, updateDoc, setDoc, getDoc, serverTimestamp, collection, getDocs, q
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { auth, db } from '../firebase/firebaseconfig';
-import { useOrg, Stop, Route } from '../src/org/OrgContext';
+import { useOrg, Stop, Route, RouteHours } from '../src/org/OrgContext';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
@@ -218,6 +218,165 @@ function AuthTab() {
   );
 }
 
+// ---- Hours Editor (used inside route cards) ----
+
+function HoursEditor({
+  route,
+  onAdd,
+  onDelete,
+}: {
+  route: Route;
+  onAdd: (entry: RouteHours) => void;
+  onDelete: (idx: number) => void;
+}) {
+  const [days, setDays] = useState('');
+  const [open, setOpen] = useState('');
+  const [close, setClose] = useState('');
+  const [showForm, setShowForm] = useState(false);
+
+  const handleAdd = () => {
+    if (!days.trim() || !open.trim() || !close.trim()) return;
+    onAdd({ days: days.trim(), open: open.trim(), close: close.trim() });
+    setDays(''); setOpen(''); setClose('');
+    setShowForm(false);
+  };
+
+  const hours = route.hoursOfOperation ?? [];
+
+  return (
+    <View style={{ marginTop: 12 }}>
+      <View style={hoursStyles.header}>
+        <Icon name="schedule" size={14} color="#6b7280" />
+        <Text style={hoursStyles.label}>Hours of Operation</Text>
+        <TouchableOpacity onPress={() => setShowForm((v) => !v)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <Icon name={showForm ? 'remove' : 'add'} size={18} color={PRIMARY_COLOR} />
+        </TouchableOpacity>
+      </View>
+
+      {hours.map((h, idx) => (
+        <View key={idx} style={hoursStyles.row}>
+          <Text style={hoursStyles.rowText}>{h.days}  {h.open} – {h.close}</Text>
+          <TouchableOpacity onPress={() => onDelete(idx)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+            <Icon name="close" size={14} color="#e53935" />
+          </TouchableOpacity>
+        </View>
+      ))}
+      {hours.length === 0 && !showForm && (
+        <Text style={hoursStyles.empty}>No hours set — tap + to add.</Text>
+      )}
+
+      {showForm && (
+        <View style={hoursStyles.form}>
+          <TextInput
+            style={hoursStyles.input}
+            placeholder="Days (e.g. Mon–Fri)"
+            value={days}
+            onChangeText={setDays}
+            placeholderTextColor="#aaa"
+          />
+          <View style={hoursStyles.timeRow}>
+            <TextInput
+              style={[hoursStyles.input, { flex: 1 }]}
+              placeholder="Open (e.g. 7:30 AM)"
+              value={open}
+              onChangeText={setOpen}
+              placeholderTextColor="#aaa"
+            />
+            <Text style={hoursStyles.dash}>–</Text>
+            <TextInput
+              style={[hoursStyles.input, { flex: 1 }]}
+              placeholder="Close (e.g. 10:00 PM)"
+              value={close}
+              onChangeText={setClose}
+              placeholderTextColor="#aaa"
+            />
+          </View>
+          <TouchableOpacity
+            style={[hoursStyles.addBtn, (!days.trim() || !open.trim() || !close.trim()) && { opacity: 0.4 }]}
+            onPress={handleAdd}
+            disabled={!days.trim() || !open.trim() || !close.trim()}
+          >
+            <Text style={hoursStyles.addBtnText}>Add Hours</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const hoursStyles = StyleSheet.create({
+  header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  label: { flex: 1, fontSize: 12, fontWeight: '600', color: '#6b7280' },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 3 },
+  rowText: { fontSize: 13, color: '#374151' },
+  empty: { fontSize: 12, color: '#9ca3af', fontStyle: 'italic' },
+  form: { gap: 6, marginTop: 4 },
+  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dash: { fontSize: 14, color: '#6b7280' },
+  input: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    color: '#111',
+    backgroundColor: '#fafafa',
+  },
+  addBtn: {
+    backgroundColor: PRIMARY_COLOR,
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  addBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+});
+
+// ---- Stop tab extra styles ----
+const stopStyles = StyleSheet.create({
+  manualToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 7,
+    marginBottom: 4,
+  },
+  manualToggleText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  manualCoordsBox: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 10,
+    marginBottom: 8,
+    gap: 8,
+  },
+  manualCoordsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  coordInput: {
+    flex: 1,
+    marginBottom: 0,
+    fontSize: 13,
+  },
+  applyBtn: {
+    backgroundColor: PRIMARY_COLOR,
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  applyBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+});
+
 // ---- Stop Configuration Tab ----
 
 function calcBoundsFromStops(stops: Stop[]) {
@@ -263,14 +422,21 @@ function StopsTab() {
   const [isSearching, setIsSearching] = useState(false);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Manual coordinate entry
+  const [showManualCoords, setShowManualCoords] = useState(false);
+  const [manualLat, setManualLat] = useState('');
+  const [manualLon, setManualLon] = useState('');
+
   const searchPlaces = useCallback(async (input: string) => {
     if (!input.trim() || input.length < 3) { setSearchResults([]); return; }
     setIsSearching(true);
     try {
       const bias = `${mapCenter.latitude},${mapCenter.longitude}`;
       const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&location=${bias}&radius=50000&key=${GOOGLE_MAPS_API_KEY}`;
+      if (__DEV__) console.log('[Places] autocomplete url:', url);
       const res = await fetch(url);
       const json = await res.json();
+      if (__DEV__) console.log('[Places] status:', json.status, json.error_message ?? '');
       if (json.status === 'OK') {
         setSearchResults(
           (json.predictions ?? []).slice(0, 5).map((p: any) => ({
@@ -279,9 +445,17 @@ function StopsTab() {
           })),
         );
       } else {
+        // Non-OK status — surface a hint in dev so the admin can diagnose
+        if (__DEV__ && json.status !== 'ZERO_RESULTS') {
+          Alert.alert(
+            `Places API: ${json.status}`,
+            json.error_message ?? 'Check that the Places API is enabled for this key and that billing is active.',
+          );
+        }
         setSearchResults([]);
       }
-    } catch {
+    } catch (err) {
+      if (__DEV__) console.error('[Places] fetch error:', err);
       setSearchResults([]);
     } finally {
       setIsSearching(false);
@@ -316,6 +490,21 @@ function StopsTab() {
       }
     } catch {}
   }, [pendingName]);
+
+  const handleApplyManualCoords = useCallback(() => {
+    const lat = parseFloat(manualLat);
+    const lon = parseFloat(manualLon);
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      Alert.alert('Invalid coordinates', 'Latitude must be −90 to 90, longitude −180 to 180.');
+      return;
+    }
+    const coords = { latitude: lat, longitude: lon };
+    setPendingCoords(coords);
+    mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 500);
+    setShowManualCoords(false);
+    setManualLat('');
+    setManualLon('');
+  }, [manualLat, manualLon]);
 
   // Route editing state
   const [newRouteName, setNewRouteName] = useState('');
@@ -455,6 +644,28 @@ function StopsTab() {
     [],
   );
 
+  const handleAddHours = useCallback(
+    (routeId: string, entry: RouteHours) => {
+      setRoutes((prev) =>
+        prev.map((r) =>
+          r.id !== routeId ? r : { ...r, hoursOfOperation: [...(r.hoursOfOperation ?? []), entry] },
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleDeleteHours = useCallback(
+    (routeId: string, idx: number) => {
+      setRoutes((prev) =>
+        prev.map((r) =>
+          r.id !== routeId ? r : { ...r, hoursOfOperation: (r.hoursOfOperation ?? []).filter((_, i) => i !== idx) },
+        ),
+      );
+    },
+    [],
+  );
+
   const initialRegion: Region = {
     latitude: mapCenter.latitude,
     longitude: mapCenter.longitude,
@@ -530,6 +741,49 @@ function StopsTab() {
                 <Text style={styles.searchDropdownText} numberOfLines={2}>{s.description}</Text>
               </TouchableOpacity>
             ))}
+          </View>
+        )}
+
+        {/* Manual coordinate entry — collapsible */}
+        <TouchableOpacity
+          style={stopStyles.manualToggle}
+          onPress={() => setShowManualCoords((v) => !v)}
+        >
+          <Icon name="my-location" size={14} color="#6b7280" />
+          <Text style={stopStyles.manualToggleText}>Enter coordinates manually</Text>
+          <Icon name={showManualCoords ? 'expand-less' : 'expand-more'} size={16} color="#9ca3af" />
+        </TouchableOpacity>
+
+        {showManualCoords && (
+          <View style={stopStyles.manualCoordsBox}>
+            <View style={stopStyles.manualCoordsRow}>
+              <TextInput
+                style={[styles.input, stopStyles.coordInput]}
+                placeholder="Latitude (e.g. 38.9071)"
+                value={manualLat}
+                onChangeText={setManualLat}
+                keyboardType="numbers-and-punctuation"
+                placeholderTextColor="#aaa"
+                returnKeyType="next"
+              />
+              <TextInput
+                style={[styles.input, stopStyles.coordInput]}
+                placeholder="Longitude (e.g. −77.0369)"
+                value={manualLon}
+                onChangeText={setManualLon}
+                keyboardType="numbers-and-punctuation"
+                placeholderTextColor="#aaa"
+                returnKeyType="done"
+                onSubmitEditing={handleApplyManualCoords}
+              />
+            </View>
+            <TouchableOpacity
+              style={[stopStyles.applyBtn, (!manualLat || !manualLon) && { opacity: 0.4 }]}
+              onPress={handleApplyManualCoords}
+              disabled={!manualLat || !manualLon}
+            >
+              <Text style={stopStyles.applyBtnText}>Use These Coordinates</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -668,6 +922,13 @@ function StopsTab() {
                   {stops.length === 0 && (
                     <Text style={styles.hint}>Add stops above first.</Text>
                   )}
+
+                  {/* Hours of operation */}
+                  <HoursEditor
+                    route={route}
+                    onAdd={(entry) => handleAddHours(route.id, entry)}
+                    onDelete={(idx) => handleDeleteHours(route.id, idx)}
+                  />
                 </View>
               )}
             </View>

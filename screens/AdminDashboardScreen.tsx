@@ -1,5 +1,5 @@
 // screens/AdminDashboardScreen.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   ScrollView,
   ActivityIndicator,
   TouchableOpacity,
+  TextInput,
+  Share,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,6 +16,7 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {
   collection,
+  getDocs,
   onSnapshot,
   query,
   where,
@@ -70,6 +73,139 @@ function getDayLabel(date: Date): string {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
 }
 
+// ---- Driver Analytics Types & Helpers ----
+
+type StopStat = { stopId: string; stopName: string; count: number; pct: number };
+type DriverStatsData = {
+  uid: string;
+  name: string;
+  totalAllTime: number;
+  totalToday: number;
+  todayVisits: number;
+  activeDays: number;
+  avgPerDay: number;
+  avgPerVisit: number;
+  topStop: string | null;
+  stops: StopStat[];
+};
+
+async function fetchDriverStats(uid: string, orgId: string): Promise<DriverStatsData | null> {
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'orgs', orgId, 'boardingCounts'), where('driverUid', '==', uid)),
+    );
+    const docs = snap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    const midnightMs = midnight.getTime();
+
+    let totalAllTime = 0;
+    let totalToday = 0;
+    let todayVisits = 0;
+    const daySet = new Set<string>();
+    const stopCounts: Record<string, { name: string; count: number }> = {};
+
+    for (const d of docs) {
+      const count = d.count ?? 0;
+      const ms = d.createdAt?.toMillis?.() ?? 0;
+      totalAllTime += count;
+      const dayKey = new Date(ms).toDateString();
+      daySet.add(dayKey);
+      if (ms >= midnightMs) { totalToday += count; todayVisits++; }
+      const sid = d.stopId ?? d.stop?.id ?? 'unknown';
+      const sname = d.stopName ?? d.stop?.name ?? 'Unknown stop';
+      if (!stopCounts[sid]) stopCounts[sid] = { name: sname, count: 0 };
+      stopCounts[sid].count += count;
+    }
+
+    const activeDays = daySet.size;
+    const stops: StopStat[] = Object.entries(stopCounts)
+      .map(([sid, { name, count }]) => ({ stopId: sid, stopName: name, count, pct: totalAllTime > 0 ? Math.round((count / totalAllTime) * 100) : 0 }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      uid,
+      name: '',
+      totalAllTime,
+      totalToday,
+      todayVisits,
+      activeDays,
+      avgPerDay: activeDays > 0 ? Math.round(totalAllTime / activeDays) : 0,
+      avgPerVisit: docs.length > 0 ? Math.round(totalAllTime / docs.length) : 0,
+      topStop: stops[0]?.stopName ?? null,
+      stops,
+    };
+  } catch (e) {
+    console.error('fetchDriverStats error', e);
+    return null;
+  }
+}
+
+function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string }; orgId: string }) {
+  const [open, setOpen] = useState(false);
+  const [stats, setStats] = useState<DriverStatsData | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (stats) { setOpen(true); return; }
+    setLoading(true);
+    const s = await fetchDriverStats(driver.uid, orgId);
+    if (s) { s.name = driver.name; setStats(s); }
+    setLoading(false);
+    setOpen(true);
+  }, [driver, orgId, stats]);
+
+  const maxStopCount = Math.max(...(stats?.stops.map((s) => s.count) ?? [1]), 1);
+
+  return (
+    <TouchableOpacity style={styles.card} onPress={open ? () => setOpen(false) : load} activeOpacity={0.85}>
+      <View style={styles.analyticsCardHeader}>
+        <View style={styles.analyticsIconWrap}>
+          <Icon name="person" size={18} color={PRIMARY_COLOR} />
+        </View>
+        <Text style={styles.analyticsDriverName}>{driver.name}</Text>
+        {loading
+          ? <ActivityIndicator size="small" color={PRIMARY_COLOR} />
+          : <Icon name={open ? 'expand-less' : 'bar-chart'} size={20} color="#9ca3af" />}
+      </View>
+
+      {open && stats && (
+        <>
+          <View style={styles.analyticsChips}>
+            {[
+              { label: 'All-time', value: stats.totalAllTime },
+              { label: 'Today', value: stats.totalToday },
+              { label: 'Active days', value: stats.activeDays },
+              { label: 'Avg/day', value: stats.avgPerDay },
+              { label: 'Avg/visit', value: stats.avgPerVisit },
+            ].map((chip) => (
+              <View key={chip.label} style={styles.analyticsChip}>
+                <Text style={styles.analyticsChipValue}>{chip.value}</Text>
+                <Text style={styles.analyticsChipLabel}>{chip.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          {stats.stops.length > 0 && (
+            <>
+              <Text style={styles.analyticsStopTitle}>Stop breakdown</Text>
+              {stats.stops.slice(0, 8).map((s) => (
+                <View key={s.stopId} style={styles.analyticsStopRow}>
+                  <Text style={styles.analyticsStopName} numberOfLines={1}>{s.stopName}</Text>
+                  <View style={styles.analyticsBarBg}>
+                    <View style={[styles.analyticsBar, { width: `${Math.max(4, (s.count / maxStopCount) * 100)}%` as any }]} />
+                  </View>
+                  <Text style={styles.analyticsStopCount}>{s.count}</Text>
+                </View>
+              ))}
+            </>
+          )}
+        </>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 export default function AdminDashboardScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { org } = useOrg();
@@ -83,6 +219,8 @@ export default function AdminDashboardScreen() {
   const [weekBoardings, setWeekBoardings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(Date.now());
+  const [analyticsQuery, setAnalyticsQuery] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setTick(Date.now()), 15000);
@@ -282,6 +420,85 @@ export default function AdminDashboardScreen() {
     () => Math.max(...weekTrend.map((d) => d.count), 1),
     [weekTrend],
   );
+
+  const filteredDriversForAnalytics = useMemo(() => {
+    const q = analyticsQuery.toLowerCase().trim();
+    return q ? drivers.filter((d) => (d.displayName ?? d.email ?? '').toLowerCase().includes(q)) : drivers;
+  }, [analyticsQuery, drivers]);
+
+  const handleExportCSV = useCallback(async () => {
+    if (!orgId || isExporting) return;
+    setIsExporting(true);
+    try {
+      const boardingSnap = await getDocs(collection(db, 'orgs', orgId, 'boardingCounts'));
+      const reqSnap = await getDocs(collection(db, 'orgs', orgId, 'stopRequests'));
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const todayMs = today.getTime();
+
+      const boardingRows = boardingSnap.docs.map((d) => {
+        const data = d.data() as any;
+        return [
+          d.id,
+          data.driverUid ?? '',
+          data.stopName ?? data.stop?.name ?? '',
+          data.count ?? 0,
+          data.createdAt?.toDate?.()?.toISOString() ?? '',
+        ].join(',');
+      });
+
+      const driverSummary = drivers.map((driver) => {
+        const boards = boardingSnap.docs.filter((d) => (d.data() as any).driverUid === driver.uid);
+        const total = boards.reduce((s, d) => s + ((d.data() as any).count ?? 0), 0);
+        const todayTotal = boards
+          .filter((d) => ((d.data() as any).createdAt?.toMillis?.() ?? 0) >= todayMs)
+          .reduce((s, d) => s + ((d.data() as any).count ?? 0), 0);
+        return [driver.uid, driver.displayName ?? driver.email ?? '', total, todayTotal].join(',');
+      });
+
+      const stopSummary: Record<string, { name: string; count: number }> = {};
+      boardingSnap.docs.forEach((d) => {
+        const data = d.data() as any;
+        const sid = data.stopId ?? data.stop?.id ?? 'unknown';
+        const sname = data.stopName ?? data.stop?.name ?? 'Unknown';
+        if (!stopSummary[sid]) stopSummary[sid] = { name: sname, count: 0 };
+        stopSummary[sid].count += data.count ?? 0;
+      });
+      const stopRows = Object.entries(stopSummary)
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([sid, { name, count }]) => [sid, name, count].join(','));
+
+      const todayReqRows = reqSnap.docs
+        .filter((d) => ((d.data() as any).createdAt?.toMillis?.() ?? 0) >= todayMs)
+        .map((d) => {
+          const data = d.data() as any;
+          return [d.id, data.studentEmail ?? '', data.stop?.name ?? '', data.status ?? '', data.createdAt?.toDate?.()?.toISOString() ?? ''].join(',');
+        });
+
+      const csv = [
+        'BOARDING EVENTS',
+        'id,driverUid,stopName,count,createdAt',
+        ...boardingRows,
+        '',
+        'DRIVER SUMMARY',
+        'uid,name,totalAllTime,totalToday',
+        ...driverSummary,
+        '',
+        'STOP POPULARITY (ALL-TIME)',
+        'stopId,stopName,totalBoarded',
+        ...stopRows,
+        '',
+        "TODAY'S REQUESTS",
+        'id,studentEmail,stopName,status,createdAt',
+        ...todayReqRows,
+      ].join('\n');
+
+      await Share.share({ message: csv, title: 'Shuttler Export' });
+    } catch (e) {
+      console.error('CSV export failed', e);
+    } finally {
+      setIsExporting(false);
+    }
+  }, [orgId, drivers, isExporting]);
 
   if (loading) {
     return (
@@ -485,6 +702,41 @@ export default function AdminDashboardScreen() {
           </View>
         </View>
 
+        {/* Driver Analytics */}
+        <Text style={styles.sectionTitle}>Driver Analytics</Text>
+        <View style={styles.analyticsSearchRow}>
+          <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 6 }} />
+          <TextInput
+            style={styles.analyticsSearchInput}
+            placeholder="Search driver…"
+            placeholderTextColor="#bbb"
+            value={analyticsQuery}
+            onChangeText={setAnalyticsQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        {filteredDriversForAnalytics.map((driver) => (
+          <DriverStatCard
+            key={driver.uid}
+            driver={{ uid: driver.uid, name: driver.displayName ?? driver.email ?? driver.uid }}
+            orgId={orgId ?? ''}
+          />
+        ))}
+
+        {/* CSV Export */}
+        <TouchableOpacity
+          style={styles.exportBtn}
+          onPress={handleExportCSV}
+          activeOpacity={0.8}
+          disabled={isExporting}
+        >
+          {isExporting
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Icon name="file-download" size={18} color="#fff" />}
+          <Text style={styles.exportBtnText}>{isExporting ? 'Exporting…' : 'Export CSV'}</Text>
+        </TouchableOpacity>
+
         <View style={{ height: 32 }} />
       </ScrollView>
     </ScreenContainer>
@@ -603,6 +855,87 @@ const styles = StyleSheet.create({
   stopName: { flex: 1, fontSize: 14, fontWeight: '500', color: TEXT_PRIMARY },
   stopCount: { fontSize: 15, fontWeight: '700', color: PRIMARY_COLOR },
   stopCountLabel: { fontSize: 12, color: TEXT_SECONDARY },
+
+  // Driver Analytics
+  analyticsSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: 12,
+    height: 42,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    marginBottom: 10,
+  },
+  analyticsSearchInput: { flex: 1, fontSize: 14, color: '#111' },
+  analyticsCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  analyticsIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f0f4ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  analyticsDriverName: { flex: 1, fontSize: 15, fontWeight: '600', color: TEXT_PRIMARY },
+  analyticsChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  analyticsChip: {
+    backgroundColor: '#f8fafc',
+    borderRadius: borderRadius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    minWidth: 70,
+  },
+  analyticsChipValue: { fontSize: 18, fontWeight: '700', color: PRIMARY_COLOR },
+  analyticsChipLabel: { fontSize: 10, color: TEXT_SECONDARY, marginTop: 2 },
+  analyticsStopTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: TEXT_SECONDARY,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  analyticsStopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 8,
+  },
+  analyticsStopName: { width: 100, fontSize: 12, color: TEXT_PRIMARY, fontWeight: '500' },
+  analyticsBarBg: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  analyticsBar: { height: '100%', backgroundColor: PRIMARY_COLOR, borderRadius: 4 },
+  analyticsStopCount: { width: 28, textAlign: 'right', fontSize: 12, fontWeight: '600', color: TEXT_PRIMARY },
+
+  // CSV Export
+  exportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: PRIMARY_COLOR,
+    borderRadius: borderRadius.lg,
+    paddingVertical: 13,
+    marginBottom: 14,
+  },
+  exportBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
   // 7-day bar chart
   trendRow: {

@@ -29,13 +29,13 @@ const LocationContext = createContext<LocationContextType>({
   stopSharing: async () => {},
 });
 
-const WRITE_MIN_INTERVAL_MS = 2000;
+const WRITE_MIN_INTERVAL_MS = 8000;
 const WRITE_MIN_DISTANCE_M = 8;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // auto-stop after 15 min of no GPS movement
 const INACTIVITY_CHECK_MS = 60 * 1000;         // check once per minute
 
 // Ignore GPS readings with accuracy worse than this (meters)
-const GPS_ACCURACY_MAX_M = 50;
+const GPS_ACCURACY_MAX_M = 80;
 // EMA smoothing factor (0 = max smooth/lag, 1 = no smoothing)
 const EMA_ALPHA = 0.4;
 

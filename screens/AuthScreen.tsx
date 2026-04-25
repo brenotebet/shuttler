@@ -126,14 +126,19 @@ function PasswordInput({
   placeholder,
   error,
   label,
+  showRequirements,
 }: {
   value: string;
   onChangeText: (v: string) => void;
   placeholder: string;
   error?: string;
   label?: string;
+  showRequirements?: boolean;
 }) {
   const [visible, setVisible] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const hasLength = value.length >= 8;
+  const showReqs = showRequirements && focused && value.length > 0;
   return (
     <>
       {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
@@ -147,11 +152,19 @@ function PasswordInput({
           autoCapitalize="none"
           autoCorrect={false}
           placeholderTextColor="#aaa"
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
         />
         <TouchableOpacity onPress={() => setVisible((v) => !v)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
           <Icon name={visible ? 'visibility-off' : 'visibility'} size={20} color="#9ca3af" />
         </TouchableOpacity>
       </View>
+      {showReqs && (
+        <View style={styles.reqRow}>
+          <Icon name={hasLength ? 'check-circle' : 'radio-button-unchecked'} size={13} color={hasLength ? '#16a34a' : '#9ca3af'} />
+          <Text style={[styles.reqText, hasLength && styles.reqTextMet]}>At least 8 characters</Text>
+        </View>
+      )}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </>
   );
@@ -350,7 +363,9 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
               keyboardType="phone-pad"
               placeholderTextColor="#bbb"
             />
-            {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
+            {errors.phone
+              ? <Text style={styles.errorText}>{errors.phone}</Text>
+              : <Text style={styles.fieldHint}>Used for account recovery and ride notifications. Format: +1 555 000 1234</Text>}
           </View>
         </>
       )}
@@ -367,7 +382,11 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
           autoCorrect={false}
           placeholderTextColor="#bbb"
         />
-        {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
+        {errors.email
+          ? <Text style={styles.errorText}>{errors.email}</Text>
+          : mode === 'signup'
+            ? <Text style={styles.fieldHint}>Use your school or work email. This will be your login.</Text>
+            : null}
       </View>
 
       <PasswordInput
@@ -376,6 +395,7 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
         placeholder="••••••••"
         error={errors.password}
         label="Password"
+        showRequirements={mode === 'signup'}
       />
 
       {mode === 'signup' && (
@@ -389,7 +409,7 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
       )}
 
       <AppButton
-        label={isSubmitting ? 'Please wait…' : mode === 'signin' ? 'Sign In' : 'Create Account'}
+        label={isSubmitting ? (mode === 'signin' ? 'Signing in…' : 'Creating account…') : mode === 'signin' ? 'Sign In' : 'Create Account'}
         onPress={mode === 'signin' ? handleSignIn : handleSignUp}
         style={styles.primaryButton}
         disabled={isSubmitting}
@@ -753,5 +773,26 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: 'center',
     marginBottom: spacing.item,
+  },
+  fieldHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 4,
+    marginBottom: spacing.item / 2,
+    lineHeight: 15,
+  },
+  reqRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  reqText: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  reqTextMet: {
+    color: '#16a34a',
   },
 });

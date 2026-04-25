@@ -7,6 +7,7 @@ import React, { useCallback, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Platform,
   ScrollView,
   StyleSheet,
@@ -55,6 +56,46 @@ const HEARD_OPTIONS = [
   { value: 'conference', label: 'Conference / event' },
   { value: 'other', label: 'Other' },
 ];
+
+// ---- Collapsible inline field tooltip ----
+
+function FieldInfo({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={infoStyles.wrap}>
+      <TouchableOpacity
+        onPress={() => {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setOpen((v) => !v);
+        }}
+        style={infoStyles.trigger}
+        hitSlop={{ top: 6, right: 6, bottom: 6, left: 6 }}
+        activeOpacity={0.7}
+      >
+        <Icon name={open ? 'info' : 'info-outline'} size={15} color={PRIMARY_COLOR} />
+        <Text style={infoStyles.triggerText}>{open ? 'Hide' : 'What\'s this?'}</Text>
+      </TouchableOpacity>
+      {open && (
+        <View style={infoStyles.body}>
+          <Text style={infoStyles.bodyText}>{text}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const infoStyles = StyleSheet.create({
+  wrap: { marginTop: -4, marginBottom: 8 },
+  trigger: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' },
+  triggerText: { fontSize: 12, color: PRIMARY_COLOR, fontWeight: '500' },
+  body: {
+    backgroundColor: `${PRIMARY_COLOR}0D`,
+    borderRadius: borderRadius.md,
+    padding: 10,
+    marginTop: 6,
+  },
+  bodyText: { fontSize: 12, color: '#374151', lineHeight: 18 },
+});
 
 // ---- Small reusable chip picker ----
 
@@ -270,6 +311,7 @@ export default function CreateOrgScreen() {
             placeholderTextColor="#aaa"
             keyboardType="phone-pad"
           />
+          <FieldInfo text="Used for urgent account communications only. We will never share your number." />
 
           {/* ── Organisation info ── */}
           <View style={styles.divider} />
@@ -286,6 +328,7 @@ export default function CreateOrgScreen() {
           />
 
           <Text style={styles.label}>Organisation type *</Text>
+          <FieldInfo text={'Determines default features and user roles available to your org.\n• K-12 School — enables parent phone-number sign-in for family tracking.\n• University / College — email or SSO login for students and drivers.\n• Corporate / Healthcare / Government — email or SSO, no parent portal.\nYou can adjust settings later in Org Setup.'} />
           <ChipPicker options={ORG_TYPES} value={orgType} onChange={setOrgType} />
 
           <Text style={styles.label}>Website (optional)</Text>
@@ -299,6 +342,7 @@ export default function CreateOrgScreen() {
             autoCapitalize="none"
             autoCorrect={false}
           />
+          <FieldInfo text="Helps our team verify your organisation during review. Include the full URL (https://…)." />
 
           {/* ── Extra context ── */}
           <View style={styles.divider} />
@@ -306,12 +350,14 @@ export default function CreateOrgScreen() {
           <Text style={styles.hint}>Helps us set up your account correctly. All optional.</Text>
 
           <Text style={styles.label}>Estimated daily riders</Text>
+          <FieldInfo text={'How many unique riders use your shuttle service on a typical day? This helps us recommend the right pricing tier — you can change it any time.\n• Under 50 — Starter plan\n• 50–200 — Growth plan\n• 200–500 — Pro plan\n• 500+ — Enterprise (custom pricing)'} />
           <ChipPicker options={RIDER_RANGES} value={estimatedRiders} onChange={setEstimatedRiders} />
 
           <Text style={styles.label}>How did you hear about Shuttler?</Text>
           <ChipPicker options={HEARD_OPTIONS} value={heardAboutUs} onChange={setHeardAboutUs} />
 
           <Text style={styles.label}>Describe your shuttle programme (optional)</Text>
+          <FieldInfo text="Tell us about your routes, stops, and operating hours. This helps our setup team pre-configure your account so you're ready to go on day one." />
           <TextInput
             style={[styles.input, styles.textarea]}
             value={description}

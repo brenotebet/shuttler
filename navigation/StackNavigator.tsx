@@ -20,6 +20,7 @@ import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
 import CreateOrgScreen from '../screens/CreateOrgScreen';
 import SuperAdminScreen from '../screens/SuperAdminScreen';
 import HowToUseScreen from '../screens/HowToUseScreen';
+import ParentChildLinkScreen from '../screens/ParentChildLinkScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -37,6 +38,7 @@ export type RootStackParamList = {
 
   // Stack-level screens
   StudentHistory: undefined;
+  ParentChildLink: undefined;
   DriverHistory: undefined;
   AdminDriver: undefined;
   AdminDashboard: undefined;
@@ -121,10 +123,10 @@ export default function StackNavigator() {
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : role === 'parent' ? (
-        // Parents see the same map as students (tracking-only UX can be refined later)
         <>
           <Stack.Screen name="StudentHome" component={StudentTabs} />
           <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
+          <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : role === 'driver' || role === 'admin' ? (
@@ -143,6 +145,7 @@ export default function StackNavigator() {
         <>
           <Stack.Screen name="StudentHome" component={StudentTabs} />
           <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
+          <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
           {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>

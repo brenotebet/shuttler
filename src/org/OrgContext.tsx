@@ -18,10 +18,17 @@ export type Stop = {
   longitude: number;
 };
 
+export type RouteHours = {
+  days: string;  // e.g. "Mon–Fri", "Sat–Sun", "Daily"
+  open: string;  // e.g. "7:30 AM"
+  close: string; // e.g. "10:00 PM"
+};
+
 export type Route = {
   id: string;
   name: string;
   stopIds: string[]; // ordered stop IDs referencing org.stops
+  hoursOfOperation?: RouteHours[];
 };
 
 export type AuthMethod = 'saml' | 'email' | 'phone' | 'google' | 'email+google';
