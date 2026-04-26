@@ -9,6 +9,14 @@ import { DOMParser } from '@xmldom/xmldom';
 import xpath from 'xpath';
 import 'dotenv/config';
 import * as Sentry from '@sentry/node';
+import {
+  sendEmail,
+  emailVerificationTemplate,
+  passwordResetTemplate,
+  welcomeTemplate,
+  orgApplicationReceivedTemplate,
+  orgApprovedTemplate,
+} from './mailer';
 
 /**
  * Shuttler multi-tenant backend
@@ -624,6 +632,17 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
 
     console.log(`[orgs/create] New org application: ${orgName} (${orgId}) by ${contactEmail}`);
 
+    // Send application-received email — fire and forget so a mailer hiccup
+    // never blocks the HTTP response.
+    sendEmail({
+      to: (contactEmail as string).toLowerCase().trim(),
+      subject: 'Your Shuttler application has been received',
+      html: orgApplicationReceivedTemplate({
+        contactName: `${contactFirstName} ${contactLastName}`.trim(),
+        orgName: orgName as string,
+      }),
+    }).catch((err) => console.error('[orgs/create] welcome email failed:', err));
+
     return res.status(201).json({
       orgId,
       name: orgName,
@@ -710,6 +729,17 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
         });
       }
       console.log(`[register] User doc written successfully for uid=${user.uid}`);
+
+      // Send welcome email — fire and forget
+      sendEmail({
+        to: email as string,
+        subject: `Welcome to ${org.name} on Shuttler`,
+        html: welcomeTemplate({
+          name: (displayName as string | undefined) ?? (email as string).split('@')[0],
+          orgName: org.name,
+          role,
+        }),
+      }).catch((err) => console.error('[register] welcome email failed:', err));
     } catch (firestoreErr: any) {
       console.error(`[register] Firestore write FAILED for uid=${user.uid} orgId=${orgId}:`, firestoreErr);
       // Auth user was created — clean up so the email isn't permanently orphaned
@@ -1301,6 +1331,84 @@ app.post('/notifications/stop-completed', requireAuth, async (req: Request, res:
   } catch (e) {
     console.error('[notifications] stop-completed error:', e);
     return res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
+// ---------- Email ----------
+
+// Send a branded email-verification email for the currently signed-in user.
+// The mobile app calls this instead of Firebase SDK's sendEmailVerification().
+app.post('/auth/send-verification', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
+  try {
+    const userRecord = await admin.auth().getUser(uid);
+    if (!userRecord.email) return res.status(400).json({ error: 'User has no email address' });
+
+    const orgId = (req as any).claims?.orgId as string | undefined;
+    let orgName = 'your organisation';
+    if (orgId) {
+      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+      orgName = orgDoc.data()?.name ?? orgName;
+    }
+
+    const verifyUrl = await admin.auth().generateEmailVerificationLink(userRecord.email);
+    const displayName = userRecord.displayName ?? userRecord.email.split('@')[0];
+
+    await sendEmail({
+      to: userRecord.email,
+      subject: 'Verify your Shuttler email address',
+      html: emailVerificationTemplate({ name: displayName, verifyUrl, orgName }),
+    });
+
+    console.log(`[send-verification] sent to ${userRecord.email}`);
+    return res.json({ sent: true });
+  } catch (e: any) {
+    console.error('[send-verification] error:', e);
+    return res.status(500).json({ error: 'Failed to send verification email' });
+  }
+});
+
+// Send a branded password-reset email. No auth required — same as Firebase's
+// sendPasswordResetEmail(), but uses our template. Always returns 200 so as
+// not to reveal whether an account exists for the given email address.
+app.post('/auth/send-password-reset', async (req: Request, res: Response) => {
+  const { email } = req.body;
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'email is required' });
+  }
+
+  try {
+    let orgName = 'your organisation';
+    let displayName = (email as string).split('@')[0];
+
+    try {
+      const userRecord = await admin.auth().getUserByEmail(email);
+      displayName = userRecord.displayName ?? displayName;
+      const claims = userRecord.customClaims ?? {};
+      const orgId = (claims as any).orgId;
+      if (orgId) {
+        const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+        orgName = orgDoc.data()?.name ?? orgName;
+      }
+    } catch {
+      // User not found — still attempt to generate the link; Firebase returns
+      // an error that we swallow so we don't leak account existence.
+    }
+
+    const resetUrl = await admin.auth().generatePasswordResetLink(email);
+
+    await sendEmail({
+      to: email,
+      subject: 'Reset your Shuttler password',
+      html: passwordResetTemplate({ name: displayName, resetUrl, orgName }),
+    });
+
+    console.log(`[send-password-reset] sent to ${email}`);
+    return res.json({ sent: true });
+  } catch (e: any) {
+    // Log but still return 200 — never confirm or deny account existence.
+    console.error('[send-password-reset] error:', e?.message ?? e);
+    return res.json({ sent: false });
   }
 });
 

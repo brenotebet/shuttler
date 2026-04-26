@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { type RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { signInWithEmailAndPassword, sendPasswordResetEmail, sendEmailVerification, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber } from 'firebase/auth';
+import { signInWithEmailAndPassword, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { app } from '../firebase/firebaseconfig';
@@ -278,7 +278,12 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
       if (!res.ok) throw new Error(body?.error ?? 'Registration failed.');
       await signInWithEmailAndPassword(auth, email.trim(), password);
       if (auth.currentUser) {
-        await sendEmailVerification(auth.currentUser).catch(() => {});
+        // Send branded verification email via backend instead of Firebase default
+        const token = await auth.currentUser.getIdToken();
+        fetch(`${SHUTTLER_API_URL}/auth/send-verification`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {}); // fire-and-forget; user can resend from EmailVerificationScreen
       }
     } catch (e: any) {
       showAlert(e?.message ?? 'Registration failed.', 'Sign Up Error');
@@ -294,14 +299,19 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
       return;
     }
     try {
-      await sendPasswordResetEmail(auth, trimmed);
-      showAlert(`Password reset email sent to ${trimmed}. Check your inbox.`, 'Email sent');
+      const res = await fetch(`${SHUTTLER_API_URL}/auth/send-password-reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      // Always show success — the endpoint never reveals whether the email exists
+      if (res.ok || res.status < 500) {
+        showAlert(`If an account exists for ${trimmed}, a password reset link has been sent.`, 'Email sent');
+      } else {
+        throw new Error(`Server error ${res.status}`);
+      }
     } catch (e: any) {
-      const msg =
-        e?.code === 'auth/user-not-found'
-          ? 'No account found with that email.'
-          : e?.message ?? 'Failed to send reset email.';
-      showAlert(msg, 'Error');
+      showAlert(e?.message ?? 'Failed to send reset email.', 'Error');
     }
   }, [email]);
 

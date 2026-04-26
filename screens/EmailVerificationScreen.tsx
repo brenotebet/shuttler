@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { sendEmailVerification, signOut } from 'firebase/auth';
+import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
+import { SHUTTLER_API_URL } from '../config';
 import { showAlert } from '../src/utils/alerts';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
@@ -38,14 +39,18 @@ export default function EmailVerificationScreen() {
     if (!auth.currentUser) return;
     setResending(true);
     try {
-      await sendEmailVerification(auth.currentUser);
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/auth/send-verification`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error ?? `Server error ${res.status}`);
+      }
       showAlert(`Verification email sent to ${email}.`, 'Email sent');
     } catch (e: any) {
-      const msg =
-        e?.code === 'auth/too-many-requests'
-          ? 'Too many requests. Please wait a few minutes before trying again.'
-          : e?.message ?? 'Failed to resend verification email.';
-      showAlert(msg, 'Error');
+      showAlert(e?.message ?? 'Failed to resend verification email.', 'Error');
     } finally {
       setResending(false);
     }
