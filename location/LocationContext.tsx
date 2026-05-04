@@ -29,7 +29,7 @@ const LocationContext = createContext<LocationContextType>({
   stopSharing: async () => {},
 });
 
-const WRITE_MIN_INTERVAL_MS = 8000;
+const WRITE_MIN_INTERVAL_MS = 4000;
 const WRITE_MIN_DISTANCE_M = 8;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // auto-stop after 15 min of no GPS movement
 const INACTIVITY_CHECK_MS = 60 * 1000;         // check once per minute
@@ -328,7 +328,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
     watchSub.current = await Location.watchPositionAsync(
       {
-        accuracy: Location.Accuracy.High,
+        accuracy: Location.Accuracy.BestForNavigation,
         timeInterval: 1000,
         distanceInterval: 2,
       },

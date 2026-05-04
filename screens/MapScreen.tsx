@@ -57,7 +57,12 @@ import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constan
 import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 
-const STALE_WINDOW_SECONDS = 600;
+// Bus marker stays visible as long as online:true in Firestore.
+// Opacity reflects freshness (full = recent GPS, dimmed = GPS stale but driver hasn't stopped sharing).
+
+// Maximum distance from the nearest stop to allow a pickup request.
+// Keeps requests honest — students must physically be on/near campus.
+const STOP_REQUEST_RADIUS_M = 400;
 
 function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -752,7 +757,7 @@ export default function MapScreen() {
           });
 
         const freshBuses = buses.filter((bus: any) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
-        const visibleBuses = buses.filter((bus: any) => bus.secondsAgo < STALE_WINDOW_SECONDS);
+        const visibleBuses = buses; // all online buses; opacity reflects freshness
 
         setBusOnline(freshBuses.length > 0);
 
@@ -1287,20 +1292,21 @@ const handleRequest = async (entry: RequestableStop) => {
 
   const { stop: selectedStop, routeId: entryRouteId } = entry;
 
-  // Block requests from outside the service area
-  if (org?.mapBoundingBox && userLocRef.current) {
-    const { ne, sw } = org.mapBoundingBox;
-    const PADDING = 0.005; // ~500m buffer so edge-of-campus users aren't rejected
+  // Block requests from users who aren't physically near a stop.
+  // We check distance to the nearest stop rather than the campus bounding box
+  // so the threshold is consistent regardless of campus shape or size.
+  if (stops.length > 0 && userLocRef.current) {
     const { latitude: ulat, longitude: ulng } = userLocRef.current;
-    const inBounds =
-      ulat >= sw.latitude - PADDING &&
-      ulat <= ne.latitude + PADDING &&
-      ulng >= sw.longitude - PADDING &&
-      ulng <= ne.longitude + PADDING;
-    if (!inBounds) {
+    let nearestDist = Infinity;
+    for (const s of stops) {
+      const d = getDistanceInMeters(ulat, ulng, s.latitude, s.longitude);
+      if (d < nearestDist) nearestDist = d;
+    }
+    if (nearestDist > STOP_REQUEST_RADIUS_M) {
       showAlert(
-        'You appear to be outside the service area. Stop requests are only available on campus.',
-        'Outside service area',
+        `You need to be within ${STOP_REQUEST_RADIUS_M} m of a stop to request a pickup. ` +
+        `Your nearest stop is ${Math.round(nearestDist)} m away.`,
+        'Too far from a stop',
       );
       return;
     }
@@ -1559,16 +1565,16 @@ const handleRequest = async (entry: RequestableStop) => {
           />
         )}
 
-        {/* ✅ Campus stops always visible, but hide the destination stop marker while ride is active */}
+        {/* Campus stops — hidden destination stop while ride is active */}
         {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
           <Marker
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
-            zIndex={1}
+            zIndex={2}
             tracksViewChanges={false}
           >
-            <MapMarker icon="location-on" label={stop.name} />
+            <MapMarker label={stop.name} />
           </Marker>
         ))}
 
@@ -1588,7 +1594,7 @@ const handleRequest = async (entry: RequestableStop) => {
                 anchor={{ x: 0.5, y: 0.5 }}
                 onPress={() => handleBusPress(id)}
                 tracksViewChanges={isSelected || forceBusTracks}
-                zIndex={5}
+                zIndex={50}
               >
                 <Image
                   source={busIcon}
@@ -1603,7 +1609,7 @@ const handleRequest = async (entry: RequestableStop) => {
                   anchor={{ x: 0.5, y: 1.42 }}
                   tappable={false}
                   tracksViewChanges
-                  zIndex={10}
+                  zIndex={100}
                 >
                   <Animated.View
                     style={{
@@ -1651,7 +1657,7 @@ const handleRequest = async (entry: RequestableStop) => {
             }}
             anchor={{ x: 0.5, y: 1 }}
             tracksViewChanges={false}
-            zIndex={3}
+            zIndex={10}
           >
             <MapMarker icon="flag" label={request.stop.name} color="#22c55e" />
           </Marker>

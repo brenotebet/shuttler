@@ -146,6 +146,11 @@ export default function DriverScreen() {
   const [todayBoardedTotal, setTodayBoardedTotal] = useState(0);
   const [shiftStartMs, setShiftStartMs] = useState<number | null>(null);
   const [showShiftCard, setShowShiftCard] = useState(false);
+
+  type OtherBusRaw = { id: string; latitude: number; longitude: number; routeId: string | null; isFresh: boolean };
+  const [otherBusesRaw, setOtherBusesRaw] = useState<OtherBusRaw[]>([]);
+  const [otherDriverNames, setOtherDriverNames] = useState<Record<string, string>>({});
+  const otherNameInFlightRef = useRef<Set<string>>(new Set());
   const boardingSlideAnim = useRef(new Animated.Value(0)).current;
   const [boardingCardHeight, setBoardingCardHeight] = useState(220);
 
@@ -238,6 +243,26 @@ export default function DriverScreen() {
     () => nextStopFromNearest(nearestStop?.id ?? null, routeOrderedStops),
     [nearestStop?.id, routeOrderedStops],
   );
+
+  const otherBusesDisplay = useMemo(() => {
+    const stopById = new Map(orgStops.map((s) => [s.id, s]));
+    return otherBusesRaw.map((bus) => {
+      const route = orgRoutes.find((r) => r.id === bus.routeId) ?? null;
+      const routeStops: Stop[] = route
+        ? route.stopIds.map((id) => stopById.get(id)).filter((s): s is Stop => s !== undefined)
+        : orgStops;
+      const nearest = routeStops.length > 0 ? getNearestStop(bus.latitude, bus.longitude, routeStops) : null;
+      const next = nearest ? nextStopFromNearest(nearest.id, routeStops) : (routeStops[0] ?? null);
+      return {
+        id: bus.id,
+        driverName: otherDriverNames[bus.id] ?? null,
+        routeName: route?.name ?? null,
+        currentStop: nearest?.name ?? null,
+        nextStop: next?.name ?? null,
+        isFresh: bus.isFresh,
+      };
+    });
+  }, [otherBusesRaw, orgRoutes, orgStops, otherDriverNames]);
 
   const activeRequests = useMemo(
     () => requests.filter((req) => isActiveStopStatus(req?.status)).filter((req) => !isExpiredRequest(req)),
@@ -335,6 +360,7 @@ export default function DriverScreen() {
                 latitude: data.latitude as number,
                 longitude: data.longitude as number,
                 timestamp: ts as Date,
+                routeId: typeof data?.routeId === 'string' ? data.routeId : null,
               };
             })
             .filter(Boolean)
@@ -373,6 +399,18 @@ export default function DriverScreen() {
 
           busLocationsRef.current = nextLocations;
           setActiveBusIds(Object.keys(nextLocations));
+
+          // Other online buses for the fleet overview tile
+          const otherOnline = buses
+            .filter((bus: any) => bus.id !== driverId && bus.secondsAgo < STALE_WINDOW_SECONDS)
+            .map((bus: any) => ({
+              id: bus.id as string,
+              latitude: bus.latitude as number,
+              longitude: bus.longitude as number,
+              routeId: (bus.routeId as string | null) ?? null,
+              isFresh: bus.secondsAgo < FRESHNESS_WINDOW_SECONDS,
+            }));
+          setOtherBusesRaw(otherOnline);
         },
         (err) => {
           console.error('buses snapshot error', (err as any)?.message);
@@ -711,6 +749,25 @@ export default function DriverScreen() {
     });
   }, [recentFeed, userNameByUid]);
 
+  // Load first names for other drivers shown in the fleet overview tile
+  useEffect(() => {
+    if (!orgId) return;
+    const toFetch = otherBusesRaw.filter(
+      (b) => !otherDriverNames[b.id] && !otherNameInFlightRef.current.has(b.id),
+    );
+    toFetch.forEach((b) => {
+      otherNameInFlightRef.current.add(b.id);
+      void getDoc(doc(db, 'orgs', orgId, 'publicUsers', b.id))
+        .then((snap) => {
+          const name: string = snap.data()?.displayName ?? 'Driver';
+          const firstName = name.split(' ')[0] || 'Driver';
+          setOtherDriverNames((prev) => ({ ...prev, [b.id]: firstName }));
+        })
+        .catch(() => {})
+        .finally(() => otherNameInFlightRef.current.delete(b.id));
+    });
+  }, [otherBusesRaw, orgId]);
+
   const saveBoardingCount = async () => {
     if (!driverId || isSavingBoarding) return;
     setIsSavingBoarding(true);
@@ -964,6 +1021,41 @@ export default function DriverScreen() {
               </View>
             )}
           </TouchableOpacity>
+        )}
+
+        {otherBusesDisplay.length > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Fleet Overview</Text>
+            {otherBusesDisplay.map((bus, idx) => (
+              <View
+                key={bus.id}
+                style={[
+                  styles.otherBusRow,
+                  idx === otherBusesDisplay.length - 1 && { borderBottomWidth: 0 },
+                ]}
+              >
+                <View style={styles.otherBusHeader}>
+                  <Icon
+                    name="directions-bus"
+                    size={16}
+                    color={bus.isFresh ? PRIMARY_COLOR : '#9ca3af'}
+                  />
+                  <Text style={styles.otherBusName}>{bus.driverName ?? 'Driver'}</Text>
+                  {bus.routeName ? (
+                    <View style={styles.otherBusRouteBadge}>
+                      <Text style={styles.otherBusRouteBadgeText}>{bus.routeName}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <View style={styles.otherBusStops}>
+                  <Icon name="place" size={13} color="#9ca3af" />
+                  <Text style={styles.otherBusStopLabel}>{bus.currentStop ?? 'En route'}</Text>
+                  <Icon name="arrow-forward" size={13} color="#d1d5db" />
+                  <Text style={styles.otherBusStopLabel}>{bus.nextStop ?? '—'}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
         )}
 
         <View style={styles.card}>
@@ -1288,4 +1380,43 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   cancelButtonText: { color: '#6b7280', fontSize: 16, fontWeight: '600' },
+
+  otherBusRow: {
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e5e7eb',
+  },
+  otherBusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  otherBusName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111',
+    flex: 1,
+  },
+  otherBusRouteBadge: {
+    backgroundColor: PRIMARY_COLOR + '18',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  otherBusRouteBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: PRIMARY_COLOR,
+  },
+  otherBusStops: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  otherBusStopLabel: {
+    fontSize: 13,
+    color: '#4b5563',
+    fontWeight: '500',
+  },
 });

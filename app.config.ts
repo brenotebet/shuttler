@@ -31,7 +31,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       NSLocationWhenInUseUsageDescription: 'Allow Shuttler to access your location while using the app.',
       NSLocationAlwaysAndWhenInUseUsageDescription:
         'Allow Shuttler to access your location even when the app is in the background.',
-      UIBackgroundModes: ['location'],
+      UIBackgroundModes: ['location', 'remote-notification'],
     },
   },
   android: {
@@ -54,9 +54,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'ACCESS_FINE_LOCATION',
       'ACCESS_COARSE_LOCATION',
       'ACCESS_BACKGROUND_LOCATION',
-      'ACCESS_FINE_LOCATION',
-      'ACCESS_COARSE_LOCATION',
-      'ACCESS_BACKGROUND_LOCATION',
     ],
     package: 'com.shuttler.app',
   },
@@ -64,8 +61,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: './assets/favicon.png',
   },
   plugins: [
-    ['expo-notifications'],
+    ['expo-notifications', { mode: 'production' }],
     ['expo-location'],
     ["@stripe/stripe-react-native", { merchantIdentifier: "merchant.com.shuttler.app" }]
   ],
+  extra: {
+    eas: {
+      // Run `npx eas init` to generate and fill this in — required for push notifications
+      projectId: process.env.EAS_PROJECT_ID ?? '',
+    },
+  },
 });

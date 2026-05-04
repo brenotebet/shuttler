@@ -47,7 +47,7 @@ export default function StudentMenuScreen() {
         {firstName ? (
           <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={styles.title}>{isParent ? 'Parent Center' : 'Student Center'}</Text>
+        <Text style={styles.title}>{isParent ? 'Parent Center' : 'Rider Center'}</Text>
         <Text style={styles.subtitle}>
           {isParent ? 'Track your child\'s shuttle' : 'Manage your rides and profile'}
         </Text>
