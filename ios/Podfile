@@ -43,9 +43,17 @@ target 'Shuttler' do
   pod 'react-native-google-maps', path: File.dirname(`node --print "require.resolve('react-native-maps/package.json')"`)
 # @generated end react-native-maps
 
-  # Firebase Swift pods require GoogleUtilities to expose module maps when linking as static libraries
+  # Firebase Swift pods require module maps when linking as static libraries.
+  # Add every pod in the Firebase dependency chain that is written in Swift
+  # or that a Swift pod imports, otherwise Xcode can't resolve the modules.
   pod 'GoogleUtilities', :modular_headers => true
   pod 'FirebaseCoreInternal', :modular_headers => true
+  pod 'FirebaseCore', :modular_headers => true
+  pod 'FirebaseInstallations', :modular_headers => true
+  pod 'FirebaseCoreDiagnostics', :modular_headers => true
+  pod 'GoogleDataTransport', :modular_headers => true
+  pod 'nanopb', :modular_headers => true
+  pod 'PromisesObjC', :modular_headers => true
 
   config = use_native_modules!(config_command)
 
