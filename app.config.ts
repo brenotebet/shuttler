@@ -31,6 +31,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       NSLocationWhenInUseUsageDescription: 'Allow Shuttler to access your location while using the app.',
       NSLocationAlwaysAndWhenInUseUsageDescription:
         'Allow Shuttler to access your location even when the app is in the background.',
+      NSCameraUsageDescription: 'Some features may require camera access.',
       UIBackgroundModes: ['location', 'remote-notification'],
     },
   },

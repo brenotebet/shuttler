@@ -47,6 +47,8 @@
       <key>NSAllowsLocalNetworking</key>
       <true/>
     </dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Some features may require camera access.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>Allow Shuttler to access your location even when the app is in the background.</string>
     <key>NSLocationAlwaysUsageDescription</key>
