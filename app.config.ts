@@ -16,7 +16,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   owner: "brenotebet",
   userInterfaceStyle: 'light',
   newArchEnabled: true,
-  jsEngine: 'jsc',
   splash: {
     image: './assets/splash-icon.png',
     resizeMode: 'contain',
