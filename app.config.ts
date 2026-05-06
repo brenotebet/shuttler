@@ -13,6 +13,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   scheme: 'shuttler',
   orientation: 'portrait',
   icon: './assets/icon.png',
+  "owner": "brenotebet",
   userInterfaceStyle: 'light',
   newArchEnabled: true,
   jsEngine: 'jsc',
@@ -67,8 +68,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ],
   extra: {
     eas: {
-      // Run `npx eas init` to generate and fill this in — required for push notifications
-      projectId: process.env.EAS_PROJECT_ID ?? '',
+      projectId: 'b685dfa1-bef9-4081-bf5c-76e2b18ea30c',
     },
   },
 });
