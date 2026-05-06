@@ -13,7 +13,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   scheme: 'shuttler',
   orientation: 'portrait',
   icon: './assets/icon.png',
-  "owner": "brenotebet",
+  owner: "brenotebet",
   userInterfaceStyle: 'light',
   newArchEnabled: true,
   jsEngine: 'jsc',
