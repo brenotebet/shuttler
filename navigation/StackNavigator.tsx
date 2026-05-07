@@ -1,7 +1,8 @@
 // navigation/StackNavigator.tsx
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ActivityIndicator, Text, View, StyleSheet, TouchableOpacity } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -53,7 +54,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function LoadingScreen() {
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
       <ActivityIndicator size="large" color={PRIMARY_COLOR} />
     </View>
   );
@@ -83,6 +84,12 @@ function SubscriptionExpiredScreen() {
 export default function StackNavigator() {
   const { user, role, initializing, emailVerified, isSuperAdmin } = useAuth();
   const { org, isLoadingOrg } = useOrg();
+
+  useEffect(() => {
+    if (!initializing && !isLoadingOrg) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [initializing, isLoadingOrg]);
 
   if (initializing || isLoadingOrg) {
     return <LoadingScreen />;

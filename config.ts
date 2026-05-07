@@ -1,15 +1,7 @@
 // config.ts
 
-const isProductionBuild =
-  process.env.NODE_ENV === 'production' ||
-  (typeof __DEV__ !== 'undefined' && !__DEV__);
-
 const handleMissingEnvVar = (key: string): string => {
-  const message = `Environment variable ${key} is not defined.`;
-  if (isProductionBuild) {
-    throw new Error(message);
-  }
-  console.warn(message);
+  console.warn(`[config] Missing env var: ${key}`);
   return '';
 };
 
@@ -35,11 +27,7 @@ const getSecureUrlEnvVar = (key: string): string => {
   if (!value) return value;
 
   if (!value.startsWith('https://')) {
-    const message = `Environment variable ${key} must be a secure HTTPS URL.`;
-    if (isProductionBuild) {
-      throw new Error(message);
-    }
-    console.warn(message);
+    console.warn(`[config] ${key} must be a secure HTTPS URL.`);
   }
 
   return value;

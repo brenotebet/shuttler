@@ -1,5 +1,8 @@
 import React, { useEffect } from 'react';
 import { View, Text, Platform, ScrollView } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
 import { NavigationContainer } from '@react-navigation/native';
 import StackNavigator from './navigation/StackNavigator';
 import { LocationProvider } from './location/LocationContext';
