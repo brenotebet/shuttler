@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -18,6 +19,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../firebase/firebaseconfig';
 import MapView, { Marker, Region } from 'react-native-maps';
 import { doc, updateDoc, setDoc, getDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { GOOGLE_MAPS_API_KEY } from '../config';
@@ -44,30 +48,81 @@ async function getBearerToken(): Promise<string> {
 
 // ---- Profile Tab ----
 
+const COLOR_SWATCHES = [
+  '#16a34a', // default green
+  '#2563eb', // blue
+  '#7c3aed', // purple
+  '#dc2626', // red
+  '#ea580c', // orange
+  '#0891b2', // cyan
+  '#0f172a', // slate dark
+  '#be185d', // pink
+];
+
 function ProfileTab() {
   const { org, refreshOrg } = useOrg();
   const [name, setName] = useState(org?.name ?? '');
+  const [logoUrl, setLogoUrl] = useState(org?.logoUrl ?? '');
+  const [primaryColor, setPrimaryColor] = useState(org?.primaryColor ?? COLOR_SWATCHES[0]);
+  const [customColor, setCustomColor] = useState('');
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const handlePickLogo = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (perm.status !== 'granted') {
+      Alert.alert('Permission required', 'Allow photo library access to upload a logo.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    setIsUploadingLogo(true);
+    try {
+      const uri = result.assets[0].uri;
+      const blob = await (await fetch(uri)).blob();
+      const ext = uri.split('.').pop() ?? 'jpg';
+      const storageRef = ref(storage, `orgs/${org!.orgId}/logo.${ext}`);
+      await uploadBytes(storageRef, blob, { contentType: `image/${ext}` });
+      const url = await getDownloadURL(storageRef);
+      setLogoUrl(url);
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message ?? 'Could not upload logo.');
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
 
   const handleSave = useCallback(async () => {
     if (!org) return;
+    const effectiveColor = customColor.match(/^#[0-9a-fA-F]{6}$/) ? customColor : primaryColor;
     setIsSaving(true);
     try {
       await updateDoc(doc(db, 'orgs', org.orgId), {
         name: name.trim(),
+        logoUrl: logoUrl || null,
+        primaryColor: effectiveColor,
         updatedAt: serverTimestamp(),
       });
       await refreshOrg();
-      Alert.alert('Saved', 'Organization name updated.');
+      Alert.alert('Saved', 'Profile updated.');
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Failed to save.');
     } finally {
       setIsSaving(false);
     }
-  }, [org, name, refreshOrg]);
+  }, [org, name, logoUrl, primaryColor, customColor, refreshOrg]);
+
+  const activeColor = customColor.match(/^#[0-9a-fA-F]{6}$/) ? customColor : primaryColor;
 
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
+      {/* Org name */}
       <Text style={styles.sectionLabel}>Organization Name</Text>
       <TextInput
         style={styles.input}
@@ -77,18 +132,90 @@ function ProfileTab() {
         placeholderTextColor="#aaa"
         autoCapitalize="words"
       />
-      <Text style={styles.hint}>
-        This name appears in the org selector screen for all users.
-      </Text>
+      <Text style={styles.hint}>Shown in the org selector for all users.</Text>
+
+      {/* Logo */}
+      <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Organization Logo</Text>
+      <TouchableOpacity style={profileStyles.logoBox} onPress={handlePickLogo} activeOpacity={0.8}>
+        {isUploadingLogo ? (
+          <ActivityIndicator color={activeColor} />
+        ) : logoUrl ? (
+          <Image source={{ uri: logoUrl }} style={profileStyles.logoPreview} resizeMode="contain" />
+        ) : (
+          <>
+            <Icon name="add-photo-alternate" size={32} color="#9ca3af" />
+            <Text style={profileStyles.logoHint}>Tap to upload logo</Text>
+          </>
+        )}
+      </TouchableOpacity>
+      {logoUrl ? (
+        <TouchableOpacity onPress={() => setLogoUrl('')} style={{ alignSelf: 'flex-start', marginBottom: 8 }}>
+          <Text style={{ fontSize: 12, color: '#e53935' }}>Remove logo</Text>
+        </TouchableOpacity>
+      ) : null}
+      <Text style={styles.hint}>Square or landscape image. Displayed at up to 80×80 px.</Text>
+
+      {/* Color scheme */}
+      <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Color Scheme</Text>
+      <View style={profileStyles.swatchRow}>
+        {COLOR_SWATCHES.map((c) => (
+          <TouchableOpacity
+            key={c}
+            onPress={() => { setPrimaryColor(c); setCustomColor(''); }}
+            style={[
+              profileStyles.swatch,
+              { backgroundColor: c },
+              primaryColor === c && !customColor.match(/^#[0-9a-fA-F]{6}$/) && profileStyles.swatchSelected,
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={styles.hint}>Or enter a custom hex color:</Text>
+      <View style={profileStyles.hexRow}>
+        <View style={[profileStyles.hexPreview, { backgroundColor: activeColor }]} />
+        <TextInput
+          style={[styles.input, { flex: 1, marginBottom: 0 }]}
+          value={customColor}
+          onChangeText={setCustomColor}
+          placeholder="#16a34a"
+          placeholderTextColor="#aaa"
+          autoCapitalize="none"
+          maxLength={7}
+        />
+      </View>
+
       <AppButton
         label={isSaving ? 'Saving…' : 'Save Profile'}
         onPress={handleSave}
         disabled={isSaving || !name.trim()}
         style={styles.actionButton}
+        color={activeColor}
       />
     </ScrollView>
   );
 }
+
+const profileStyles = StyleSheet.create({
+  logoBox: {
+    width: '100%',
+    height: 120,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fafafa',
+    marginBottom: 8,
+  },
+  logoPreview: { width: '100%', height: '100%', borderRadius: 10 },
+  logoHint: { fontSize: 13, color: '#9ca3af', marginTop: 6 },
+  swatchRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 },
+  swatch: { width: 36, height: 36, borderRadius: 18 },
+  swatchSelected: { borderWidth: 3, borderColor: '#111' },
+  hexRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  hexPreview: { width: 36, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb' },
+});
 
 // ---- Auth Settings Tab ----
 

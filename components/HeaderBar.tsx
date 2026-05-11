@@ -1,9 +1,9 @@
 import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { PRIMARY_COLOR, BACKGROUND_COLOR, TEXT_PRIMARY } from '../src/constants/theme';
+import { BACKGROUND_COLOR, TEXT_PRIMARY } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { MaterialIcons } from '@expo/vector-icons';
-
 
 export type HeaderBarProps = {
   title: string;
@@ -13,6 +13,7 @@ export type HeaderBarProps = {
 
 function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
   const navigation = useNavigation();
+  const { primaryColor } = useOrgTheme();
 
   const handleBack = useCallback(() => {
     if (onBack) onBack();
@@ -23,7 +24,7 @@ function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
     <View style={styles.container}>
       {showBack ? (
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <MaterialIcons name="arrow-back" size={24} color={PRIMARY_COLOR} />
+          <MaterialIcons name="arrow-back" size={24} color={primaryColor} />
         </TouchableOpacity>
       ) : (
         <View style={styles.placeholder} />

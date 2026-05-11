@@ -6,7 +6,7 @@ import {
   StyleProp,
   ViewStyle,
 } from 'react-native';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow } from '../src/styles/common';
 
 export type AppButtonProps = {
@@ -15,6 +15,7 @@ export type AppButtonProps = {
   style?: StyleProp<ViewStyle>;
   disabled?: boolean;
   variant?: 'primary' | 'secondary';
+  color?: string; // override — falls back to org theme color
 };
 
 export default function AppButton({
@@ -23,7 +24,11 @@ export default function AppButton({
   style,
   disabled = false,
   variant = 'primary',
+  color: colorProp,
 }: AppButtonProps) {
+  const { primaryColor } = useOrgTheme();
+  const color = colorProp ?? primaryColor;
+
   return (
     <TouchableOpacity
       activeOpacity={0.85}
@@ -31,17 +36,14 @@ export default function AppButton({
       disabled={disabled}
       style={[
         styles.base,
-        variant === 'primary' ? styles.primary : styles.secondary,
+        variant === 'primary'
+          ? { backgroundColor: color }
+          : { borderColor: color, borderWidth: 1, backgroundColor: 'transparent' },
         disabled && styles.disabled,
         style,
       ]}
     >
-      <Text
-        style={[
-          styles.text,
-          variant === 'secondary' && styles.secondaryText,
-        ]}
-      >
+      <Text style={[styles.text, variant === 'secondary' && { color }]}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -57,21 +59,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     ...cardShadow,
   },
-  primary: {
-    backgroundColor: PRIMARY_COLOR,
-  },
-  secondary: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: PRIMARY_COLOR,
-  },
   text: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
-  },
-  secondaryText: {
-    color: PRIMARY_COLOR,
   },
   disabled: {
     opacity: 0.6,

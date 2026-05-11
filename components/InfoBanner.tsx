@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR, CARD_BACKGROUND, TEXT_PRIMARY, TEXT_SECONDARY } from '../src/constants/theme';
+import { CARD_BACKGROUND, TEXT_PRIMARY, TEXT_SECONDARY } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 export type InfoBannerProps = {
@@ -11,16 +12,13 @@ export type InfoBannerProps = {
   style?: StyleProp<ViewStyle>;
 };
 
-export default function InfoBanner({
-  icon = 'info-outline',
-  title,
-  description,
-  style,
-}: InfoBannerProps) {
+export default function InfoBanner({ icon = 'info-outline', title, description, style }: InfoBannerProps) {
+  const { primaryColor } = useOrgTheme();
+
   return (
     <View style={[styles.container, style]}>
-      <View style={styles.iconWrapper}>
-        <Icon name={icon} size={22} color={PRIMARY_COLOR} />
+      <View style={[styles.iconWrapper, { backgroundColor: `${primaryColor}22` }]}>
+        <Icon name={icon} size={22} color={primaryColor} />
       </View>
       <View style={styles.textWrapper}>
         <Text style={styles.title}>{title}</Text>
@@ -43,23 +41,11 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#dcfce7',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.item,
   },
-  textWrapper: {
-    flex: 1,
-    gap: 4,
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: TEXT_PRIMARY,
-  },
-  description: {
-    fontSize: 14,
-    color: TEXT_SECONDARY,
-    lineHeight: 20,
-  },
+  textWrapper: { flex: 1, gap: 4 },
+  title: { fontSize: 15, fontWeight: '600', color: TEXT_PRIMARY },
+  description: { fontSize: 14, color: TEXT_SECONDARY, lineHeight: 20 },
 });

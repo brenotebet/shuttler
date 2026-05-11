@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 
 type Props = {
   icon?: string;
@@ -9,7 +9,9 @@ type Props = {
   color?: string;
 };
 
-function MapMarker({ icon, label, color = PRIMARY_COLOR }: Props) {
+function MapMarker({ icon, label, color: colorProp }: Props) {
+  const { primaryColor } = useOrgTheme();
+  const color = colorProp ?? primaryColor;
   return (
     <View style={styles.wrapper}>
       {label ? (

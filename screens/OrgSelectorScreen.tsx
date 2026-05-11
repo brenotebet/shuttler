@@ -138,8 +138,8 @@ export default function OrgSelectorScreen() {
               {item.logoUrl ? (
                 <Image source={{ uri: item.logoUrl }} style={styles.orgLogo} resizeMode="contain" />
               ) : (
-                <View style={[styles.orgLogo, styles.orgLogoPlaceholder]}>
-                  <Icon name="directions-bus" size={26} color={PRIMARY_COLOR} />
+                <View style={[styles.orgLogo, styles.orgLogoPlaceholder, { backgroundColor: `${item.primaryColor ?? PRIMARY_COLOR}22` }]}>
+                  <Icon name="directions-bus" size={26} color={item.primaryColor ?? PRIMARY_COLOR} />
                 </View>
               )}
               <View style={styles.orgInfo}>

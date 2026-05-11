@@ -3,7 +3,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { grayscaleMapStyle } from '../src/constants/mapConfig';
-import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import { CARD_BACKGROUND } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 type StopRequest = {
@@ -14,6 +15,8 @@ type StopRequest = {
   driverId?: string;
   status: string;
   stop?: { latitude: number; longitude: number; name?: string } | null;
+  childName?: string | null;
+  childGrade?: string | null;
 };
 
 type Props = {
@@ -22,11 +25,13 @@ type Props = {
 };
 
 function StopRequestCard({ item, studentName }: Props) {
-  const studentLabel = studentName ?? item.studentEmail ?? item.studentUid ?? 'Unknown student';
+  const { primaryColor } = useOrgTheme();
+  const riderLabel = item.childName ?? studentName ?? item.studentEmail ?? item.studentUid ?? 'Unknown';
 
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>Student: {studentLabel}</Text>
+      <Text style={styles.title}>{item.childName ? 'Child' : 'Student'}: {riderLabel}</Text>
+      {item.childGrade ? <Text style={styles.detail}>{item.childGrade}</Text> : null}
       <Text style={styles.detail}>Stop: {item.stop?.name || 'Unknown'}</Text>
       {item.stop ? (
         <MapView
@@ -45,11 +50,10 @@ function StopRequestCard({ item, studentName }: Props) {
           customMapStyle={grayscaleMapStyle}
         >
           <Marker coordinate={item.stop} anchor={{ x: 0.5, y: 1 }}>
-            <Icon name="flag" size={26} color={PRIMARY_COLOR} />
+            <Icon name="flag" size={26} color={primaryColor} />
           </Marker>
         </MapView>
       ) : null}
-
     </View>
   );
 }
@@ -66,13 +70,6 @@ const styles = StyleSheet.create({
     ...cardShadow,
   },
   title: { fontSize: 15, fontWeight: '600', marginBottom: 4, color: '#111827' },
-  detail: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  smallMap: {
-    height: 150,
-    width: '100%',
-    marginVertical: 8,
-  },
+  detail: { fontSize: 14, color: '#374151' },
+  smallMap: { height: 150, width: '100%', marginVertical: 8 },
 });

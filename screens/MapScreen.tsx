@@ -13,6 +13,7 @@ import {
   TouchableWithoutFeedback,
   Dimensions,
   Alert,
+  Modal,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -56,7 +57,9 @@ import InfoBanner from '../components/InfoBanner';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
+import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/utils/scheduleUtils';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 
 // Bus marker stays visible as long as online:true in Firestore.
 // Opacity reflects freshness (full = recent GPS, dimmed = GPS stale but driver hasn't stopped sharing).
@@ -231,6 +234,7 @@ type BusPopup = {
 export default function MapScreen() {
   const { org } = useOrg();
   const { orgId, role } = useAuth();
+  const { primaryColor } = useOrgTheme();
   const stops = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
   // Returns a Firestore CollectionReference scoped to the current org
@@ -281,7 +285,9 @@ export default function MapScreen() {
 
   const [studentUid, setStudentUid] = useState<string | null>(null);
   const [studentEmail, setStudentEmail] = useState<string | null>(null);
-  const [linkedChildUids, setLinkedChildUids] = useState<string[]>([]);
+  const [childProfiles, setChildProfiles] = useState<ChildProfile[]>([]);
+  const [selectedChild, setSelectedChild] = useState<ChildProfile | null>(null);
+  const [showChildPicker, setShowChildPicker] = useState(false);
 
   const [request, setRequest] = useState<any>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -649,10 +655,11 @@ export default function MapScreen() {
   }, []);
 
   useEffect(() => {
-    if (role !== 'parent' || !studentUid || !orgId) { setLinkedChildUids([]); return; }
-    getDoc(doc(db, 'orgs', orgId, 'users', studentUid)).then((snap) => {
-      setLinkedChildUids(snap.data()?.linkedChildUids ?? []);
-    }).catch(() => setLinkedChildUids([]));
+    if (role !== 'parent' || !studentUid || !orgId) { setChildProfiles([]); return; }
+    loadChildProfiles(orgId, studentUid).then((profiles) => {
+      setChildProfiles(profiles);
+      if (profiles.length === 1) setSelectedChild(profiles[0]);
+    }).catch(() => setChildProfiles([]));
   }, [role, studentUid, orgId]);
 
   useEffect(() => {
@@ -868,8 +875,8 @@ export default function MapScreen() {
   useEffect(() => {
     setOwnRequestReady(false);
 
-    // For parents, watch the first linked child's request; otherwise watch own.
-    const watchUid = role === 'parent' ? (linkedChildUids[0] ?? null) : studentUid;
+    // Parents request under their own uid (childName is metadata on the doc)
+    const watchUid = studentUid;
 
     if (!watchUid) {
       setOwnRequest(null);
@@ -938,7 +945,7 @@ export default function MapScreen() {
       unsubExpired();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studentUid, role, linkedChildUids[0]]);
+  }, [studentUid, role]);
 
   useEffect(() => {
     if (!ownRequestReady) return;
@@ -1306,6 +1313,18 @@ const handleRequest = async (entry: RequestableStop) => {
     return;
   }
 
+  // Parents must select a child before confirming — if multiple, show picker
+  if (role === 'parent') {
+    if (childProfiles.length === 0) {
+      showAlert('Add a child in "My Children" before requesting a stop.', 'No children added');
+      return;
+    }
+    if (childProfiles.length > 1 && !selectedChild) {
+      setShowChildPicker(true);
+      return;
+    }
+  }
+
   const { stop: selectedStop, routeId: entryRouteId } = entry;
 
   // Block requests from users who aren't physically near a stop.
@@ -1355,10 +1374,13 @@ const handleRequest = async (entry: RequestableStop) => {
     }
 
     try {
+      const activeChild = selectedChild ?? (childProfiles.length === 1 ? childProfiles[0] : null);
       const ref = await addDoc(orgCol('stopRequests'), {
         orgId: orgId ?? '',
         studentUid,
         studentEmail: studentEmail ?? null,
+        childName: activeChild ? activeChild.name : null,
+        childGrade: activeChild?.grade ?? null,
         stopId: selectedStop.id,
         stop: {
           id: selectedStop.id,
@@ -1406,7 +1428,7 @@ const handleRequest = async (entry: RequestableStop) => {
   if (org && !orgReady) {
     return (
       <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={styles.notReadyContainer}>
-        <Icon name="directions-bus" size={56} color={PRIMARY_COLOR} style={{ marginBottom: 20 }} />
+        <Icon name="directions-bus" size={56} color={primaryColor} style={{ marginBottom: 20 }} />
         <Text style={styles.notReadyTitle}>Almost there!</Text>
         <Text style={styles.notReadyBody}>
           Your administrator hasn't finished setting up stops and routes yet.
@@ -1419,7 +1441,7 @@ const handleRequest = async (entry: RequestableStop) => {
   if (!region || !ownRequestReady) {
     return (
       <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.center}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+        <ActivityIndicator size="large" color={primaryColor} />
         {!ownRequestReady ? <Text style={{ marginTop: 10, color: '#666' }}>Syncing your ride…</Text> : null}
       </SafeAreaView>
     );
@@ -1456,17 +1478,18 @@ const handleRequest = async (entry: RequestableStop) => {
           }}
           activeOpacity={0.8}
         >
-          <Icon name="place" size={18} color={busOnline && serviceIsOpen ? PRIMARY_COLOR : '#bbb'} style={{ marginRight: 6 }} />
+          <Icon name="place" size={18} color={busOnline && serviceIsOpen ? primaryColor : '#bbb'} style={{ marginRight: 6 }} />
           <Text style={[styles.searchText, (!busOnline || !serviceIsOpen) && styles.searchTextOffline]}>
             {!serviceIsOpen ? 'Service closed' : !busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
           </Text>
-          <Icon name="keyboard-arrow-down" size={24} color={busOnline && serviceIsOpen ? PRIMARY_COLOR : '#bbb'} />
+          <Icon name="keyboard-arrow-down" size={24} color={busOnline && serviceIsOpen ? primaryColor : '#bbb'} />
         </TouchableOpacity>
       )}
 
       {!rideActive && !showLocationList && !selectedBusId && (
         <View style={[styles.tipContainer, { top: topOverlay + 60 }]}>
           {!serviceIsOpen ? (
+            // Outside operating hours — show schedule
             <View style={styles.hoursCard}>
               <View style={styles.hoursCardHeader}>
                 <Icon name="schedule" size={16} color="#374151" />
@@ -1479,12 +1502,26 @@ const handleRequest = async (entry: RequestableStop) => {
                   <View key={r.id} style={styles.hoursRouteBlock}>
                     <Text style={styles.hoursRouteName}>{r.name}</Text>
                     {todayText ? <Text style={styles.hoursEntry}>{todayText}</Text> : null}
-                    {nextOpen ? <Text style={[styles.hoursEntry, { color: PRIMARY_COLOR }]}>{nextOpen}</Text> : null}
+                    {nextOpen ? <Text style={[styles.hoursEntry, { color: primaryColor }]}>{nextOpen}</Text> : null}
                   </View>
                 );
               })}
             </View>
+          ) : !busOnline ? (
+            // Service hours are open but no driver is sharing location
+            <View style={styles.noBusCard}>
+              <View style={styles.noBusIconWrap}>
+                <Icon name="directions-bus" size={28} color="#6b7280" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.noBusTitle}>No buses online right now</Text>
+                <Text style={styles.noBusBody}>
+                  Service is active today but no driver has started their shift yet. Check back shortly.
+                </Text>
+              </View>
+            </View>
           ) : (
+            // Buses are online — show tips
             <InfoBanner
               icon="lightbulb-outline"
               title={role === 'parent' ? 'Live tracking' : 'Quick pointers'}
@@ -1577,8 +1614,8 @@ const handleRequest = async (entry: RequestableStop) => {
         {campusHull.length >= 3 && (
           <Polygon
             coordinates={campusHull}
-            strokeColor={PRIMARY_COLOR + '99'}
-            fillColor={PRIMARY_COLOR + '12'}
+            strokeColor={primaryColor + '99'}
+            fillColor={primaryColor + '12'}
             strokeWidth={2}
             lineDashPattern={[8, 6]}
           />
@@ -1687,7 +1724,7 @@ const handleRequest = async (entry: RequestableStop) => {
             <Polyline
               coordinates={routeCoords}
               strokeWidth={2}
-              strokeColor={PRIMARY_COLOR + '40'}
+              strokeColor={primaryColor + '40'}
               lineCap="round"
               lineJoin="round"
               zIndex={1}
@@ -1695,7 +1732,7 @@ const handleRequest = async (entry: RequestableStop) => {
             <Polyline
               coordinates={routeCoords}
               strokeWidth={5}
-              strokeColor={PRIMARY_COLOR}
+              strokeColor={primaryColor}
               lineCap="round"
               lineJoin="round"
               zIndex={2}
@@ -1788,7 +1825,7 @@ const handleRequest = async (entry: RequestableStop) => {
                 : request.status === 'completed'
                   ? 'The bus has passed this stop.'
                   : role === 'parent'
-                    ? 'Your child\'s stop is confirmed. The bus will pick them up.'
+                    ? `${request.childName ? `${request.childName}'s` : "Your child's"} stop is confirmed. The bus will pick them up.`
                     : 'Your stop is confirmed. The bus will pick you up.'}
             </Text>
 
@@ -1844,6 +1881,39 @@ const handleRequest = async (entry: RequestableStop) => {
           <Text style={styles.noRideText}>No active stop</Text>
         )}
       </Animated.View>
+
+      {/* Child picker — shown when parent has multiple children */}
+      <Modal visible={showChildPicker} transparent animationType="slide" onRequestClose={() => setShowChildPicker(false)}>
+        <TouchableWithoutFeedback onPress={() => setShowChildPicker(false)}>
+          <View style={styles.childPickerOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={styles.childPickerSheet}>
+                <Text style={styles.childPickerTitle}>Who is this stop for?</Text>
+                {childProfiles.map((child) => (
+                  <TouchableOpacity
+                    key={child.id}
+                    style={[styles.childPickerRow, selectedChild?.id === child.id && { backgroundColor: `${primaryColor}12` }]}
+                    onPress={() => {
+                      setSelectedChild(child);
+                      setShowChildPicker(false);
+                    }}
+                  >
+                    <View style={[styles.childPickerAvatar, { backgroundColor: `${primaryColor}22` }]}>
+                      <Icon name="person" size={18} color={primaryColor} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.childPickerName}>{child.name}</Text>
+                      {child.grade ? <Text style={styles.childPickerGrade}>{child.grade}</Text> : null}
+                    </View>
+                    {selectedChild?.id === child.id && <Icon name="check" size={20} color={primaryColor} />}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -1937,6 +2007,29 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
+  noBusCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 14,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  noBusIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noBusTitle: { fontSize: 14, fontWeight: '700', color: '#111', marginBottom: 4 },
+  noBusBody: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
   hoursCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   hoursCardTitle: { fontSize: 14, fontWeight: '700', color: '#111' },
   hoursRouteBlock: { marginBottom: 8 },
@@ -2063,6 +2156,26 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: { color: '#DC2626', fontSize: 15, fontWeight: '600' },
   noRideText: { fontSize: 16, color: '#888', textAlign: 'center' },
+  childPickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  childPickerSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingBottom: 40,
+    gap: 4,
+  },
+  childPickerTitle: { fontSize: 16, fontWeight: '700', color: '#111', marginBottom: 12, textAlign: 'center' },
+  childPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: 12,
+  },
+  childPickerAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  childPickerName: { fontSize: 15, fontWeight: '600', color: '#111' },
+  childPickerGrade: { fontSize: 12, color: '#6b7280', marginTop: 1 },
 
   busCloud: {
     width: Math.min(260, SCREEN_WIDTH - 40),

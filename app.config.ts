@@ -32,6 +32,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       NSLocationAlwaysAndWhenInUseUsageDescription:
         'Allow Shuttler to access your location even when the app is in the background.',
       NSCameraUsageDescription: 'Some features may require camera access.',
+      NSPhotoLibraryUsageDescription: 'Allow Shuttler to access your photo library to upload an organization logo.',
       UIBackgroundModes: ['location', 'remote-notification'],
     },
   },
@@ -64,6 +65,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     ['expo-notifications', { mode: 'production' }],
     ['expo-location'],
+    ['expo-image-picker'],
     ["@stripe/stripe-react-native", { merchantIdentifier: "merchant.com.shuttler.app" }]
   ],
   extra: {
