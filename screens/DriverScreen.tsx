@@ -886,7 +886,7 @@ export default function DriverScreen() {
                     return;
                   }
                 }
-                await startSharing();
+                await startSharing(selectedRouteId ?? undefined);
               }
             } catch (err) {
               console.error(err);

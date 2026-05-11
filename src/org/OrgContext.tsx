@@ -19,16 +19,43 @@ export type Stop = {
 };
 
 export type RouteHours = {
-  days: string;  // e.g. "Mon–Fri", "Sat–Sun", "Daily"
-  open: string;  // e.g. "7:30 AM"
-  close: string; // e.g. "10:00 PM"
+  days: string;
+  open: string;
+  close: string;
+};
+
+export type DaySchedule = {
+  isOpen: boolean;
+  open: string;   // "HH:MM" 24h, e.g. "07:30"
+  close: string;  // "HH:MM" 24h, e.g. "22:00"
+};
+
+export type WeekSchedule = {
+  monday: DaySchedule;
+  tuesday: DaySchedule;
+  wednesday: DaySchedule;
+  thursday: DaySchedule;
+  friday: DaySchedule;
+  saturday: DaySchedule;
+  sunday: DaySchedule;
+};
+
+export const DEFAULT_WEEK_SCHEDULE: WeekSchedule = {
+  monday:    { isOpen: true,  open: '07:00', close: '22:00' },
+  tuesday:   { isOpen: true,  open: '07:00', close: '22:00' },
+  wednesday: { isOpen: true,  open: '07:00', close: '22:00' },
+  thursday:  { isOpen: true,  open: '07:00', close: '22:00' },
+  friday:    { isOpen: true,  open: '07:00', close: '22:00' },
+  saturday:  { isOpen: false, open: '08:00', close: '18:00' },
+  sunday:    { isOpen: false, open: '08:00', close: '18:00' },
 };
 
 export type Route = {
   id: string;
   name: string;
-  stopIds: string[]; // ordered stop IDs referencing org.stops
-  hoursOfOperation?: RouteHours[];
+  stopIds: string[];
+  hoursOfOperation?: RouteHours[]; // legacy
+  schedule?: WeekSchedule;         // per-weekday schedule
 };
 
 export type AuthMethod = 'saml' | 'email' | 'phone' | 'google' | 'email+google';

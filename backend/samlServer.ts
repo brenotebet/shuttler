@@ -1083,9 +1083,17 @@ app.get('/super-admin/org-applications', requireSuperAdmin, async (_req: Request
       const data = d.data();
       return {
         orgId: d.id,
-        name: data.name ?? null,
+        name: data.orgName ?? data.name ?? null,
         slug: data.slug ?? null,
-        founderEmail: data.founderEmail ?? null,
+        founderEmail: data.contactEmail ?? data.founderEmail ?? null,
+        contactFirstName: data.contactFirstName ?? null,
+        contactLastName: data.contactLastName ?? null,
+        contactPhone: data.contactPhone ?? null,
+        orgType: data.orgType ?? null,
+        website: data.website ?? null,
+        estimatedRiders: data.estimatedRiders ?? null,
+        heardAboutUs: data.heardAboutUs ?? null,
+        description: data.description ?? null,
         authMethod: data.authMethod ?? null,
         submittedAt: data.submittedAt?.toDate?.()?.toISOString() ?? null,
         reviewStatus: data.reviewStatus ?? 'pending',
@@ -1104,6 +1112,13 @@ app.get('/super-admin/org-applications', requireSuperAdmin, async (_req: Request
 app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, async (req: Request, res: Response) => {
   const { orgId } = req.params as { orgId: string };
   try {
+    // Fetch application doc for email + name before writing
+    const appSnap = await admin.firestore().collection('orgApplications').doc(orgId).get();
+    const appData = appSnap.exists ? appSnap.data()! : {};
+    const founderEmail: string | null = appData.contactEmail ?? appData.founderEmail ?? null;
+    const firstName: string = appData.contactFirstName ?? 'there';
+    const orgName: string = appData.orgName ?? appData.name ?? orgId;
+
     const batch = admin.firestore().batch();
     batch.update(admin.firestore().collection('orgs').doc(orgId), {
       approved: true,
@@ -1116,6 +1131,16 @@ app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, asyn
     });
     await batch.commit();
     console.log(`[super-admin] Approved org ${orgId}`);
+
+    // Notify the founder — fire and forget
+    if (founderEmail) {
+      sendEmail({
+        to: founderEmail,
+        subject: `${orgName} has been approved on Shuttler 🎉`,
+        html: orgApprovedTemplate({ contactName: firstName, orgName }),
+      }).catch((err) => console.error('[super-admin] approve email failed:', err));
+    }
+
     return res.json({ orgId, approved: true });
   } catch (e) {
     console.error('[super-admin] approve error:', e);

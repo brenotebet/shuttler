@@ -56,6 +56,7 @@ import InfoBanner from '../components/InfoBanner';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
+import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/utils/scheduleUtils';
 
 // Bus marker stays visible as long as online:true in Firestore.
 // Opacity reflects freshness (full = recent GPS, dimmed = GPS stale but driver hasn't stopped sharing).
@@ -235,6 +236,21 @@ export default function MapScreen() {
   // Returns a Firestore CollectionReference scoped to the current org
   const orgCol = (name: string) =>
     orgId ? collection(db, 'orgs', orgId, name) : collection(db, name);
+
+  // Tick every 60s so schedule-based UI updates without a restart
+  const [clockTick, setClockTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setClockTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // True if at least one route with a schedule is currently open, OR if no routes have schedules set
+  const serviceIsOpen = useMemo(() => {
+    const scheduled = orgRoutes.filter((r) => r.schedule);
+    if (scheduled.length === 0) return true;
+    return scheduled.some((r) => isRouteActive(r));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgRoutes, clockTick]);
 
   const insets = useSafeAreaInsets();
 
@@ -1426,8 +1442,12 @@ const handleRequest = async (entry: RequestableStop) => {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {role !== 'parent' && !rideActive && !selectedBusId && (
         <TouchableOpacity
-          style={[styles.searchContainer, { top: topOverlay }, !busOnline && styles.searchContainerOffline]}
+          style={[styles.searchContainer, { top: topOverlay }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
           onPress={() => {
+            if (!serviceIsOpen) {
+              showAlert('Service is currently closed. Check the hours shown on the map.');
+              return;
+            }
             if (!busOnline) {
               showAlert('No buses are currently online. Please try again later.');
               return;
@@ -1436,34 +1456,33 @@ const handleRequest = async (entry: RequestableStop) => {
           }}
           activeOpacity={0.8}
         >
-          <Icon name="place" size={18} color={busOnline ? PRIMARY_COLOR : '#bbb'} style={{ marginRight: 6 }} />
-          <Text style={[styles.searchText, !busOnline && styles.searchTextOffline]}>
-            {!busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
+          <Icon name="place" size={18} color={busOnline && serviceIsOpen ? PRIMARY_COLOR : '#bbb'} style={{ marginRight: 6 }} />
+          <Text style={[styles.searchText, (!busOnline || !serviceIsOpen) && styles.searchTextOffline]}>
+            {!serviceIsOpen ? 'Service closed' : !busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
           </Text>
-          <Icon name="keyboard-arrow-down" size={24} color={busOnline ? PRIMARY_COLOR : '#bbb'} />
+          <Icon name="keyboard-arrow-down" size={24} color={busOnline && serviceIsOpen ? PRIMARY_COLOR : '#bbb'} />
         </TouchableOpacity>
       )}
 
       {!rideActive && !showLocationList && !selectedBusId && (
         <View style={[styles.tipContainer, { top: topOverlay + 60 }]}>
-          {!busOnline && (orgRoutes ?? []).some((r) => (r.hoursOfOperation ?? []).length > 0) ? (
+          {!serviceIsOpen ? (
             <View style={styles.hoursCard}>
               <View style={styles.hoursCardHeader}>
                 <Icon name="schedule" size={16} color="#374151" />
-                <Text style={styles.hoursCardTitle}>Service Hours</Text>
+                <Text style={styles.hoursCardTitle}>Service Closed</Text>
               </View>
-              {(orgRoutes ?? [])
-                .filter((r) => (r.hoursOfOperation ?? []).length > 0)
-                .map((r) => (
+              {orgRoutes.filter((r) => r.schedule).map((r) => {
+                const nextOpen = getNextOpenText(r);
+                const todayText = getTodayScheduleText(r);
+                return (
                   <View key={r.id} style={styles.hoursRouteBlock}>
                     <Text style={styles.hoursRouteName}>{r.name}</Text>
-                    {(r.hoursOfOperation ?? []).map((h, i) => (
-                      <Text key={i} style={styles.hoursEntry}>
-                        {h.days}  {h.open} – {h.close}
-                      </Text>
-                    ))}
+                    {todayText ? <Text style={styles.hoursEntry}>{todayText}</Text> : null}
+                    {nextOpen ? <Text style={[styles.hoursEntry, { color: PRIMARY_COLOR }]}>{nextOpen}</Text> : null}
                   </View>
-                ))}
+                );
+              })}
             </View>
           ) : (
             <InfoBanner

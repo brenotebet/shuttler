@@ -16,10 +16,11 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
+import { isRouteActive } from '../src/utils/scheduleUtils';
 
 type LocationContextType = {
   isSharing: boolean;
-  startSharing: () => Promise<void>;
+  startSharing: (routeId?: string) => Promise<void>;
   stopSharing: () => Promise<void>;
 };
 
@@ -168,6 +169,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
   const watchSub = useRef<Location.LocationSubscription | null>(null);
   const currentUid = useRef<string | null>(null);
+  const currentRouteIdRef = useRef<string | null>(null);
 
   const lastWrittenAt = useRef<number>(0);
   const lastWrittenCoords = useRef<{ latitude: number; longitude: number } | null>(null);
@@ -289,11 +291,12 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     };
   }, [isSharing]);
 
-  const startSharing = async () => {
+  const startSharing = async (routeId?: string) => {
     if (isSharing || watchSub.current) return;
 
     const uid = requireUid();
     currentUid.current = uid;
+    currentRouteIdRef.current = routeId ?? null;
 
     // 🔒 Make missing/incorrect role obvious (instead of silent permission-denied)
     await assertDriverRole(uid, orgId);
@@ -408,31 +411,44 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     }
   };
 
-  // Auto-stop sharing after 15 minutes of no GPS activity
+  // Auto-stop: inactivity timeout + schedule enforcement
   useEffect(() => {
     if (!isSharing) return;
 
     const interval = setInterval(async () => {
-      if (Date.now() - lastActivityAt.current < INACTIVITY_TIMEOUT_MS) return;
+      // Inactivity check
+      if (Date.now() - lastActivityAt.current >= INACTIVITY_TIMEOUT_MS) {
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Location Sharing Stopped',
+            body: 'No movement detected for 15 minutes. Location sharing has been turned off.',
+          },
+          trigger: null,
+        });
+        try { await stopSharing(); } catch (err) { console.error('Inactivity auto-stop failed:', err); }
+        return;
+      }
 
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Location Sharing Stopped',
-          body: 'No movement detected for 15 minutes. Location sharing has been turned off.',
-        },
-        trigger: null,
-      });
-
-      try {
-        await stopSharing();
-      } catch (err) {
-        console.error('Inactivity auto-stop failed:', err);
+      // Schedule enforcement — only applies when a route is assigned
+      const routeId = currentRouteIdRef.current;
+      if (routeId) {
+        const route = org?.routes?.find((r) => r.id === routeId) ?? null;
+        if (route?.schedule && !isRouteActive(route)) {
+          Notifications.scheduleNotificationAsync({
+            content: {
+              title: 'Location Sharing Stopped',
+              body: 'Service hours have ended for this route. Location sharing has been turned off.',
+            },
+            trigger: null,
+          });
+          try { await stopSharing(); } catch (err) { console.error('Schedule auto-stop failed:', err); }
+        }
       }
     }, INACTIVITY_CHECK_MS);
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSharing]);
+  }, [isSharing, org?.routes]);
 
   return (
     <LocationContext.Provider value={{ isSharing, startSharing, stopSharing }}>

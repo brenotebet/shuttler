@@ -12,6 +12,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -22,7 +23,7 @@ import { doc, updateDoc, setDoc, getDoc, serverTimestamp, collection, getDocs, q
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { auth, db } from '../firebase/firebaseconfig';
-import { useOrg, Stop, Route, RouteHours } from '../src/org/OrgContext';
+import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE } from '../src/org/OrgContext';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
@@ -218,88 +219,76 @@ function AuthTab() {
   );
 }
 
-// ---- Hours Editor (used inside route cards) ----
+// ---- Schedule Editor (per-weekday hours per route) ----
 
-function HoursEditor({
+const WEEK_DAYS: { key: keyof WeekSchedule; label: string }[] = [
+  { key: 'monday',    label: 'Mon' },
+  { key: 'tuesday',   label: 'Tue' },
+  { key: 'wednesday', label: 'Wed' },
+  { key: 'thursday',  label: 'Thu' },
+  { key: 'friday',    label: 'Fri' },
+  { key: 'saturday',  label: 'Sat' },
+  { key: 'sunday',    label: 'Sun' },
+];
+
+function ScheduleEditor({
   route,
-  onAdd,
-  onDelete,
+  onChange,
 }: {
   route: Route;
-  onAdd: (entry: RouteHours) => void;
-  onDelete: (idx: number) => void;
+  onChange: (schedule: WeekSchedule) => void;
 }) {
-  const [days, setDays] = useState('');
-  const [open, setOpen] = useState('');
-  const [close, setClose] = useState('');
-  const [showForm, setShowForm] = useState(false);
+  const schedule: WeekSchedule = route.schedule ?? { ...DEFAULT_WEEK_SCHEDULE };
 
-  const handleAdd = () => {
-    if (!days.trim() || !open.trim() || !close.trim()) return;
-    onAdd({ days: days.trim(), open: open.trim(), close: close.trim() });
-    setDays(''); setOpen(''); setClose('');
-    setShowForm(false);
+  const update = (key: keyof WeekSchedule, patch: Partial<DaySchedule>) => {
+    onChange({ ...schedule, [key]: { ...schedule[key], ...patch } });
   };
-
-  const hours = route.hoursOfOperation ?? [];
 
   return (
     <View style={{ marginTop: 12 }}>
       <View style={hoursStyles.header}>
         <Icon name="schedule" size={14} color="#6b7280" />
         <Text style={hoursStyles.label}>Hours of Operation</Text>
-        <TouchableOpacity onPress={() => setShowForm((v) => !v)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-          <Icon name={showForm ? 'remove' : 'add'} size={18} color={PRIMARY_COLOR} />
-        </TouchableOpacity>
       </View>
-
-      {hours.map((h, idx) => (
-        <View key={idx} style={hoursStyles.row}>
-          <Text style={hoursStyles.rowText}>{h.days}  {h.open} – {h.close}</Text>
-          <TouchableOpacity onPress={() => onDelete(idx)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-            <Icon name="close" size={14} color="#e53935" />
-          </TouchableOpacity>
-        </View>
-      ))}
-      {hours.length === 0 && !showForm && (
-        <Text style={hoursStyles.empty}>No hours set — tap + to add.</Text>
-      )}
-
-      {showForm && (
-        <View style={hoursStyles.form}>
-          <TextInput
-            style={hoursStyles.input}
-            placeholder="Days (e.g. Mon–Fri)"
-            value={days}
-            onChangeText={setDays}
-            placeholderTextColor="#aaa"
-          />
-          <View style={hoursStyles.timeRow}>
-            <TextInput
-              style={[hoursStyles.input, { flex: 1 }]}
-              placeholder="Open (e.g. 7:30 AM)"
-              value={open}
-              onChangeText={setOpen}
-              placeholderTextColor="#aaa"
+      {WEEK_DAYS.map(({ key, label }) => {
+        const day = schedule[key];
+        return (
+          <View key={key} style={hoursStyles.dayRow}>
+            <Switch
+              value={day.isOpen}
+              onValueChange={(v) => update(key, { isOpen: v })}
+              trackColor={{ false: '#e5e7eb', true: PRIMARY_COLOR }}
+              thumbColor="#fff"
             />
-            <Text style={hoursStyles.dash}>–</Text>
-            <TextInput
-              style={[hoursStyles.input, { flex: 1 }]}
-              placeholder="Close (e.g. 10:00 PM)"
-              value={close}
-              onChangeText={setClose}
-              placeholderTextColor="#aaa"
-            />
+            <Text style={[hoursStyles.dayLabel, !day.isOpen && { color: '#bbb' }]}>{label}</Text>
+            {day.isOpen ? (
+              <View style={hoursStyles.timeRow}>
+                <TextInput
+                  style={hoursStyles.timeInput}
+                  value={day.open}
+                  onChangeText={(v) => update(key, { open: v })}
+                  placeholder="07:00"
+                  placeholderTextColor="#bbb"
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={5}
+                />
+                <Text style={hoursStyles.dash}>–</Text>
+                <TextInput
+                  style={hoursStyles.timeInput}
+                  value={day.close}
+                  onChangeText={(v) => update(key, { close: v })}
+                  placeholder="22:00"
+                  placeholderTextColor="#bbb"
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={5}
+                />
+              </View>
+            ) : (
+              <Text style={hoursStyles.closedLabel}>Closed</Text>
+            )}
           </View>
-          <TouchableOpacity
-            style={[hoursStyles.addBtn, (!days.trim() || !open.trim() || !close.trim()) && { opacity: 0.4 }]}
-            onPress={handleAdd}
-            disabled={!days.trim() || !open.trim() || !close.trim()}
-          >
-            <Text style={hoursStyles.addBtnText}>Add Hours</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        );
+      })}
     </View>
   );
 }
@@ -307,29 +296,23 @@ function HoursEditor({
 const hoursStyles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
   label: { flex: 1, fontSize: 12, fontWeight: '600', color: '#6b7280' },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 3 },
-  rowText: { fontSize: 13, color: '#374151' },
-  empty: { fontSize: 12, color: '#9ca3af', fontStyle: 'italic' },
-  form: { gap: 6, marginTop: 4 },
-  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dayRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  dayLabel: { width: 32, fontSize: 13, fontWeight: '600', color: '#374151' },
+  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },
   dash: { fontSize: 14, color: '#6b7280' },
-  input: {
+  timeInput: {
+    flex: 1,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     fontSize: 13,
     color: '#111',
     backgroundColor: '#fafafa',
+    textAlign: 'center',
   },
-  addBtn: {
-    backgroundColor: PRIMARY_COLOR,
-    borderRadius: 8,
-    paddingVertical: 8,
-    alignItems: 'center',
-  },
-  addBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  closedLabel: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
 });
 
 // ---- Stop tab extra styles ----
@@ -644,23 +627,10 @@ function StopsTab() {
     [],
   );
 
-  const handleAddHours = useCallback(
-    (routeId: string, entry: RouteHours) => {
+  const handleUpdateSchedule = useCallback(
+    (routeId: string, schedule: WeekSchedule) => {
       setRoutes((prev) =>
-        prev.map((r) =>
-          r.id !== routeId ? r : { ...r, hoursOfOperation: [...(r.hoursOfOperation ?? []), entry] },
-        ),
-      );
-    },
-    [],
-  );
-
-  const handleDeleteHours = useCallback(
-    (routeId: string, idx: number) => {
-      setRoutes((prev) =>
-        prev.map((r) =>
-          r.id !== routeId ? r : { ...r, hoursOfOperation: (r.hoursOfOperation ?? []).filter((_, i) => i !== idx) },
-        ),
+        prev.map((r) => (r.id !== routeId ? r : { ...r, schedule })),
       );
     },
     [],
@@ -924,10 +894,9 @@ function StopsTab() {
                   )}
 
                   {/* Hours of operation */}
-                  <HoursEditor
+                  <ScheduleEditor
                     route={route}
-                    onAdd={(entry) => handleAddHours(route.id, entry)}
-                    onDelete={(idx) => handleDeleteHours(route.id, idx)}
+                    onChange={(schedule) => handleUpdateSchedule(route.id, schedule)}
                   />
                 </View>
               )}
