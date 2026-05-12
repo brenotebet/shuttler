@@ -224,7 +224,14 @@ export default function CreateOrgScreen() {
 
       const newOrg = data as OrgConfig;
       await selectOrg(newOrg);
-      navigation.navigate('Auth', { orgId: newOrg.orgId });
+      Alert.alert(
+        'Organization created! 🎉',
+        `One more step — create your admin account using ${email.trim().toLowerCase()}. Your email is pre-filled and locked so you don't accidentally register with the wrong one.`,
+        [{
+          text: "Set up my account →",
+          onPress: () => navigation.navigate('Auth', { orgId: newOrg.orgId, initialEmail: email.trim().toLowerCase() }),
+        }],
+      );
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
     } finally {

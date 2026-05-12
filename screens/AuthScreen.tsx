@@ -170,12 +170,12 @@ function PasswordInput({
   );
 }
 
-function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: string; initialEmail?: string }) {
+  const [mode, setMode] = useState<'signin' | 'signup'>(initialEmail ? 'signup' : 'signin');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail ?? '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -317,20 +317,29 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
 
   return (
     <View style={styles.card}>
-      <View style={styles.tabRow}>
-        <TouchableOpacity
-          style={[styles.tab, mode === 'signin' && styles.tabActive]}
-          onPress={() => switchMode('signin')}
-        >
-          <Text style={[styles.tabText, mode === 'signin' && styles.tabTextActive]}>Sign In</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, mode === 'signup' && styles.tabActive]}
-          onPress={() => switchMode('signup')}
-        >
-          <Text style={[styles.tabText, mode === 'signup' && styles.tabTextActive]}>Create Account</Text>
-        </TouchableOpacity>
-      </View>
+      {initialEmail ? (
+        <View style={styles.founderBanner}>
+          <Icon name="admin-panel-settings" size={18} color="#1d4ed8" />
+          <Text style={styles.founderBannerText}>
+            Creating your admin account for <Text style={{ fontWeight: '700' }}>{initialEmail}</Text>
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.tabRow}>
+          <TouchableOpacity
+            style={[styles.tab, mode === 'signin' && styles.tabActive]}
+            onPress={() => switchMode('signin')}
+          >
+            <Text style={[styles.tabText, mode === 'signin' && styles.tabTextActive]}>Sign In</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, mode === 'signup' && styles.tabActive]}
+            onPress={() => switchMode('signup')}
+          >
+            <Text style={[styles.tabText, mode === 'signup' && styles.tabTextActive]}>Create Account</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {mode === 'signup' && (
         <>
@@ -383,10 +392,11 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
       <View style={styles.fieldGroup}>
         <Text style={styles.fieldLabel}>Email address</Text>
         <TextInput
-          style={[styles.input, errors.email ? styles.inputError : null]}
+          style={[styles.input, errors.email ? styles.inputError : null, initialEmail ? styles.inputLocked : null]}
           placeholder="you@example.com"
           value={email}
-          onChangeText={setEmail}
+          onChangeText={initialEmail ? undefined : setEmail}
+          editable={!initialEmail}
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
@@ -394,9 +404,11 @@ function EmailPanel({ orgSlug, orgId }: { orgSlug: string; orgId: string }) {
         />
         {errors.email
           ? <Text style={styles.errorText}>{errors.email}</Text>
-          : mode === 'signup'
-            ? <Text style={styles.fieldHint}>Use your school or work email. This will be your login.</Text>
-            : null}
+          : initialEmail
+            ? <Text style={styles.fieldHint}>This is your founder email and will be your admin login.</Text>
+            : mode === 'signup'
+              ? <Text style={styles.fieldHint}>Use your school or work email. This will be your login.</Text>
+              : null}
       </View>
 
       <PasswordInput
@@ -566,6 +578,7 @@ export default function AuthScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteT>();
   const { org } = useOrg();
+  const { initialEmail } = route.params;
 
   if (!org) {
     // Org not loaded yet — go back to selector
@@ -578,7 +591,7 @@ export default function AuthScreen() {
       case 'saml':
         return <SamlPanel orgSlug={org.slug} />;
       case 'email':
-        return <EmailPanel orgSlug={org.slug} orgId={org.orgId} />;
+        return <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} />;
       case 'phone':
         return <PhonePanel orgId={org.orgId} />;
       default:
@@ -728,6 +741,27 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: '#dc2626',
+  },
+  inputLocked: {
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+  },
+  founderBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#eff6ff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  founderBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#1e40af',
+    lineHeight: 18,
   },
   errorText: {
     fontSize: 12,

@@ -29,7 +29,7 @@ import { PRIMARY_COLOR } from '../src/constants/theme';
 export type RootStackParamList = {
   OrgSelector: undefined;
   CreateOrg: undefined;
-  Auth: { orgId: string };
+  Auth: { orgId: string; initialEmail?: string };
   EmailVerification: undefined;
 
   // Authenticated stacks

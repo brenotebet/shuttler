@@ -300,6 +300,8 @@ async function requireOrgAdmin(req: Request, res: Response, next: Function) {
   }
 }
 
+
+
 async function requireSuperAdmin(req: Request, res: Response, next: Function) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -334,7 +336,7 @@ Sentry.setupExpressErrorHandler(app);
 // CORS — allow the admin web dashboard and local dev
 const ALLOWED_ORIGINS = (process.env.ADMIN_ORIGIN ?? '')
   .split(',')
-  .map((s) => s.trim())
+  .map((s: string) => s.trim())
   .filter(Boolean)
   .concat(['http://localhost:5173', 'http://localhost:4173']);
 
@@ -352,6 +354,9 @@ app.use(cors({
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+const waitlist = require('./waitlist-endpoint');
+app.use(waitlist);
 
 // ---- Health ----
 
