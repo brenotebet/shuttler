@@ -5,8 +5,9 @@ import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { auth, db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import { CARD_BACKGROUND } from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import ScreenContainer from '../components/ScreenContainer';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { useAuth } from '../src/auth/AuthProvider';
@@ -27,6 +28,7 @@ function formatRelativeTime(date: Date): string {
 export default function StudentHistoryScreen() {
   const [stops, setStops] = useState<any[]>([]);
   const { orgId, role } = useAuth();
+  const { primaryColor } = useOrgTheme();
   const [watchUid, setWatchUid] = useState<string | null>(null);
   const [childName, setChildName] = useState<string | null>(null);
 
@@ -88,7 +90,7 @@ export default function StudentHistoryScreen() {
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <View style={styles.cardIconWrap}>
-                  <Icon name="place" size={18} color={PRIMARY_COLOR} />
+                  <Icon name="place" size={18} color={primaryColor} />
                 </View>
                 <View style={styles.cardContent}>
                   <Text style={styles.cardTitle}>{item.stop?.name ?? 'Unknown stop'}</Text>

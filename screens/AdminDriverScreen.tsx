@@ -15,8 +15,8 @@ import { useDriver } from '../drivercontext/DriverContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import StopRequestCard from '../components/StopRequestCard';
 import { showAlert } from '../src/utils/alerts';
-import { PRIMARY_COLOR } from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import ScreenContainer from '../components/ScreenContainer';
 import { spacing } from '../src/styles/common';
 
@@ -25,6 +25,7 @@ import { spacing } from '../src/styles/common';
 export default function AdminDriverScreen() {
   const { driverId } = useDriver();
   const { orgId } = useAuth();
+  const { primaryColor } = useOrgTheme();
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
@@ -100,7 +101,7 @@ export default function AdminDriverScreen() {
     return (
       <ScreenContainer>
         <View style={styles.loading}>
-          <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+          <ActivityIndicator size="large" color={primaryColor} />
         </View>
       </ScreenContainer>
     );

@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import cors from 'cors';
 import * as saml from 'samlify';
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
@@ -329,6 +330,23 @@ function requireInternal(req: Request, res: Response, next: Function) {
 const app = express();
 
 Sentry.setupExpressErrorHandler(app);
+
+// CORS — allow the admin web dashboard and local dev
+const ALLOWED_ORIGINS = (process.env.ADMIN_ORIGIN ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .concat(['http://localhost:5173', 'http://localhost:4173']);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow server-to-server (no origin) and whitelisted browsers
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS: ${origin} not allowed`));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 // Stripe webhook needs raw body — register before express.json()
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }));

@@ -5,11 +5,13 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import DriverScreen from '../screens/DriverScreen';
 import DriverMenuScreen from '../screens/DriverMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR, CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
+import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 
 const Tab = createBottomTabNavigator();
 
 export default function DriverTabs() {
+  const { primaryColor } = useOrgTheme();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -32,7 +34,7 @@ export default function DriverTabs() {
           }
           return <Icon name={iconName} size={28} color={color} />;
         },
-        tabBarActiveTintColor: PRIMARY_COLOR,
+        tabBarActiveTintColor: primaryColor,
         tabBarInactiveTintColor: TEXT_SECONDARY,
       })}
     >

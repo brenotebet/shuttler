@@ -27,7 +27,6 @@ import { db } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import {
-  PRIMARY_COLOR,
   CARD_BACKGROUND,
   TEXT_PRIMARY,
   TEXT_SECONDARY,
@@ -37,6 +36,7 @@ import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import HeaderBar from '../components/HeaderBar';
 import ScreenContainer from '../components/ScreenContainer';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 
 const STALE_WINDOW_SECONDS = 180;
 const GPS_LOST_SECONDS = 60;
@@ -142,6 +142,7 @@ async function fetchDriverStats(uid: string, orgId: string): Promise<DriverStats
 }
 
 function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string }; orgId: string }) {
+  const { primaryColor } = useOrgTheme();
   const [open, setOpen] = useState(false);
   const [stats, setStats] = useState<DriverStatsData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -161,11 +162,11 @@ function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string
     <TouchableOpacity style={styles.card} onPress={open ? () => setOpen(false) : load} activeOpacity={0.85}>
       <View style={styles.analyticsCardHeader}>
         <View style={styles.analyticsIconWrap}>
-          <Icon name="person" size={18} color={PRIMARY_COLOR} />
+          <Icon name="person" size={18} color={primaryColor} />
         </View>
         <Text style={styles.analyticsDriverName}>{driver.name}</Text>
         {loading
-          ? <ActivityIndicator size="small" color={PRIMARY_COLOR} />
+          ? <ActivityIndicator size="small" color={primaryColor} />
           : <Icon name={open ? 'expand-less' : 'bar-chart'} size={20} color="#9ca3af" />}
       </View>
 
@@ -180,7 +181,7 @@ function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string
               { label: 'Avg/visit', value: stats.avgPerVisit },
             ].map((chip) => (
               <View key={chip.label} style={styles.analyticsChip}>
-                <Text style={styles.analyticsChipValue}>{chip.value}</Text>
+                <Text style={[styles.analyticsChipValue, { color: primaryColor }]}>{chip.value}</Text>
                 <Text style={styles.analyticsChipLabel}>{chip.label}</Text>
               </View>
             ))}
@@ -193,7 +194,7 @@ function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string
                 <View key={s.stopId} style={styles.analyticsStopRow}>
                   <Text style={styles.analyticsStopName} numberOfLines={1}>{s.stopName}</Text>
                   <View style={styles.analyticsBarBg}>
-                    <View style={[styles.analyticsBar, { width: `${Math.max(4, (s.count / maxStopCount) * 100)}%` as any }]} />
+                    <View style={[styles.analyticsBar, { width: `${Math.max(4, (s.count / maxStopCount) * 100)}%` as any, backgroundColor: primaryColor }]} />
                   </View>
                   <Text style={styles.analyticsStopCount}>{s.count}</Text>
                 </View>
@@ -210,6 +211,7 @@ export default function AdminDashboardScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { org } = useOrg();
   const { orgId } = useAuth();
+  const { primaryColor } = useOrgTheme();
   const orgRoutes = org?.routes ?? [];
 
   const [drivers, setDrivers] = useState<any[]>([]);
@@ -505,7 +507,7 @@ export default function AdminDashboardScreen() {
       <ScreenContainer padded={false}>
         <HeaderBar title="Dashboard" />
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+          <ActivityIndicator size="large" color={primaryColor} />
         </View>
       </ScreenContainer>
     );
@@ -530,7 +532,7 @@ export default function AdminDashboardScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Fleet Summary */}
-        <View style={styles.summaryRow}>
+        <View style={[styles.summaryRow, { backgroundColor: primaryColor }]}>
           <View style={styles.summaryCell}>
             <Text style={styles.summaryValue}>
               {fleetSummary.onlineCount}/{fleetSummary.totalDrivers}
@@ -582,7 +584,7 @@ export default function AdminDashboardScreen() {
                     driver.isGpsLost
                       ? styles.dotWarn
                       : driver.isOnline
-                      ? styles.dotOnline
+                      ? { backgroundColor: primaryColor }
                       : styles.dotOffline,
                   ]}
                 />
@@ -592,7 +594,7 @@ export default function AdminDashboardScreen() {
                     driver.isGpsLost
                       ? styles.textWarn
                       : driver.isOnline
-                      ? styles.textOnline
+                      ? { color: primaryColor }
                       : styles.textOffline,
                   ]}
                 >
@@ -673,7 +675,7 @@ export default function AdminDashboardScreen() {
                   <Text style={styles.stopName} numberOfLines={1}>
                     {stop.name}
                   </Text>
-                  <Text style={styles.stopCount}>{stop.count}</Text>
+                  <Text style={[styles.stopCount, { color: primaryColor }]}>{stop.count}</Text>
                   <Text style={styles.stopCountLabel}> req</Text>
                 </View>
               ))}
@@ -692,7 +694,7 @@ export default function AdminDashboardScreen() {
                   <View
                     style={[
                       styles.trendBar,
-                      { height: Math.max(4, (day.count / maxTrend) * 48) },
+                      { height: Math.max(4, (day.count / maxTrend) * 48), backgroundColor: primaryColor },
                     ]}
                   />
                 </View>
@@ -726,7 +728,7 @@ export default function AdminDashboardScreen() {
 
         {/* CSV Export */}
         <TouchableOpacity
-          style={styles.exportBtn}
+          style={[styles.exportBtn, { backgroundColor: primaryColor }]}
           onPress={handleExportCSV}
           activeOpacity={0.8}
           disabled={isExporting}
@@ -765,7 +767,6 @@ const styles = StyleSheet.create({
   // Fleet summary bar
   summaryRow: {
     flexDirection: 'row',
-    backgroundColor: PRIMARY_COLOR,
     borderRadius: borderRadius.xl,
     paddingVertical: 18,
     marginBottom: 22,
@@ -822,11 +823,11 @@ const styles = StyleSheet.create({
   badgeOffline: { backgroundColor: '#f1f5f9' },
   badgeWarn: { backgroundColor: '#fef9c3' },
   statusDot: { width: 7, height: 7, borderRadius: 4, marginRight: 5 },
-  dotOnline: { backgroundColor: PRIMARY_COLOR },
+  dotOnline: {},
   dotOffline: { backgroundColor: '#94a3b8' },
   dotWarn: { backgroundColor: '#eab308' },
   statusText: { fontSize: 12, fontWeight: '600' },
-  textOnline: { color: PRIMARY_COLOR },
+  textOnline: {},
   textOffline: { color: '#64748b' },
   textWarn: { color: '#854d0e' },
 
@@ -853,7 +854,7 @@ const styles = StyleSheet.create({
     color: TEXT_SECONDARY,
   },
   stopName: { flex: 1, fontSize: 14, fontWeight: '500', color: TEXT_PRIMARY },
-  stopCount: { fontSize: 15, fontWeight: '700', color: PRIMARY_COLOR },
+  stopCount: { fontSize: 15, fontWeight: '700' },
   stopCountLabel: { fontSize: 12, color: TEXT_SECONDARY },
 
   // Driver Analytics
@@ -896,7 +897,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minWidth: 70,
   },
-  analyticsChipValue: { fontSize: 18, fontWeight: '700', color: PRIMARY_COLOR },
+  analyticsChipValue: { fontSize: 18, fontWeight: '700' },
   analyticsChipLabel: { fontSize: 10, color: TEXT_SECONDARY, marginTop: 2 },
   analyticsStopTitle: {
     fontSize: 11,
@@ -921,7 +922,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     overflow: 'hidden',
   },
-  analyticsBar: { height: '100%', backgroundColor: PRIMARY_COLOR, borderRadius: 4 },
+  analyticsBar: { height: '100%', borderRadius: 4 },
   analyticsStopCount: { width: 28, textAlign: 'right', fontSize: 12, fontWeight: '600', color: TEXT_PRIMARY },
 
   // CSV Export
@@ -930,7 +931,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: PRIMARY_COLOR,
     borderRadius: borderRadius.lg,
     paddingVertical: 13,
     marginBottom: 14,
@@ -958,6 +958,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     overflow: 'hidden',
   },
-  trendBar: { width: '100%', backgroundColor: PRIMARY_COLOR, borderRadius: 4 },
+  trendBar: { width: '100%', borderRadius: 4 },
   trendLabel: { fontSize: 10, color: TEXT_SECONDARY, marginTop: 4 },
 });

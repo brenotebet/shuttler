@@ -3,7 +3,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, Dimensions } from 'react-native';
 import { PieChart, BarChart } from 'react-native-chart-kit';
-import { PRIMARY_COLOR, CARD_BACKGROUND } from '../src/constants/theme';
+import { CARD_BACKGROUND } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import HeaderBar from '../components/HeaderBar';
 import { db } from '../firebase/firebaseconfig';
 import { collection, doc, getDoc, query, where, onSnapshot, orderBy } from 'firebase/firestore';
@@ -18,6 +19,7 @@ export default function DriverHistoryScreen() {
   const lookupInFlightRef = useRef<Set<string>>(new Set());
   const { driverId } = useDriver();
   const { orgId } = useAuth();
+  const { primaryColor } = useOrgTheme();
   const screenWidth = Dimensions.get('window').width;
   const chartWidth = screenWidth - spacing.screenPadding * 2 - spacing.section * 2;
 
@@ -144,7 +146,7 @@ export default function DriverHistoryScreen() {
         ListEmptyComponent={<Text style={styles.emptyText}>No completed rides yet.</Text>}
         ListHeaderComponent={
           <View style={styles.headerContent}>
-            <Text style={styles.heading}>Driver Dashboard</Text>
+            <Text style={[styles.heading, { color: primaryColor }]}>Driver Dashboard</Text>
             <View style={styles.metricsCard}>
               <View style={[styles.metricItem, styles.metricItemLeft]}>
                 <Text style={styles.metricLabel}>Total Stops</Text>
@@ -188,7 +190,7 @@ export default function DriverHistoryScreen() {
               </View>
             )}
 
-            <Text style={[styles.heading, styles.sectionHeading]}>Recent Stops</Text>
+            <Text style={[styles.heading, styles.sectionHeading, { color: primaryColor }]}>Recent Stops</Text>
           </View>
         }
         contentContainerStyle={[
@@ -212,7 +214,6 @@ const styles = StyleSheet.create({
   heading: {
     fontSize: 26,
     fontWeight: '700',
-    color: PRIMARY_COLOR,
     textAlign: 'center',
     marginBottom: spacing.section,
   },

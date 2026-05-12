@@ -16,14 +16,15 @@ import { clearSamlSession } from '../src/auth/samlAuth';
 
 import MenuItem from '../components/MenuItem';
 import ScreenContainer from '../components/ScreenContainer';
-import { PRIMARY_COLOR } from '../src/constants/theme';
 import { spacing } from '../src/styles/common';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 
 export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { primaryColor } = useOrgTheme();
   const { logout: clearDriverContext } = useDriver();
   const { stopSharing, isSharing } = useLocationSharing();
-  const { role, isSuperAdmin, displayName } = useAuth();
+  const { role, displayName } = useAuth();
   const firstName = displayName?.split(' ')[0] ?? null;
   const { org } = useOrg();
   const needsSetup = role === 'admin' && (org?.stops?.length ?? 0) === 0;
@@ -68,7 +69,7 @@ export default function DriverMenuScreen() {
         {firstName ? (
           <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={styles.title}>Driver Hub</Text>
+        <Text style={[styles.title, { color: primaryColor }]}>Driver Hub</Text>
         <Text style={styles.subtitle}>Stay on top of requests and routes</Text>
       </View>
 
@@ -115,15 +116,6 @@ export default function DriverMenuScreen() {
           />
         )}
 
-        {isSuperAdmin && (
-          <MenuItem
-            icon="admin-panel-settings"
-            title="Org Applications"
-            description="Review and approve pending organization sign-ups"
-            onPress={() => navigation.navigate('SuperAdmin')}
-          />
-        )}
-
         <MenuItem
           icon="help-outline"
           title="How to Use"
@@ -160,7 +152,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: PRIMARY_COLOR,
     marginBottom: 6,
   },
   subtitle: {

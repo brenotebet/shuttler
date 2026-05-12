@@ -3,7 +3,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import MapScreen from '../screens/MapScreen';
 import StudentMenuScreen from '../screens/StudentMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR, CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
+import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 
 export type StudentTabParamList = {
   Map: undefined;
@@ -13,12 +14,13 @@ export type StudentTabParamList = {
 const Tab = createBottomTabNavigator<StudentTabParamList>();
 
 export default function StudentTabs() {
+  const { primaryColor } = useOrgTheme();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarShowLabel: false,
-        tabBarActiveTintColor: PRIMARY_COLOR,
+        tabBarActiveTintColor: primaryColor,
         tabBarInactiveTintColor: TEXT_SECONDARY,
         tabBarStyle: {
           backgroundColor: CARD_BACKGROUND,

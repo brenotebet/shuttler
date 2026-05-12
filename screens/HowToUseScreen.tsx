@@ -18,7 +18,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import ScreenContainer from '../components/ScreenContainer';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
@@ -227,12 +227,13 @@ function StepCard({ step, index, total }: { step: Step; index: number; total: nu
 // ─── Dot pagination ───────────────────────────────────────────────────────────
 
 function Dots({ count, active }: { count: number; active: number }) {
+  const { primaryColor } = useOrgTheme();
   return (
     <View style={styles.dotsRow}>
       {Array.from({ length: count }).map((_, i) => (
         <View
           key={i}
-          style={[styles.dot, i === active && styles.dotActive]}
+          style={[styles.dot, i === active && { backgroundColor: primaryColor, width: 20, borderRadius: 4 }]}
         />
       ))}
     </View>
@@ -245,6 +246,7 @@ export default function HowToUseScreen() {
   const navigation = useNavigation();
   const route = useRoute<HowToUseRoute>();
   const { role } = route.params;
+  const { primaryColor } = useOrgTheme();
 
   const steps = stepsForRole(role);
   const title = titleForRole(role);
@@ -276,7 +278,7 @@ export default function HowToUseScreen() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Icon name="arrow-back" size={24} color={PRIMARY_COLOR} />
+          <Icon name="arrow-back" size={24} color={primaryColor} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{title}</Text>
         <View style={{ width: 32 }} />
@@ -321,11 +323,11 @@ export default function HowToUseScreen() {
           onPress={goPrev}
           disabled={activeIndex === 0}
         >
-          <Icon name="chevron-left" size={22} color={PRIMARY_COLOR} />
-          <Text style={styles.navBtnSecondaryText}>Back</Text>
+          <Icon name="chevron-left" size={22} color={primaryColor} />
+          <Text style={[styles.navBtnSecondaryText, { color: primaryColor }]}>Back</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.navBtn, styles.navBtnPrimary]} onPress={goNext}>
+        <TouchableOpacity style={[styles.navBtn, styles.navBtnPrimary, { backgroundColor: primaryColor }]} onPress={goNext}>
           <Text style={styles.navBtnPrimaryText}>
             {activeIndex === steps.length - 1 ? 'Done' : 'Next'}
           </Text>
@@ -422,11 +424,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#D1D5DB',
   },
-  dotActive: {
-    backgroundColor: PRIMARY_COLOR,
-    width: 20,
-    borderRadius: 4,
-  },
+  dotActive: {},
   navRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -445,7 +443,6 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   navBtnPrimary: {
-    backgroundColor: PRIMARY_COLOR,
     flex: 1,
     justifyContent: 'center',
   },
@@ -464,7 +461,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   navBtnSecondaryText: {
-    color: PRIMARY_COLOR,
     fontWeight: '600',
     fontSize: 15,
   },

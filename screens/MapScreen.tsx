@@ -28,7 +28,7 @@ import MapView, {
 } from 'react-native-maps';
 import MapMarker from '../components/MapMarker';
 import { grayscaleMapStyle, MAX_LAT_DELTA, MAX_LON_DELTA } from '../src/constants/mapConfig';
-import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
+import { BACKGROUND_COLOR } from '../src/constants/theme';
 import * as Location from 'expo-location';
 import { StudentTabParamList } from '../tabs/StudentTabs';
 import {
@@ -1464,7 +1464,7 @@ const handleRequest = async (entry: RequestableStop) => {
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
       {role !== 'parent' && !rideActive && !selectedBusId && (
         <TouchableOpacity
-          style={[styles.searchContainer, { top: topOverlay }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
+          style={[styles.searchContainer, { top: topOverlay, borderColor: primaryColor + '30', shadowColor: primaryColor }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
           onPress={() => {
             if (!serviceIsOpen) {
               showAlert('Service is currently closed. Check the hours shown on the map.');
@@ -1500,7 +1500,7 @@ const handleRequest = async (entry: RequestableStop) => {
                 const todayText = getTodayScheduleText(r);
                 return (
                   <View key={r.id} style={styles.hoursRouteBlock}>
-                    <Text style={styles.hoursRouteName}>{r.name}</Text>
+                    <Text style={[styles.hoursRouteName, { color: primaryColor }]}>{r.name}</Text>
                     {todayText ? <Text style={styles.hoursEntry}>{todayText}</Text> : null}
                     {nextOpen ? <Text style={[styles.hoursEntry, { color: primaryColor }]}>{nextOpen}</Text> : null}
                   </View>
@@ -1760,7 +1760,7 @@ const handleRequest = async (entry: RequestableStop) => {
         </TouchableOpacity>
 
         {rideActive && (
-          <TouchableOpacity style={styles.fabPrimary} onPress={fitActiveRide} activeOpacity={0.9}>
+          <TouchableOpacity style={[styles.fabPrimary, { backgroundColor: primaryColor }]} onPress={fitActiveRide} activeOpacity={0.9}>
             <Icon name="alt-route" size={22} color="#fff" />
             <Text style={styles.fabPrimaryText}>Fit</Text>
           </TouchableOpacity>
@@ -1831,7 +1831,7 @@ const handleRequest = async (entry: RequestableStop) => {
 
             {(eta || stopsBefore !== null) && (
               <View style={styles.cardInfoRow}>
-                {eta ? <Text style={styles.etaText}>{eta} away</Text> : null}
+                {eta ? <Text style={[styles.etaText, { color: primaryColor }]}>{eta} away</Text> : null}
                 {eta && stopsBefore !== null ? <Text style={styles.cardInfoDot}> · </Text> : null}
                 {stopsBefore !== null ? (
                   <Text style={styles.cardInfoMeta}>{stopsBefore} stop{stopsBefore !== 1 ? 's' : ''} before you</Text>
@@ -1965,8 +1965,6 @@ const styles = StyleSheet.create({
     backgroundColor: BACKGROUND_COLOR,
     paddingHorizontal: 16,
     borderWidth: 1.5,
-    borderColor: PRIMARY_COLOR + '30',
-    shadowColor: PRIMARY_COLOR,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.18,
     shadowRadius: 6,
@@ -2033,7 +2031,7 @@ const styles = StyleSheet.create({
   hoursCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   hoursCardTitle: { fontSize: 14, fontWeight: '700', color: '#111' },
   hoursRouteBlock: { marginBottom: 8 },
-  hoursRouteName: { fontSize: 13, fontWeight: '600', color: PRIMARY_COLOR, marginBottom: 2 },
+  hoursRouteName: { fontSize: 13, fontWeight: '600', marginBottom: 2 },
   hoursEntry: { fontSize: 13, color: '#374151' },
   searchText: { flex: 1, fontSize: 15, fontWeight: '500', color: '#374151' },
   searchContainerOffline: { backgroundColor: '#f3f4f6' },
@@ -2090,7 +2088,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     height: 44,
     borderRadius: 22,
-    backgroundColor: PRIMARY_COLOR,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
@@ -2143,7 +2140,7 @@ const styles = StyleSheet.create({
   cardSubtitle: { fontSize: 14, color: '#555', marginBottom: 4 },
   cardRouteMeta: { fontSize: 12, color: '#9ca3af', marginBottom: 4 },
   cardInfoRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 },
-  etaText: { fontSize: 15, fontWeight: '700', color: PRIMARY_COLOR },
+  etaText: { fontSize: 15, fontWeight: '700' },
   cardInfoDot: { fontSize: 14, color: '#9CA3AF' },
   cardInfoMeta: { fontSize: 14, color: '#6B7280' },
   cancelButton: {

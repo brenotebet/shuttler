@@ -29,7 +29,8 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
 import { notifyStudentArrived, notifyStudentCompleted } from '../src/utils/pushNotifications';
-import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
+import { BACKGROUND_COLOR } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { getPlanLimits } from '../src/constants/planLimits';
 import { useOrg, Stop } from '../src/org/OrgContext';
@@ -127,6 +128,7 @@ export default function DriverScreen() {
   const { driverId, loading } = useDriver();
   const { org } = useOrg();
   const { role: authRole } = useAuth();
+  const { primaryColor } = useOrgTheme();
   const orgStops: Stop[] = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
   const orgId = org?.orgId ?? '';
@@ -849,7 +851,7 @@ export default function DriverScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.headerTitle}>Driver Dashboard</Text>
         <TouchableOpacity
-          style={[styles.shareButton, isToggling && styles.shareButtonDisabled]}
+          style={[styles.shareButton, { backgroundColor: primaryColor }, isToggling && styles.shareButtonDisabled]}
           disabled={isToggling}
           onPress={async () => {
             if (!driverId) {
@@ -947,7 +949,7 @@ export default function DriverScreen() {
 
         <View style={styles.cardLarge}>
           <Text style={styles.cardTitle}>Current Stop</Text>
-          <Text style={styles.cardMainValue}>
+          <Text style={[styles.cardMainValue, { color: primaryColor }]}>
             {nearestStop?.name ?? (driverCoords ? 'En route…' : 'Waiting for location...')}
           </Text>
           <Text style={styles.cardMeta}>Active requests: {nearestStop ? countsByStopId[nearestStop.id] ?? 0 : 0}</Text>
@@ -961,7 +963,7 @@ export default function DriverScreen() {
           )}
 
           <TouchableOpacity
-            style={[styles.actionButton, (!isSharing || !nearestStop) && styles.actionButtonDisabled]}
+            style={[styles.actionButton, { backgroundColor: primaryColor }, (!isSharing || !nearestStop) && styles.actionButtonDisabled]}
             onPress={() => {
               if (!isSharing) {
                 showAlert('Turn on location sharing before adding students.', 'Location required');
@@ -980,7 +982,7 @@ export default function DriverScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Next Stop</Text>
-          <Text style={styles.cardMainValue}>{nextStop?.name ?? '—'}</Text>
+          <Text style={[styles.cardMainValue, { color: primaryColor }]}>{nextStop?.name ?? '—'}</Text>
           <Text style={styles.cardMeta}>Active requests: {nextStop ? countsByStopId[nextStop.id] ?? 0 : 0}</Text>
           <Text style={styles.cardMeta}>Latest: {nextStats?.latestMs ? formatTimeAgo(nextStats.latestMs) : '—'}</Text>
         </View>
@@ -998,17 +1000,17 @@ export default function DriverScreen() {
             {showShiftCard && (
               <View style={styles.shiftStats}>
                 <View style={styles.shiftStat}>
-                  <Text style={styles.shiftStatValue}>{totalBoardedSession}</Text>
+                  <Text style={[styles.shiftStatValue, { color: primaryColor }]}>{totalBoardedSession}</Text>
                   <Text style={styles.shiftStatLabel}>This session</Text>
                 </View>
                 <View style={styles.shiftStatDivider} />
                 <View style={styles.shiftStat}>
-                  <Text style={styles.shiftStatValue}>{todayBoardedTotal}</Text>
+                  <Text style={[styles.shiftStatValue, { color: primaryColor }]}>{todayBoardedTotal}</Text>
                   <Text style={styles.shiftStatLabel}>Today total</Text>
                 </View>
                 <View style={styles.shiftStatDivider} />
                 <View style={styles.shiftStat}>
-                  <Text style={styles.shiftStatValue}>
+                  <Text style={[styles.shiftStatValue, { color: primaryColor }]}>
                     {shiftStartMs
                       ? (() => {
                           const mins = Math.floor((Date.now() - shiftStartMs) / 60000);
@@ -1038,12 +1040,12 @@ export default function DriverScreen() {
                   <Icon
                     name="directions-bus"
                     size={16}
-                    color={bus.isFresh ? PRIMARY_COLOR : '#9ca3af'}
+                    color={bus.isFresh ? primaryColor : '#9ca3af'}
                   />
                   <Text style={styles.otherBusName}>{bus.driverName ?? 'Driver'}</Text>
                   {bus.routeName ? (
-                    <View style={styles.otherBusRouteBadge}>
-                      <Text style={styles.otherBusRouteBadgeText}>{bus.routeName}</Text>
+                    <View style={[styles.otherBusRouteBadge, { backgroundColor: primaryColor + '18' }]}>
+                      <Text style={[styles.otherBusRouteBadgeText, { color: primaryColor }]}>{bus.routeName}</Text>
                     </View>
                   ) : null}
                 </View>
@@ -1097,10 +1099,10 @@ export default function DriverScreen() {
                 return (
                   <TouchableOpacity
                     key={route.id}
-                    style={[styles.routeChip, isSelected && styles.routeChipSelected]}
+                    style={[styles.routeChip, { borderColor: primaryColor }, isSelected && { backgroundColor: primaryColor }]}
                     onPress={() => setSelectedRouteId(route.id)}
                   >
-                    <Text style={[styles.routeChipText, isSelected && styles.routeChipTextSelected]}>
+                    <Text style={[styles.routeChipText, { color: primaryColor }, isSelected && styles.routeChipTextSelected]}>
                       {route.name}
                     </Text>
                   </TouchableOpacity>
@@ -1128,7 +1130,7 @@ export default function DriverScreen() {
                     <Text style={styles.routeHint}>{isCurrent ? 'You are here' : isNext ? 'Next stop' : 'Upcoming'}</Text>
                   </View>
                 </View>
-                <View style={styles.badge}>
+                <View style={[styles.badge, { backgroundColor: primaryColor }]}>
                   <Text style={styles.badgeText}>{countsByStopId[stop.id] ?? 0}</Text>
                 </View>
               </View>
@@ -1160,7 +1162,7 @@ export default function DriverScreen() {
           <Text style={styles.cardTitle}>Students Boarding</Text>
 
           <View style={styles.counterRow}>
-            <TouchableOpacity style={styles.counterButton} onPress={() => setBoardingCount(Math.max(0, boardingCount - 1))}>
+            <TouchableOpacity style={[styles.counterButton, { backgroundColor: primaryColor }]} onPress={() => setBoardingCount(Math.max(0, boardingCount - 1))}>
               <Text style={styles.counterButtonText}>−</Text>
             </TouchableOpacity>
 
@@ -1178,13 +1180,13 @@ export default function DriverScreen() {
               selectTextOnFocus
             />
 
-            <TouchableOpacity style={styles.counterButton} onPress={() => setBoardingCount(boardingCount + 1)}>
+            <TouchableOpacity style={[styles.counterButton, { backgroundColor: primaryColor }]} onPress={() => setBoardingCount(boardingCount + 1)}>
               <Text style={styles.counterButtonText}>+</Text>
             </TouchableOpacity>
           </View>
 
           <TouchableOpacity
-            style={[styles.actionButton, isSavingBoarding && styles.actionButtonDisabled]}
+            style={[styles.actionButton, { backgroundColor: primaryColor }, isSavingBoarding && styles.actionButtonDisabled]}
             onPress={saveBoardingCount}
             disabled={isSavingBoarding}
           >
@@ -1231,7 +1233,6 @@ const styles = StyleSheet.create({
   shareButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: PRIMARY_COLOR,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 20,
@@ -1275,15 +1276,14 @@ const styles = StyleSheet.create({
   shiftCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   shiftStats: { flexDirection: 'row', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
   shiftStat: { flex: 1, alignItems: 'center' },
-  shiftStatValue: { fontSize: 22, fontWeight: '700', color: PRIMARY_COLOR },
+  shiftStatValue: { fontSize: 22, fontWeight: '700' },
   shiftStatLabel: { fontSize: 11, color: '#9ca3af', marginTop: 3 },
   shiftStatDivider: { width: 1, backgroundColor: '#e5e7eb', marginVertical: 4 },
   cardTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6, color: '#111' },
-  cardMainValue: { fontSize: 20, fontWeight: '700', color: PRIMARY_COLOR, marginBottom: 6 },
+  cardMainValue: { fontSize: 20, fontWeight: '700', marginBottom: 6 },
   cardMeta: { fontSize: 14, color: '#4d4d4d', marginBottom: 2 },
   actionButton: {
     marginTop: 12,
-    backgroundColor: PRIMARY_COLOR,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
@@ -1307,11 +1307,10 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: PRIMARY_COLOR,
     backgroundColor: '#fff',
   },
-  routeChipSelected: { backgroundColor: PRIMARY_COLOR },
-  routeChipText: { fontSize: 13, fontWeight: '600', color: PRIMARY_COLOR },
+  routeChipSelected: {},
+  routeChipText: { fontSize: 13, fontWeight: '600' },
   routeChipTextSelected: { color: '#fff' },
   routeSingleName: { fontSize: 13, fontWeight: '600', color: '#555', marginBottom: 8 },
   routeRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
@@ -1332,7 +1331,6 @@ const styles = StyleSheet.create({
     minWidth: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: PRIMARY_COLOR,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
@@ -1362,7 +1360,6 @@ const styles = StyleSheet.create({
     marginVertical: 12,
   },
   counterButton: {
-    backgroundColor: PRIMARY_COLOR,
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -1399,7 +1396,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   otherBusRouteBadge: {
-    backgroundColor: PRIMARY_COLOR + '18',
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -1407,7 +1403,6 @@ const styles = StyleSheet.create({
   otherBusRouteBadgeText: {
     fontSize: 11,
     fontWeight: '600',
-    color: PRIMARY_COLOR,
   },
   otherBusStops: {
     flexDirection: 'row',

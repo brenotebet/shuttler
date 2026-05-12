@@ -19,7 +19,6 @@ import AdminDashboardScreen from '../screens/AdminDashboardScreen';
 import StudentHistoryScreen from '../screens/StudentHistoryScreen';
 import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
 import CreateOrgScreen from '../screens/CreateOrgScreen';
-import SuperAdminScreen from '../screens/SuperAdminScreen';
 import HowToUseScreen from '../screens/HowToUseScreen';
 import ParentChildLinkScreen from '../screens/ParentChildLinkScreen';
 
@@ -44,7 +43,6 @@ export type RootStackParamList = {
   AdminDriver: undefined;
   AdminDashboard: undefined;
   AdminOrgSetup: undefined;
-  SuperAdmin: undefined;
   HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent' };
 
   SubscriptionExpired: undefined;
@@ -82,7 +80,7 @@ function SubscriptionExpiredScreen() {
 }
 
 export default function StackNavigator() {
-  const { user, role, initializing, emailVerified, isSuperAdmin } = useAuth();
+  const { user, role, initializing, emailVerified } = useAuth();
   const { org, isLoadingOrg } = useOrg();
 
   useEffect(() => {
@@ -126,7 +124,6 @@ export default function StackNavigator() {
           <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
-          {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : role === 'parent' ? (
@@ -144,7 +141,6 @@ export default function StackNavigator() {
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
           <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
-          {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : (
@@ -153,7 +149,6 @@ export default function StackNavigator() {
           <Stack.Screen name="StudentHome" component={StudentTabs} />
           <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
           <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
-          {isSuperAdmin && <Stack.Screen name="SuperAdmin" component={SuperAdminScreen} />}
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       )}

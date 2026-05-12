@@ -11,13 +11,14 @@ import MenuItem from '../components/MenuItem';
 import { auth } from '../firebase/firebaseconfig';
 import { clearSamlSession } from '../src/auth/samlAuth';
 import { useAuth } from '../src/auth/AuthProvider';
-import { PRIMARY_COLOR } from '../src/constants/theme';
 import { spacing } from '../src/styles/common';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
 export default function StudentMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { role, displayName } = useAuth();
+  const { primaryColor } = useOrgTheme();
   const isParent = role === 'parent';
   const firstName = displayName?.split(' ')[0] ?? null;
 
@@ -47,7 +48,7 @@ export default function StudentMenuScreen() {
         {firstName ? (
           <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={styles.title}>{isParent ? 'Parent Center' : 'Rider Center'}</Text>
+        <Text style={[styles.title, { color: primaryColor }]}>{isParent ? 'Parent Center' : 'Rider Center'}</Text>
         <Text style={styles.subtitle}>
           {isParent ? 'Track your child\'s shuttle' : 'Manage your rides and profile'}
         </Text>
@@ -106,7 +107,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: PRIMARY_COLOR,
     marginBottom: 6,
   },
   subtitle: {

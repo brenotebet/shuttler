@@ -138,7 +138,7 @@ service cloud.firestore {
         || resource.data.studentUid == request.auth.uid
       );
 
-      // Student creates their own request.
+      // Student or parent creates their own request.
       allow create: if signedIn()
         && request.resource.data.studentUid == request.auth.uid
         && request.resource.data.status in ['pending', 'accepted']
@@ -176,6 +176,16 @@ service cloud.firestore {
     // Clients never access these directly.
     match /samlHandoffTokens/{token} {
       allow read, write: if false;
+    }
+
+    // ---------- Parent child profiles ----------
+    // Parents manage named child profiles (no child account needed).
+    // Stored as a subcollection under the parent's user doc.
+    match /orgs/{orgId}/users/{parentUid}/children/{childId} {
+      allow read, write: if signedIn()
+        && request.auth.uid == parentUid
+        && myRole(orgId) == 'parent'
+        && orgIsActive(orgId);
     }
 
     // ---------- Default deny ----------
