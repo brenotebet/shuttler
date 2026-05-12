@@ -355,8 +355,73 @@ app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-const waitlist = require('./waitlist-endpoint');
-app.use(waitlist);
+// ---- Waitlist ----
+
+app.post('/api/waitlist', async (req: Request, res: Response) => {
+  const email = String(req.body?.email ?? '').toLowerCase().trim();
+  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  if (!email || !isValidEmail) {
+    return res.status(400).json({ error: 'Please provide a valid email address.' });
+  }
+
+  try {
+    const db = admin.firestore();
+    const existing = await db.collection('waitlist').where('email', '==', email).limit(1).get();
+    if (!existing.empty) {
+      return res.status(409).json({ error: 'already_registered' });
+    }
+
+    await db.collection('waitlist').add({
+      email,
+      submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+      source: req.body?.source ?? 'website',
+      ip: req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? null,
+    });
+
+    // Notify Breno — fire and forget
+    sendEmail({
+      to: 'brenotebet@live.com',
+      subject: `New waitlist signup — ${email}`,
+      html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;">
+        <h2 style="font-size:22px;font-weight:400;margin-bottom:8px;">New waitlist signup</h2>
+        <p style="color:#666;margin-bottom:24px;">Someone just joined the Shuttler waitlist.</p>
+        <div style="background:#f5f5f8;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
+          <p style="margin:0;font-size:13px;color:#888;font-family:monospace;margin-bottom:4px;">EMAIL</p>
+          <p style="margin:0;font-size:18px;font-weight:500;">${email}</p>
+        </div>
+        <p style="color:#888;font-size:13px;">View all leads in your Firebase console under <code>waitlist/</code>.</p>
+      </div>`,
+    }).catch((err: Error) => console.error('[waitlist] notification email failed:', err));
+
+    // Confirm to user — fire and forget
+    sendEmail({
+      to: email,
+      subject: `You're on the Shuttler waitlist`,
+      html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:40px 32px;background:#08080f;color:#f0f0f8;border-radius:16px;">
+        <h1 style="font-size:28px;font-weight:300;letter-spacing:-0.02em;margin-bottom:16px;color:#f0f0f8;">You're on the list.</h1>
+        <p style="color:#8888a8;font-size:16px;line-height:1.7;margin-bottom:28px;">
+          Thanks for your interest in Shuttler. I'll reach out personally when we're ready to onboard your institution.
+        </p>
+        <div style="background:#0e0e1a;border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:20px 24px;margin-bottom:28px;">
+          <p style="margin:0;font-size:13px;color:#555570;font-family:monospace;text-transform:uppercase;margin-bottom:8px;">What happens next</p>
+          <p style="margin:0 0 8px;font-size:14px;color:#8888a8;">→ I review your submission and reach out directly.</p>
+          <p style="margin:0 0 8px;font-size:14px;color:#8888a8;">→ We schedule a short call to understand your operation.</p>
+          <p style="margin:0;font-size:14px;color:#8888a8;">→ You get early access + locked-in founder pricing.</p>
+        </div>
+        <p style="color:#555570;font-size:13px;">— Breno, Founder of Shuttler</p>
+        <div style="margin-top:32px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.06);">
+          <a href="https://shuttler.net" style="color:#7B5CF0;font-size:13px;text-decoration:none;">shuttler.net</a>
+        </div>
+      </div>`,
+    }).catch((err: Error) => console.error('[waitlist] confirmation email failed:', err));
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[waitlist] Error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
 
 // ---- Health ----
 
