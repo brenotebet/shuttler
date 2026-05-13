@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import ScreenContainer from '../components/ScreenContainer';
@@ -152,6 +153,46 @@ const ADMIN_STEPS: Step[] = [
   },
 ];
 
+// Shown only on admin's very first login — focused on initial setup, not the full feature tour
+const ADMIN_SETUP_STEPS: Step[] = [
+  {
+    icon: 'celebration',
+    title: "You're in!",
+    body: "Welcome to Shuttler. Your organisation is set up and your admin account is ready. Let's get your shuttle service live in a few quick steps.",
+    color: '#6366F1',
+  },
+  {
+    icon: 'place',
+    title: 'Step 1 — Add Your Stops',
+    body: "Tap the Org Setup screen that's already open. Go to the Stops tab and pin each pickup location on the map — give every stop a short, clear name.",
+    color: '#3B82F6',
+  },
+  {
+    icon: 'alt-route',
+    title: 'Step 2 — Create a Route (Optional)',
+    body: 'Group your stops into a named route and set their order. This helps drivers know the sequence and makes the map easier to read for students.',
+    color: '#8B5CF6',
+  },
+  {
+    icon: 'people',
+    title: 'Step 3 — Add Your Team',
+    body: 'Open the Users tab in Org Setup. Invite your drivers by email and set their role to Driver. Add students the same way, or let them self-register with your org.',
+    color: '#10B981',
+  },
+  {
+    icon: 'directions-bus',
+    title: "Step 4 — You're Live!",
+    body: "Once stops are set, drivers can open the app, start sharing location, and accept ride requests. Students see the shuttle in real time and tap to request a stop.",
+    color: '#F59E0B',
+  },
+  {
+    icon: 'bar-chart',
+    title: 'Track Everything',
+    body: 'The Dashboard and Analytics tabs give you a live view of active drivers, boarding counts, and stop demand — all in one place. You can revisit this guide any time from the menu.',
+    color: '#EF4444',
+  },
+];
+
 const PARENT_STEPS: Step[] = [
   {
     icon: 'phone-iphone',
@@ -185,16 +226,16 @@ const PARENT_STEPS: Step[] = [
   },
 ];
 
-function stepsForRole(role: RootStackParamList['HowToUse']['role']): Step[] {
+function stepsForRole(role: RootStackParamList['HowToUse']['role'], isOnboarding?: boolean): Step[] {
   if (role === 'student') return STUDENT_STEPS;
-  if (role === 'admin') return ADMIN_STEPS;
+  if (role === 'admin') return isOnboarding ? ADMIN_SETUP_STEPS : ADMIN_STEPS;
   if (role === 'parent') return PARENT_STEPS;
   return DRIVER_STEPS;
 }
 
-function titleForRole(role: RootStackParamList['HowToUse']['role']): string {
+function titleForRole(role: RootStackParamList['HowToUse']['role'], isOnboarding?: boolean): string {
   if (role === 'student') return 'How to Ride';
-  if (role === 'admin') return 'Admin Guide';
+  if (role === 'admin') return isOnboarding ? 'Getting Started' : 'Admin Guide';
   if (role === 'parent') return 'Parent Guide';
   return 'Driver Guide';
 }
@@ -242,18 +283,35 @@ function Dots({ count, active }: { count: number; active: number }) {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
+type Nav = NativeStackNavigationProp<RootStackParamList, 'HowToUse'>;
+
+// Determines where to land after onboarding when there's no back history
+function homeScreenForRole(role: RootStackParamList['HowToUse']['role']): keyof RootStackParamList {
+  if (role === 'student' || role === 'parent') return 'StudentHome';
+  if (role === 'driver') return 'DriverHome';
+  return 'AdminOrgSetup'; // admin — StackNavigator will redirect to DriverHome if stops exist
+}
+
 export default function HowToUseScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<Nav>();
   const route = useRoute<HowToUseRoute>();
-  const { role } = route.params;
+  const { role, isOnboarding } = route.params;
   const { primaryColor } = useOrgTheme();
 
-  const steps = stepsForRole(role);
-  const title = titleForRole(role);
+  const steps = stepsForRole(role, isOnboarding);
+  const title = titleForRole(role, isOnboarding);
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [sliderHeight, setSliderHeight] = useState(0);
   const listRef = useRef<FlatList<Step>>(null);
+
+  const dismiss = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate(homeScreenForRole(role) as any);
+    }
+  };
 
   const goNext = () => {
     if (activeIndex < steps.length - 1) {
@@ -261,7 +319,7 @@ export default function HowToUseScreen() {
       listRef.current?.scrollToIndex({ index: next, animated: true });
       setActiveIndex(next);
     } else {
-      navigation.goBack();
+      dismiss();
     }
   };
 
@@ -277,8 +335,8 @@ export default function HowToUseScreen() {
     <ScreenContainer style={styles.screen}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Icon name="arrow-back" size={24} color={primaryColor} />
+        <TouchableOpacity onPress={dismiss} style={styles.backBtn}>
+          <Icon name={isOnboarding && activeIndex === 0 ? 'close' : 'arrow-back'} size={24} color={primaryColor} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{title}</Text>
         <View style={{ width: 32 }} />

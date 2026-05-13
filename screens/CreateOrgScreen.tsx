@@ -256,6 +256,16 @@ export default function CreateOrgScreen() {
       // Step 3: select org context then sign in — StackNavigator will route to admin setup
       await selectOrg(newOrg);
       await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+
+      // Step 4: send branded verification email (fire-and-forget)
+      if (auth.currentUser) {
+        auth.currentUser.getIdToken().then((token) =>
+          fetch(`${SHUTTLER_API_URL}/auth/send-verification`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ).catch(() => {});
+      }
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
     } finally {

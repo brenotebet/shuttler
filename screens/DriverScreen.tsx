@@ -35,6 +35,7 @@ import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constan
 import { getPlanLimits } from '../src/constants/planLimits';
 import { useOrg, Stop } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
+import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 
 const STALE_WINDOW_SECONDS = 180;
 const ARRIVE_RADIUS_FT = 75;
@@ -129,6 +130,7 @@ export default function DriverScreen() {
   const { org } = useOrg();
   const { role: authRole } = useAuth();
   const { primaryColor } = useOrgTheme();
+  useFirstLoginOnboarding();
   const orgStops: Stop[] = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
   const orgId = org?.orgId ?? '';
@@ -910,6 +912,17 @@ export default function DriverScreen() {
       </View>
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + 12, paddingBottom: 140 }]}>
+        {authRole === 'admin' && orgStops.length === 0 && (
+          <TouchableOpacity
+            style={styles.noStopsBanner}
+            onPress={() => navigation.navigate('AdminOrgSetup')}
+            activeOpacity={0.8}
+          >
+            <Icon name="add-location-alt" size={16} color="#7c3aed" />
+            <Text style={styles.noStopsBannerText}>No stops configured yet. Tap to set up stops →</Text>
+          </TouchableOpacity>
+        )}
+
         {org?.subscriptionStatus === 'past_due' && (
           <View style={styles.pastDueBanner}>
             <Icon name="warning" size={16} color="#7c2d12" />
@@ -1244,6 +1257,17 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     fontWeight: '600',
   },
+  noStopsBanner: {
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    borderRadius: 10,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  noStopsBannerText: { flex: 1, fontSize: 13, color: '#7c3aed', fontWeight: '600' },
   pastDueBanner: {
     backgroundColor: '#fef2f2',
     borderWidth: 1,

@@ -43,7 +43,7 @@ export type RootStackParamList = {
   AdminDriver: undefined;
   AdminDashboard: undefined;
   AdminOrgSetup: undefined;
-  HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent' };
+  HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent'; isOnboarding?: boolean };
 
   SubscriptionExpired: undefined;
 };
@@ -115,16 +115,6 @@ export default function StackNavigator() {
           <Stack.Screen name="OrgSelector" component={OrgSelectorScreen} />
           <Stack.Screen name="CreateOrg" component={CreateOrgScreen} />
           <Stack.Screen name="Auth" component={AuthScreen} />
-        </>
-      ) : role === 'admin' && (org?.stops?.length ?? 0) === 0 ? (
-        // Admin with no stops yet — send straight to org setup
-        <>
-          <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
-          <Stack.Screen name="DriverHome" component={DriverTabs} />
-          <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
-          <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
-          <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
-          <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : role === 'parent' ? (
         <>

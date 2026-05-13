@@ -309,7 +309,12 @@ async function requireSuperAdmin(req: Request, res: Response, next: Function) {
   }
   try {
     const decoded = await admin.auth().verifyIdToken(header.slice(7));
-    if (!decoded.superAdmin) {
+    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+    const isSuperAdmin = decoded.superAdmin === true || superAdminEmails.includes(decoded.email ?? '');
+    if (!isSuperAdmin) {
       return res.status(403).json({ error: 'Super admin access required' });
     }
     (req as any).uid = decoded.uid;

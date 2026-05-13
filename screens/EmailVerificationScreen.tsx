@@ -1,7 +1,7 @@
 // screens/EmailVerificationScreen.tsx
 
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { BackHandler, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../config';
@@ -19,6 +19,15 @@ export default function EmailVerificationScreen() {
   const [resending, setResending] = useState(false);
 
   const email = auth.currentUser?.email ?? '';
+
+  // Sign out on hardware back press (Android) — there's no previous screen to go to
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      signOut(auth).catch(() => {});
+      return true;
+    });
+    return () => sub.remove();
+  }, []);
 
   const handleCheck = async () => {
     setChecking(true);

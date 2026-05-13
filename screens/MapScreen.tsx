@@ -60,6 +60,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/utils/scheduleUtils';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 
 // Bus marker stays visible as long as online:true in Firestore.
 // Opacity reflects freshness (full = recent GPS, dimmed = GPS stale but driver hasn't stopped sharing).
@@ -235,6 +236,7 @@ export default function MapScreen() {
   const { org } = useOrg();
   const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
+  useFirstLoginOnboarding();
   const stops = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
   // Returns a Firestore CollectionReference scoped to the current org

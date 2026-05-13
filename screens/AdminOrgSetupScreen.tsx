@@ -9,7 +9,9 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Platform,
   ScrollView,
   StyleSheet,
@@ -26,8 +28,10 @@ import MapView, { Marker, Region } from 'react-native-maps';
 import { doc, updateDoc, setDoc, getDoc, serverTimestamp, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
+import { signOut } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE } from '../src/org/OrgContext';
+import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
@@ -448,8 +452,8 @@ const stopStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 7,
-    marginBottom: 4,
+    paddingVertical: 10,
+    marginBottom: 6,
   },
   manualToggleText: {
     flex: 1,
@@ -512,6 +516,21 @@ function StopsTab() {
   const mapRef = useRef<MapView>(null);
   const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
   const [routes, setRoutes] = useState<Route[]>(org?.routes ?? []);
+  const [mapCollapsed, setMapCollapsed] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = Keyboard.addListener(showEvent, () => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setMapCollapsed(true);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setMapCollapsed(false);
+    });
+    return () => { onShow.remove(); onHide.remove(); };
+  }, []);
 
   // Keep local state in sync when org updates via real-time Firestore listener
   useEffect(() => { setStops(org?.stops ?? []); }, [org?.stops]);
@@ -774,7 +793,7 @@ function StopsTab() {
     <View style={styles.stopsContainer}>
       <MapView
         ref={mapRef}
-        style={styles.map}
+        style={[styles.map, mapCollapsed && styles.mapCollapsed]}
         initialRegion={initialRegion}
         onPress={handleMapPress}
         onRegionChangeComplete={(r) =>
@@ -795,7 +814,13 @@ function StopsTab() {
         )}
       </MapView>
 
-      <ScrollView style={styles.stopsPanel} nestedScrollEnabled>
+      <ScrollView
+        style={styles.stopsPanel}
+        contentContainerStyle={styles.stopsPanelContent}
+        nestedScrollEnabled
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      >
         {/* --- Stops section --- */}
         <View style={styles.routesHeader}>
           <Text style={styles.sectionLabel}>Stops</Text>
@@ -1704,6 +1729,7 @@ const analyticsStyles = StyleSheet.create({
 export default function AdminOrgSetupScreen() {
   const navigation = useNavigation();
   const { org: setupOrg } = useOrg();
+  useFirstLoginOnboarding();
   const [activeTab, setActiveTab] = useState<Tab>(
     (setupOrg?.stops?.length ?? 0) === 0 ? 'stops' : 'profile',
   );
@@ -1720,9 +1746,23 @@ export default function AdminOrgSetupScreen() {
   return (
     <ScreenContainer>
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => (navigation as any).goBack()} style={styles.backButton}>
-          <Icon name="arrow-back" size={24} color={PRIMARY_COLOR} />
-        </TouchableOpacity>
+        {(navigation as any).canGoBack() ? (
+          <TouchableOpacity onPress={() => (navigation as any).goBack()} style={styles.backButton}>
+            <Icon name="arrow-back" size={24} color={PRIMARY_COLOR} />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={() =>
+              Alert.alert('Sign out?', 'You can sign back in at any time.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Sign out', style: 'destructive', onPress: () => signOut(auth).catch(() => {}) },
+              ])
+            }
+            style={styles.backButton}
+          >
+            <Icon name="logout" size={24} color={PRIMARY_COLOR} />
+          </TouchableOpacity>
+        )}
         <Text style={styles.headerTitle}>Organization Setup</Text>
       </View>
 
@@ -1745,7 +1785,7 @@ export default function AdminOrgSetupScreen() {
       {/* Tab Content */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="height"
       >
         {activeTab === 'profile' && <ProfileTab />}
         {activeTab === 'auth' && <AuthTab />}
@@ -1901,21 +1941,21 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.section * 3,
   },
   sectionLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#444',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
     marginBottom: 6,
-    marginTop: spacing.item,
+    marginTop: 16,
   },
   input: {
     borderWidth: 1,
     borderColor: '#e0e0e0',
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.item,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 9,
+    paddingVertical: Platform.OS === 'ios' ? 13 : 10,
     fontSize: 15,
     color: '#111',
-    marginBottom: 4,
+    marginBottom: 0,
     backgroundColor: '#fff',
   },
   certInput: {
@@ -1990,11 +2030,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   map: {
-    height: 240,
+    height: 260,
+  },
+  mapCollapsed: {
+    height: 120,
   },
   stopsPanel: {
     flex: 1,
-    padding: spacing.item,
+    padding: 16,
+  },
+  stopsPanelContent: {
+    paddingBottom: 80,
   },
   searchBarRow: {
     flexDirection: 'row',
@@ -2004,8 +2050,8 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    marginBottom: 4,
+    paddingVertical: 12,
+    marginBottom: 8,
   },
   searchBarInput: {
     flex: 1,
@@ -2018,14 +2064,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 10,
-    marginBottom: 8,
+    marginBottom: 12,
     overflow: 'hidden',
   },
   searchDropdownItem: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
   },
@@ -2033,17 +2079,23 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     color: '#374151',
-    lineHeight: 18,
+    lineHeight: 19,
   },
   coordPreview: {
     fontSize: 12,
     color: '#6b7280',
-    marginTop: -4,
-    marginBottom: 2,
+    marginTop: 2,
+    marginBottom: 4,
+    paddingHorizontal: 2,
   },
   addStopForm: {
-    marginBottom: spacing.item,
-    gap: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    gap: 10,
   },
   addStopRow: {
     flexDirection: 'row',
@@ -2062,7 +2114,7 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: PRIMARY_COLOR,
     borderRadius: borderRadius.md,
-    paddingVertical: 10,
+    paddingVertical: 13,
     paddingHorizontal: 16,
   },
   addStopBtnDisabled: {
@@ -2071,19 +2123,23 @@ const styles = StyleSheet.create({
   addStopBtnText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 15,
   },
   stopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    gap: 8,
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+    marginBottom: 4,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+    gap: 10,
   },
   stopName: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 15,
     color: '#222',
   },
   // Routes
@@ -2109,8 +2165,8 @@ const styles = StyleSheet.create({
   routeCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: spacing.item,
-    gap: 6,
+    padding: 14,
+    gap: 8,
     backgroundColor: '#fafafa',
   },
   routeName: {
@@ -2140,8 +2196,8 @@ const styles = StyleSheet.create({
   routeStopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
-    gap: 8,
+    paddingVertical: 11,
+    gap: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
