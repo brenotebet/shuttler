@@ -779,17 +779,42 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       }
     }
 
-    const user = await admin.auth().createUser({
-      email: email as string,
-      password: password as string,
-      displayName: displayName as string | undefined,
-    });
+    // Check if a Firebase Auth user already exists for this email.
+    // This happens when Firestore data is wiped but Auth users are not — the email
+    // would otherwise be permanently blocked from re-registering.
+    let authUser: admin.auth.UserRecord;
+    let isRecovery = false;
+    try {
+      authUser = await admin.auth().getUserByEmail(email as string);
+      // Auth user exists — check if they already have a profile in this org
+      const existingProfile = await admin.firestore()
+        .collection('orgs').doc(orgId)
+        .collection('users').doc(authUser.uid)
+        .get();
+      if (existingProfile.exists) {
+        return res.status(409).json({ error: 'An account with this email already exists' });
+      }
+      // Orphaned auth user (no org profile) — update password and reuse
+      await admin.auth().updateUser(authUser.uid, {
+        password: password as string,
+        displayName: displayName as string | undefined,
+      });
+      isRecovery = true;
+      console.log(`[register] Recovering orphaned auth user uid=${authUser.uid} for orgId=${orgId}`);
+    } catch (lookupErr: any) {
+      if (lookupErr?.code !== 'auth/user-not-found') throw lookupErr;
+      // Normal path — create a fresh auth user
+      authUser = await admin.auth().createUser({
+        email: email as string,
+        password: password as string,
+        displayName: displayName as string | undefined,
+      });
+    }
 
-    await admin.auth().setCustomUserClaims(user.uid, { orgId });
+    await admin.auth().setCustomUserClaims(authUser.uid, { orgId });
 
     try {
-      console.log(`[register] Writing user doc → orgs/${orgId}/users/${user.uid}`);
-      // Founder promotion: if the registering email matches the org's founderEmail, make them admin
+      console.log(`[register] Writing user doc → orgs/${orgId}/users/${authUser.uid}`);
       const isFounder =
         typeof org.founderEmail === 'string' &&
         org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
@@ -797,9 +822,9 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
       await admin.firestore()
         .collection('orgs').doc(orgId)
-        .collection('users').doc(user.uid)
+        .collection('users').doc(authUser.uid)
         .set({
-          uid: user.uid,
+          uid: authUser.uid,
           orgId,
           email,
           displayName: displayName ?? null,
@@ -811,14 +836,13 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
       if (isFounder) {
         await admin.firestore().collection('orgs').doc(orgId).update({
-          adminUids: admin.firestore.FieldValue.arrayUnion(user.uid),
-          founderEmail: admin.firestore.FieldValue.delete(), // consumed — remove so members can't read it
+          adminUids: admin.firestore.FieldValue.arrayUnion(authUser.uid),
+          founderEmail: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
       }
-      console.log(`[register] User doc written successfully for uid=${user.uid}`);
+      console.log(`[register] User doc written successfully for uid=${authUser.uid} (recovery=${isRecovery})`);
 
-      // Send welcome email — fire and forget
       sendEmail({
         to: email as string,
         subject: `Welcome to ${org.name} on Shuttler`,
@@ -829,20 +853,18 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
         }),
       }).catch((err) => console.error('[register] welcome email failed:', err));
     } catch (firestoreErr: any) {
-      console.error(`[register] Firestore write FAILED for uid=${user.uid} orgId=${orgId}:`, firestoreErr);
-      // Auth user was created — clean up so the email isn't permanently orphaned
-      await admin.auth().deleteUser(user.uid).catch((delErr) =>
-        console.error('[register] Cleanup deleteUser also failed:', delErr),
-      );
+      console.error(`[register] Firestore write FAILED for uid=${authUser.uid} orgId=${orgId}:`, firestoreErr);
+      if (!isRecovery) {
+        await admin.auth().deleteUser(authUser.uid).catch((delErr) =>
+          console.error('[register] Cleanup deleteUser also failed:', delErr),
+        );
+      }
       return res.status(500).json({ error: 'Registration failed: could not save user profile.' });
     }
 
-    return res.json({ uid: user.uid });
+    return res.json({ uid: authUser.uid });
   } catch (e: any) {
-    if (e?.code === 'auth/email-already-exists') {
-      return res.status(409).json({ error: 'An account with this email already exists' });
-    }
-    console.error('[register] Auth user creation failed:', e);
+    console.error('[register] error:', e);
     return res.status(500).json({ error: 'Registration failed' });
   }
 });

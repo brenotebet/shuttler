@@ -18,6 +18,8 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../firebase/firebaseconfig';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
@@ -180,6 +182,9 @@ export default function CreateOrgScreen() {
   const [heardAboutUs, setHeardAboutUs] = useState('');
   const [description, setDescription] = useState('');
 
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = useCallback(async () => {
@@ -199,10 +204,19 @@ export default function CreateOrgScreen() {
       Alert.alert('Required', 'Please select an organisation type.');
       return;
     }
+    if (password.length < 8) {
+      Alert.alert('Required', 'Password must be at least 8 characters.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      Alert.alert('Required', 'Passwords do not match.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
-      const res = await fetch(`${SHUTTLER_API_URL}/orgs/create`, {
+      // Step 1: create the org
+      const orgRes = await fetch(`${SHUTTLER_API_URL}/orgs/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -219,19 +233,29 @@ export default function CreateOrgScreen() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? 'Failed to create organisation');
+      const orgData = await orgRes.json();
+      if (!orgRes.ok) throw new Error(orgData?.error ?? 'Failed to create organisation');
+      const newOrg = orgData as OrgConfig & { slug: string };
 
-      const newOrg = data as OrgConfig;
+      // Step 2: register the admin account in one shot
+      const regRes = await fetch(`${SHUTTLER_API_URL}/auth/email/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgSlug: newOrg.slug,
+          email: email.trim().toLowerCase(),
+          password,
+          displayName: `${firstName.trim()} ${lastName.trim()}`,
+          phone: phone.trim() || undefined,
+        }),
+      });
+
+      const regData = await regRes.json();
+      if (!regRes.ok) throw new Error(regData?.error ?? 'Failed to create admin account');
+
+      // Step 3: select org context then sign in — StackNavigator will route to admin setup
       await selectOrg(newOrg);
-      Alert.alert(
-        'Organization created! 🎉',
-        `One more step — create your admin account using ${email.trim().toLowerCase()}. Your email is pre-filled and locked so you don't accidentally register with the wrong one.`,
-        [{
-          text: "Set up my account →",
-          onPress: () => navigation.navigate('Auth', { orgId: newOrg.orgId, initialEmail: email.trim().toLowerCase() }),
-        }],
-      );
+      await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
     } finally {
@@ -241,7 +265,8 @@ export default function CreateOrgScreen() {
     firstName, lastName, email, phone,
     orgName, orgType, website,
     estimatedRiders, heardAboutUs, description,
-    navigation, selectOrg,
+    password, confirmPassword,
+    selectOrg,
   ]);
 
   return (
@@ -376,6 +401,40 @@ export default function CreateOrgScreen() {
             textAlignVertical="top"
           />
 
+          {/* ── Admin account password ── */}
+          <View style={styles.divider} />
+          <Text style={styles.sectionTitle}>Create your admin account</Text>
+          <Text style={styles.hint}>Set a password for the email above — you'll use it to sign in.</Text>
+
+          <Text style={styles.label}>Password *</Text>
+          <View style={styles.passwordRow}>
+            <TextInput
+              style={styles.passwordInput}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="At least 8 characters"
+              placeholderTextColor="#aaa"
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity onPress={() => setShowPassword((v) => !v)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+              <Icon name={showPassword ? 'visibility-off' : 'visibility'} size={20} color="#999" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.label}>Confirm password *</Text>
+          <TextInput
+            style={styles.input}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            placeholder="Re-enter your password"
+            placeholderTextColor="#aaa"
+            secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
           {/* ── Review notice ── */}
           <View style={styles.reviewNotice}>
             <Icon name="info-outline" size={18} color={PRIMARY_COLOR} style={{ marginTop: 1 }} />
@@ -386,7 +445,7 @@ export default function CreateOrgScreen() {
           </View>
 
           <AppButton
-            label={isSubmitting ? 'Creating…' : 'Start free trial'}
+            label={isSubmitting ? 'Setting up…' : 'Start free trial'}
             onPress={handleSubmit}
             disabled={isSubmitting}
             style={styles.submitBtn}
@@ -460,6 +519,22 @@ const styles = StyleSheet.create({
     color: '#111',
     backgroundColor: '#fff',
     marginBottom: spacing.item,
+  },
+  passwordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: borderRadius.md,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+    marginBottom: spacing.item,
+  },
+  passwordInput: {
+    flex: 1,
+    paddingVertical: Platform.OS === 'ios' ? 11 : 8,
+    fontSize: 15,
+    color: '#111',
   },
   textarea: {
     minHeight: 90,

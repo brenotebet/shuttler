@@ -122,7 +122,9 @@ export default function OrgSelectorScreen() {
       ) : filtered.length === 0 ? (
         <View style={styles.centered}>
           <Icon name="search-off" size={40} color="#ccc" />
-          <Text style={styles.emptyText}>No organizations found.</Text>
+          <Text style={styles.emptyText}>
+            {query.length > 0 ? 'No organizations found.' : 'No organizations yet.'}
+          </Text>
           {query.length > 0 && (
             <Text style={styles.emptyHint}>Try a different search term.</Text>
           )}
@@ -154,17 +156,18 @@ export default function OrgSelectorScreen() {
               <Icon name="chevron-right" size={22} color="#ccc" />
             </TouchableOpacity>
           )}
-          ListFooterComponent={
-            <TouchableOpacity
-              style={styles.createOrgBtn}
-              onPress={() => navigation.navigate('CreateOrg')}
-              activeOpacity={0.8}
-            >
-              <Icon name="add-circle-outline" size={20} color={PRIMARY_COLOR} />
-              <Text style={styles.createOrgBtnText}>Create a new organisation</Text>
-            </TouchableOpacity>
-          }
         />
+      )}
+
+      {!isLoading && !error && (
+        <TouchableOpacity
+          style={styles.createOrgBtn}
+          onPress={() => navigation.navigate('CreateOrg')}
+          activeOpacity={0.8}
+        >
+          <Icon name="add-circle-outline" size={20} color={PRIMARY_COLOR} />
+          <Text style={styles.createOrgBtnText}>Create a new organisation</Text>
+        </TouchableOpacity>
       )}
     </ScreenContainer>
   );
