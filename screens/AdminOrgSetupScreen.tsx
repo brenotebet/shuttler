@@ -91,14 +91,33 @@ function ProfileTab() {
     setIsUploadingLogo(true);
     try {
       const uri = result.assets[0].uri;
-      const blob = await (await fetch(uri)).blob();
-      const ext = uri.split('.').pop() ?? 'jpg';
+      const ext = (uri.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z]/g, '') || 'jpg';
+
+      // XMLHttpRequest is required in React Native to create a real Blob from a local URI.
+      // fetch(uri).blob() silently produces an empty blob on some RN versions.
+      const blob: Blob = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.onload = () => resolve(xhr.response);
+        xhr.onerror = () => reject(new Error('Could not read image file.'));
+        xhr.responseType = 'blob';
+        xhr.open('GET', uri, true);
+        xhr.send(null);
+      });
+
       const storageRef = ref(storage, `orgs/${org!.orgId}/logo.${ext}`);
       await uploadBytes(storageRef, blob, { contentType: `image/${ext}` });
       const url = await getDownloadURL(storageRef);
       setLogoUrl(url);
     } catch (e: any) {
-      Alert.alert('Upload failed', e?.message ?? 'Could not upload logo.');
+      const msg: string = e?.message ?? '';
+      if (msg.includes('storage/unauthorized') || msg.includes('permission')) {
+        Alert.alert(
+          'Upload failed',
+          'Storage permission denied. In Firebase Console → Storage → Rules, allow authenticated writes to /orgs/{orgId}/.',
+        );
+      } else {
+        Alert.alert('Upload failed', msg || 'Could not upload logo.');
+      }
     } finally {
       setIsUploadingLogo(false);
     }
