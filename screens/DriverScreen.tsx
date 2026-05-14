@@ -1,7 +1,7 @@
 // DriverScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native';
+import { Alert, View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -34,6 +34,7 @@ import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { getPlanLimits } from '../src/constants/planLimits';
 import { useOrg, Stop } from '../src/org/OrgContext';
+import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 
@@ -890,11 +891,29 @@ export default function DriverScreen() {
                     return;
                   }
                 }
+                // Check route operating hours before going online
+                const routeToCheck = orgRoutes.find((r) => r.id === (selectedRouteId ?? orgRoutes[0]?.id)) ?? orgRoutes[0] ?? null;
+                if (routeToCheck?.schedule && !isRouteActive(routeToCheck)) {
+                  const todayText = getTodayScheduleText(routeToCheck);
+                  const nextOpen = getNextOpenText(routeToCheck);
+                  await new Promise<void>((resolve, reject) => {
+                    Alert.alert(
+                      'Outside Service Hours',
+                      [todayText, nextOpen].filter(Boolean).join('\n') || 'This route is currently closed.',
+                      [
+                        { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
+                        { text: 'Go Online Anyway', onPress: () => resolve() },
+                      ],
+                    );
+                  });
+                }
                 await startSharing(selectedRouteId ?? undefined);
               }
-            } catch (err) {
-              console.error(err);
-              showAlert('Error toggling location sharing');
+            } catch (err: any) {
+              if (err?.message !== 'cancelled') {
+                console.error(err);
+                showAlert('Error toggling location sharing');
+              }
             } finally {
               setIsToggling(false);
             }

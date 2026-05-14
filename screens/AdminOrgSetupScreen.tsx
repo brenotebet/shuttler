@@ -12,6 +12,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   LayoutAnimation,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase/firebaseconfig';
@@ -362,6 +364,23 @@ const WEEK_DAYS: { key: keyof WeekSchedule; label: string }[] = [
   { key: 'sunday',    label: 'Sun' },
 ];
 
+// Every 30 minutes: 00:00, 00:30, 01:00 … 23:30
+const TIME_SLOTS: string[] = [];
+for (let h = 0; h < 24; h++) {
+  for (const m of [0, 30]) {
+    TIME_SLOTS.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+  }
+}
+
+function fmt12h(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  let h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  if (h === 0) h = 12;
+  else if (h > 12) h -= 12;
+  return `${h}:${mStr} ${ampm}`;
+}
+
 function ScheduleEditor({
   route,
   onChange,
@@ -370,9 +389,23 @@ function ScheduleEditor({
   onChange: (schedule: WeekSchedule) => void;
 }) {
   const schedule: WeekSchedule = route.schedule ?? { ...DEFAULT_WEEK_SCHEDULE };
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [pickerField, setPickerField] = useState<{ dayKey: keyof WeekSchedule; field: 'open' | 'close' } | null>(null);
+  const [pickerTemp, setPickerTemp] = useState('07:00');
 
   const update = (key: keyof WeekSchedule, patch: Partial<DaySchedule>) => {
     onChange({ ...schedule, [key]: { ...schedule[key], ...patch } });
+  };
+
+  const openPicker = (dayKey: keyof WeekSchedule, field: 'open' | 'close') => {
+    setPickerField({ dayKey, field });
+    setPickerTemp(schedule[dayKey][field]);
+    setPickerVisible(true);
+  };
+
+  const confirmPicker = () => {
+    if (pickerField) update(pickerField.dayKey, { [pickerField.field]: pickerTemp });
+    setPickerVisible(false);
   };
 
   return (
@@ -381,6 +414,7 @@ function ScheduleEditor({
         <Icon name="schedule" size={14} color="#6b7280" />
         <Text style={hoursStyles.label}>Hours of Operation</Text>
       </View>
+
       {WEEK_DAYS.map(({ key, label }) => {
         const day = schedule[key];
         return (
@@ -394,25 +428,13 @@ function ScheduleEditor({
             <Text style={[hoursStyles.dayLabel, !day.isOpen && { color: '#bbb' }]}>{label}</Text>
             {day.isOpen ? (
               <View style={hoursStyles.timeRow}>
-                <TextInput
-                  style={hoursStyles.timeInput}
-                  value={day.open}
-                  onChangeText={(v) => update(key, { open: v })}
-                  placeholder="07:00"
-                  placeholderTextColor="#bbb"
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                />
+                <TouchableOpacity style={hoursStyles.timeBtn} onPress={() => openPicker(key, 'open')}>
+                  <Text style={hoursStyles.timeBtnText}>{fmt12h(day.open)}</Text>
+                </TouchableOpacity>
                 <Text style={hoursStyles.dash}>–</Text>
-                <TextInput
-                  style={hoursStyles.timeInput}
-                  value={day.close}
-                  onChangeText={(v) => update(key, { close: v })}
-                  placeholder="22:00"
-                  placeholderTextColor="#bbb"
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                />
+                <TouchableOpacity style={hoursStyles.timeBtn} onPress={() => openPicker(key, 'close')}>
+                  <Text style={hoursStyles.timeBtnText}>{fmt12h(day.close)}</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <Text style={hoursStyles.closedLabel}>Closed</Text>
@@ -420,6 +442,25 @@ function ScheduleEditor({
           </View>
         );
       })}
+
+      <Modal visible={pickerVisible} transparent animationType="slide" onRequestClose={() => setPickerVisible(false)}>
+        <TouchableOpacity style={hoursStyles.modalOverlay} activeOpacity={1} onPress={() => setPickerVisible(false)} />
+        <View style={hoursStyles.pickerSheet}>
+          <View style={hoursStyles.pickerBar}>
+            <TouchableOpacity onPress={() => setPickerVisible(false)}>
+              <Text style={hoursStyles.pickerCancel}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={confirmPicker}>
+              <Text style={hoursStyles.pickerDone}>Done</Text>
+            </TouchableOpacity>
+          </View>
+          <Picker selectedValue={pickerTemp} onValueChange={(v) => setPickerTemp(v as string)}>
+            {TIME_SLOTS.map((slot) => (
+              <Picker.Item key={slot} label={fmt12h(slot)} value={slot} />
+            ))}
+          </Picker>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -427,23 +468,42 @@ function ScheduleEditor({
 const hoursStyles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
   label: { flex: 1, fontSize: 12, fontWeight: '600', color: '#6b7280' },
-  dayRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  dayRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5 },
   dayLabel: { width: 32, fontSize: 13, fontWeight: '600', color: '#374151' },
-  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },
+  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
   dash: { fontSize: 14, color: '#6b7280' },
-  timeInput: {
+  timeBtn: {
     flex: 1,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    fontSize: 13,
-    color: '#111',
+    paddingVertical: 7,
+    paddingHorizontal: 6,
     backgroundColor: '#fafafa',
-    textAlign: 'center',
+    alignItems: 'center',
   },
+  timeBtnText: { fontSize: 13, fontWeight: '600', color: '#111' },
   closedLabel: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  pickerSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 24,
+  },
+  pickerBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e5e7eb',
+  },
+  pickerCancel: { fontSize: 16, color: '#6b7280' },
+  pickerDone: { fontSize: 16, fontWeight: '700', color: PRIMARY_COLOR },
 });
 
 // ---- Stop tab extra styles ----

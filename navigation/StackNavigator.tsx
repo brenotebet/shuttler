@@ -93,6 +93,12 @@ export default function StackNavigator() {
     return <LoadingScreen />;
   }
 
+  // User is in an org but their role hasn't resolved yet (new account race condition).
+  // Hold on the loading screen rather than briefly showing the wrong stack.
+  if (user && org && !role) {
+    return <LoadingScreen />;
+  }
+
   // Hard-block non-admins only on fully canceled/unpaid (past_due gets a grace period)
   if (user && org && role !== 'admin' && ['canceled', 'unpaid'].includes(org.subscriptionStatus ?? '')) {
     return <SubscriptionExpiredScreen />;

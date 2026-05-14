@@ -20,6 +20,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import ScreenContainer from '../components/ScreenContainer';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { useAuth } from '../src/auth/AuthProvider';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
@@ -286,16 +287,16 @@ function Dots({ count, active }: { count: number; active: number }) {
 type Nav = NativeStackNavigationProp<RootStackParamList, 'HowToUse'>;
 
 // Determines where to land after onboarding when there's no back history
-function homeScreenForRole(role: RootStackParamList['HowToUse']['role']): keyof RootStackParamList {
-  if (role === 'student' || role === 'parent') return 'StudentHome';
-  if (role === 'driver') return 'DriverHome';
-  return 'AdminOrgSetup'; // admin — StackNavigator will redirect to DriverHome if stops exist
+function homeScreenForRole(role: RootStackParamList['HowToUse']['role'] | null | undefined): keyof RootStackParamList {
+  if (role === 'driver' || role === 'admin') return 'DriverHome';
+  return 'StudentHome';
 }
 
 export default function HowToUseScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<HowToUseRoute>();
   const { role, isOnboarding } = route.params;
+  const { role: liveRole } = useAuth();
   const { primaryColor } = useOrgTheme();
 
   const steps = stepsForRole(role, isOnboarding);
@@ -309,7 +310,8 @@ export default function HowToUseScreen() {
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
-      navigation.navigate(homeScreenForRole(role) as any);
+      // Use the live role in case the stack changed since this screen was pushed
+      navigation.navigate(homeScreenForRole(liveRole ?? role) as any);
     }
   };
 

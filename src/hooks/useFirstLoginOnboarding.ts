@@ -28,7 +28,8 @@ export function useFirstLoginOnboarding() {
 
     const key = `onboarding_seen_${org.orgId}_${user.uid}`;
     AsyncStorage.getItem(key).then((seen) => {
-      if (!seen && !didNavigate.current) {
+      // Re-check role hasn't changed while we waited for AsyncStorage
+      if (!seen && !didNavigate.current && toOnboardingRole(role) === onboardingRole) {
         didNavigate.current = true;
         AsyncStorage.setItem(key, '1').catch(() => {});
         navigation.navigate('HowToUse', { role: onboardingRole, isOnboarding: true });

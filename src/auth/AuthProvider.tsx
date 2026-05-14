@@ -96,9 +96,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsub = onSnapshot(
       doc(db, 'orgs', resolvedOrgId, 'users', uid),
       (snap) => {
-        setRole(normalizeRole(snap.data()?.role));
-        const storedName: string | null = snap.data()?.displayName ?? null;
-        setDisplayName(storedName ?? user?.displayName ?? null);
+        if (snap.exists()) {
+          setRole(normalizeRole(snap.data()?.role));
+          setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
+        } else {
+          // Document not yet created (new user) — keep null; StackNavigator
+          // will hold on the loading screen until the next snapshot fires.
+          setRole(null);
+          setDisplayName(user?.displayName ?? null);
+        }
         setInitializing(false);
       },
       () => {

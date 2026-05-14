@@ -1191,10 +1191,15 @@ app.get('/super-admin/org-applications', requireSuperAdmin, async (_req: Request
     const snap = await admin.firestore()
       .collection('orgApplications')
       .where('reviewStatus', '==', 'pending')
-      .orderBy('submittedAt', 'desc')
       .get();
 
-    const applications = snap.docs.map((d) => {
+    const applications = snap.docs
+      .sort((a, b) => {
+        const ta = a.data().submittedAt?.toMillis?.() ?? 0;
+        const tb = b.data().submittedAt?.toMillis?.() ?? 0;
+        return tb - ta;
+      })
+      .map((d) => {
       const data = d.data();
       return {
         orgId: d.id,
