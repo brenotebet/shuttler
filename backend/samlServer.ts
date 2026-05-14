@@ -18,6 +18,7 @@ import {
   orgApplicationReceivedTemplate,
   orgApprovedTemplate,
   orgRejectedTemplate,
+  subscriptionConfirmedTemplate,
 } from './mailer';
 
 /**
@@ -440,7 +441,29 @@ app.get('/health', (_req: Request, res: Response) => {
 app.get('/orgs', async (_req: Request, res: Response) => {
   try {
     const snap = await admin.firestore().collection('orgSlugs').get();
-    const orgs = snap.docs.map((d) => ({ slug: d.id, ...d.data() }));
+    if (snap.empty) return res.json([]);
+
+    // Batch-fetch org docs to include logoUrl + primaryColor for the selector
+    const orgRefs = snap.docs
+      .map((d) => d.data().orgId as string | undefined)
+      .filter((id): id is string => Boolean(id))
+      .map((id) => admin.firestore().collection('orgs').doc(id));
+
+    const orgDocs = orgRefs.length > 0 ? await admin.firestore().getAll(...orgRefs) : [];
+    const orgById: Record<string, admin.firestore.DocumentData> = {};
+    orgDocs.forEach((d) => { if (d.exists) orgById[d.id] = d.data()!; });
+
+    const orgs = snap.docs.map((d) => {
+      const slugData = d.data();
+      const orgId = slugData.orgId as string | undefined;
+      const extra = orgId ? orgById[orgId] : null;
+      return {
+        slug: d.id,
+        ...slugData,
+        logoUrl: extra?.logoUrl ?? null,
+        primaryColor: extra?.primaryColor ?? null,
+      };
+    });
     return res.json(orgs);
   } catch (e) {
     return res.status(500).json({ error: 'Failed to list orgs' });
@@ -1105,19 +1128,69 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     'customer.subscription.updated',
     'customer.subscription.deleted',
   ];
-  const invoiceEventTypes = ['invoice.payment_failed'];
-  const handledTypes = [...subscriptionEventTypes, ...invoiceEventTypes];
+  const handledTypes = [
+    ...subscriptionEventTypes,
+    'checkout.session.completed',
+    'invoice.payment_failed',
+  ];
 
   if (!handledTypes.includes(event.type)) {
     return res.json({ received: true });
   }
 
   try {
-    if (subscriptionEventTypes.includes(event.type)) {
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const orgId = session.metadata?.orgId;
+      const plan: string = session.metadata?.plan ?? 'starter';
+      if (!orgId) {
+        console.warn('[webhook] checkout.session.completed missing orgId in metadata');
+        return res.json({ received: true });
+      }
+
+      // Retrieve the subscription so we get the real status
+      const subId = typeof session.subscription === 'string'
+        ? session.subscription
+        : (session.subscription as any)?.id;
+
+      if (subId) {
+        const sub = await stripe.subscriptions.retrieve(subId);
+        await admin.firestore().collection('orgs').doc(orgId).update({
+          subscriptionStatus: sub.status,
+          stripeSubscriptionId: sub.id,
+          subscriptionPlan: plan,
+          currentPeriodEnd: (sub as any).current_period_end
+            ? new Date((sub as any).current_period_end * 1000)
+            : null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Confirmation email — fire and forget
+      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+      const orgData = orgDoc.exists ? orgDoc.data()! : {};
+      const founderEmail: string | null = session.customer_details?.email ?? orgData.founderEmail ?? null;
+      const orgName: string = orgData.name ?? orgId;
+      const PLAN_LABELS: Record<string, string> = { starter: 'Starter', campus: 'Campus', enterprise: 'Enterprise' };
+      const PLAN_AMOUNTS: Record<string, string> = { starter: '$149', campus: '$299', enterprise: 'Custom' };
+      if (founderEmail) {
+        sendEmail({
+          to: founderEmail,
+          subject: `Your Shuttler ${PLAN_LABELS[plan] ?? plan} subscription is active`,
+          html: subscriptionConfirmedTemplate({
+            contactName: session.customer_details?.name ?? founderEmail,
+            orgName,
+            planLabel: PLAN_LABELS[plan] ?? plan,
+            amount: PLAN_AMOUNTS[plan] ?? '—',
+          }),
+        }).catch((err) => console.error('[webhook] confirmation email failed:', err));
+      }
+
+    } else if (subscriptionEventTypes.includes(event.type)) {
       const subscription = event.data.object as Stripe.Subscription;
       const orgId = subscription.metadata?.orgId;
       if (!orgId) {
-        console.warn(`Stripe webhook: no orgId in subscription metadata (event: ${event.type}, sub: ${subscription.id})`);
+        console.warn(`[webhook] ${event.type} missing orgId in subscription metadata (sub: ${subscription.id})`);
         return res.json({ received: true });
       }
 
@@ -1152,7 +1225,7 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
       });
     }
   } catch (e) {
-    console.error('Stripe webhook handler error:', e);
+    console.error('[webhook] handler error:', e);
   }
 
   return res.json({ received: true });

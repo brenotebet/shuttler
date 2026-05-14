@@ -266,3 +266,41 @@ export function orgApprovedTemplate(opts: {
     </p>
   `);
 }
+
+export function subscriptionConfirmedTemplate(opts: {
+  contactName: string;
+  orgName: string;
+  planLabel: string;
+  amount: string;
+}): string {
+  const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
+  return layout(`
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">
+      Payment confirmed &#9989;
+    </h1>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
+      Hi ${firstName}, your <strong>${opts.planLabel}</strong> subscription for
+      <strong>${opts.orgName}</strong> is now active. Thank you for subscribing to Shuttler!
+    </p>
+    ${infoBox('Subscription details', `
+      <table cellpadding="0" cellspacing="0" style="width:100%;">
+        <tr>
+          <td style="font-size:14px;color:#6b7280;padding:4px 0;">Plan</td>
+          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${opts.planLabel}</td>
+        </tr>
+        <tr>
+          <td style="font-size:14px;color:#6b7280;padding:4px 0;">Organisation</td>
+          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${opts.orgName}</td>
+        </tr>
+        <tr>
+          <td style="font-size:14px;color:#6b7280;padding:4px 0;">Amount</td>
+          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${opts.amount}/month</td>
+        </tr>
+      </table>
+    `)}
+    <p style="margin:0;font-size:13px;color:#9ca3af;line-height:1.6;">
+      You can manage your subscription, update payment details, or view invoices from the
+      Billing tab in the app. Questions? Reply to this email anytime.
+    </p>
+  `);
+}
