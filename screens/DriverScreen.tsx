@@ -931,6 +931,15 @@ export default function DriverScreen() {
       </View>
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + 12, paddingBottom: 140 }]}>
+        {authRole === 'admin' && org?.reviewStatus === 'pending' && (
+          <View style={styles.pendingBanner}>
+            <Icon name="hourglass-empty" size={16} color="#92400e" />
+            <Text style={styles.pendingBannerText}>
+              Your Shuttler application is under review. You&apos;ll receive an email once it&apos;s approved.
+            </Text>
+          </View>
+        )}
+
         {authRole === 'admin' && orgStops.length === 0 && (
           <TouchableOpacity
             style={styles.noStopsBanner}
@@ -1276,6 +1285,17 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     fontWeight: '600',
   },
+  pendingBanner: {
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    borderRadius: 10,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pendingBannerText: { flex: 1, fontSize: 13, color: '#92400e', fontWeight: '500' },
   noStopsBanner: {
     backgroundColor: '#f5f3ff',
     borderWidth: 1,

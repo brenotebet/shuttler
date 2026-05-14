@@ -79,6 +79,7 @@ export type OrgConfig = {
   subscriptionPlan?: string;
   approved?: boolean;
   reviewStatus?: 'pending' | 'approved' | 'rejected';
+  rejectionReason?: string | null;
 };
 
 type OrgContextType = {
@@ -233,6 +234,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               subscriptionPlan: data.subscriptionPlan ?? prev.subscriptionPlan,
               approved: data.approved ?? prev.approved,
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
+              rejectionReason: data.rejectionReason ?? prev.rejectionReason ?? null,
             };
             writeCachedOrg(updated);
             return updated;

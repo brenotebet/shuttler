@@ -17,6 +17,7 @@ import {
   welcomeTemplate,
   orgApplicationReceivedTemplate,
   orgApprovedTemplate,
+  orgRejectedTemplate,
 } from './mailer';
 
 /**
@@ -1024,7 +1025,10 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
     }
 
     const priceId = PLAN_PRICE_IDS[plan];
-    if (!priceId) return res.status(400).json({ error: `Unknown plan: ${plan}` });
+    if (!priceId) {
+      console.error(`[billing] Missing price ID for plan "${plan}". Set STRIPE_PRICE_${plan.toUpperCase()} in Railway env vars.`);
+      return res.status(400).json({ error: `Plan "${plan}" is not configured. Please contact support.` });
+    }
 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
@@ -1037,8 +1041,16 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
     });
 
     return res.json({ url: session.url });
-  } catch (e) {
+  } catch (e: any) {
     console.error('Checkout session error:', e);
+    // Surface actionable Stripe errors so misconfiguration is easy to spot
+    const type: string = e?.type ?? '';
+    if (type === 'StripeAuthenticationError' || e?.message?.includes('API key')) {
+      return res.status(500).json({ error: 'Stripe API key is invalid. Check STRIPE_SECRET_KEY on Railway.' });
+    }
+    if (type === 'StripeInvalidRequestError') {
+      return res.status(500).json({ error: `Stripe config error: ${e.message}` });
+    }
     return res.status(500).json({ error: 'Failed to create checkout session' });
   }
 });
@@ -1274,10 +1286,17 @@ app.post('/super-admin/org-applications/:orgId/reject', requireSuperAdmin, async
   const { orgId } = req.params as { orgId: string };
   const { reason } = req.body as { reason?: string };
   try {
+    const appSnap = await admin.firestore().collection('orgApplications').doc(orgId).get();
+    const appData = appSnap.exists ? appSnap.data()! : {};
+    const founderEmail: string | null = appData.contactEmail ?? appData.founderEmail ?? null;
+    const firstName: string = appData.contactFirstName ?? 'there';
+    const orgName: string = appData.orgName ?? appData.name ?? orgId;
+
     const batch = admin.firestore().batch();
     batch.update(admin.firestore().collection('orgs').doc(orgId), {
       approved: false,
       reviewStatus: 'rejected',
+      rejectionReason: reason ?? null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
@@ -1287,6 +1306,15 @@ app.post('/super-admin/org-applications/:orgId/reject', requireSuperAdmin, async
     });
     await batch.commit();
     console.log(`[super-admin] Rejected org ${orgId}`);
+
+    if (founderEmail) {
+      sendEmail({
+        to: founderEmail,
+        subject: `Update on your Shuttler application for ${orgName}`,
+        html: orgRejectedTemplate({ contactName: firstName, orgName, reason }),
+      }).catch((err) => console.error('[super-admin] reject email failed:', err));
+    }
+
     return res.json({ orgId, rejected: true });
   } catch (e) {
     console.error('[super-admin] reject error:', e);

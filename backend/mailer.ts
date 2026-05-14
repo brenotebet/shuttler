@@ -219,6 +219,28 @@ export function orgApplicationReceivedTemplate(opts: {
   `);
 }
 
+export function orgRejectedTemplate(opts: {
+  contactName: string;
+  orgName: string;
+  reason?: string | null;
+}): string {
+  const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
+  return layout(`
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">
+      Application update for ${opts.orgName}
+    </h1>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
+      Hi ${firstName}, thank you for applying to Shuttler. After reviewing your application
+      for <strong>${opts.orgName}</strong>, we&rsquo;re unable to approve it at this time.
+    </p>
+    ${opts.reason ? infoBox('Reason', `<p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">${opts.reason}</p>`, '#fef2f2', '#fecaca', '#991b1b') : ''}
+    <p style="margin:0 0 16px;font-size:14px;color:#6b7280;line-height:1.7;">
+      If you believe this is a mistake or would like to discuss your application, please
+      reply to this email and we&rsquo;ll get back to you.
+    </p>
+  `);
+}
+
 export function orgApprovedTemplate(opts: {
   contactName: string;
   orgName: string;

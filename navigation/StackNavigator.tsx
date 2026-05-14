@@ -79,6 +79,33 @@ function SubscriptionExpiredScreen() {
   );
 }
 
+function RejectedOrgScreen() {
+  const { org } = useOrg();
+  return (
+    <View style={styles.expiredContainer}>
+      <Icon name="cancel" size={52} color="#ef4444" style={{ marginBottom: 16 }} />
+      <Text style={styles.expiredTitle}>Application Not Approved</Text>
+      {org?.name ? (
+        <Text style={styles.expiredOrgName}>{org.name}</Text>
+      ) : null}
+      {org?.rejectionReason ? (
+        <View style={styles.rejectionReasonBox}>
+          <Text style={styles.rejectionReasonLabel}>Reason</Text>
+          <Text style={styles.rejectionReasonText}>{org.rejectionReason}</Text>
+        </View>
+      ) : null}
+      <Text style={styles.expiredBody}>
+        Your Shuttler application was not approved. Please check your email for details
+        or reply to our message if you have questions.
+      </Text>
+      <TouchableOpacity style={styles.expiredSignOutBtn} onPress={() => signOut(auth).catch(() => {})}>
+        <Icon name="logout" size={16} color={PRIMARY_COLOR} />
+        <Text style={styles.expiredSignOutText}>Sign out</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function StackNavigator() {
   const { user, role, initializing, emailVerified } = useAuth();
   const { org, isLoadingOrg } = useOrg();
@@ -97,6 +124,11 @@ export default function StackNavigator() {
   // Hold on the loading screen rather than briefly showing the wrong stack.
   if (user && org && !role) {
     return <LoadingScreen />;
+  }
+
+  // Hard-block if org application was rejected
+  if (user && org && org.reviewStatus === 'rejected') {
+    return <RejectedOrgScreen />;
   }
 
   // Hard-block non-admins only on fully canceled/unpaid (past_due gets a grace period)
@@ -194,5 +226,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: PRIMARY_COLOR,
+  },
+  rejectionReasonBox: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    alignSelf: 'stretch',
+  },
+  rejectionReasonLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#991b1b',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  rejectionReasonText: {
+    fontSize: 14,
+    color: '#7f1d1d',
+    lineHeight: 20,
   },
 });
