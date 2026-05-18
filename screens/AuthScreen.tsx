@@ -229,10 +229,21 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
     setIsSubmitting(true);
     try {
       const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
-      // Ensure a user doc exists in orgs/{orgId}/users — accounts created outside
-      // the registration flow (Firebase Console, old app versions, etc.) won't have one.
+
+      // Verify this account belongs to the selected org before proceeding.
       const userRef = doc(db, 'orgs', orgId, 'users', cred.user.uid);
-      const snap = await getDoc(userRef);
+      let snap;
+      try {
+        snap = await getDoc(userRef);
+      } catch {
+        // permission-denied means the user is not a member of this org.
+        await signOut(auth);
+        showAlert(
+          "You don't have an account with this organisation. Ask your administrator to add you.",
+          'Access Denied',
+        );
+        return;
+      }
       if (!snap.exists()) {
         await signOut(auth);
         showAlert(
