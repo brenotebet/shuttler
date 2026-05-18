@@ -1,6 +1,6 @@
 // src/auth/AuthProvider.tsx
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebaseconfig';
 import { useOrg } from '../org/OrgContext';
@@ -107,10 +107,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         setInitializing(false);
       },
-      () => {
-        // Permission error or network failure — degrade gracefully.
-        setRole('student');
-        setDisplayName(user?.displayName ?? null);
+      (error) => {
+        if ((error as any).code === 'permission-denied') {
+          // User doesn't belong to this org — sign them out.
+          signOut(auth).catch(() => {});
+          setRole(null);
+        } else {
+          // Network failure — degrade gracefully.
+          setRole('student');
+          setDisplayName(user?.displayName ?? null);
+        }
         setInitializing(false);
       },
     );

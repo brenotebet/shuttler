@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { type RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { signInWithEmailAndPassword, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { app } from '../firebase/firebaseconfig';
@@ -234,17 +234,14 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       const userRef = doc(db, 'orgs', orgId, 'users', cred.user.uid);
       const snap = await getDoc(userRef);
       if (!snap.exists()) {
-        await setDoc(userRef, {
-          uid: cred.user.uid,
-          email: cred.user.email ?? null,
-          displayName: cred.user.displayName ?? cred.user.email?.split('@')[0] ?? null,
-          role: 'student',
-          lastLoginAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
-        });
-      } else {
-        await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
+        await signOut(auth);
+        showAlert(
+          "You don't have an account with this organisation. Ask your administrator to add you.",
+          'Access Denied',
+        );
+        return;
       }
+      await updateDoc(userRef, { lastLoginAt: serverTimestamp() }).catch(() => {});
     } catch (e: any) {
       const msg =
         e?.code === 'auth/invalid-credential' || e?.code === 'auth/wrong-password'
