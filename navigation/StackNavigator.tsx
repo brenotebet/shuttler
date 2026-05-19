@@ -109,6 +109,7 @@ function RejectedOrgScreen() {
 export default function StackNavigator() {
   const { user, role, initializing, emailVerified } = useAuth();
   const { org, isLoadingOrg } = useOrg();
+  const [noRoleMs, setNoRoleMs] = React.useState(0);
 
   useEffect(() => {
     if (!initializing && !isLoadingOrg) {
@@ -116,12 +117,31 @@ export default function StackNavigator() {
     }
   }, [initializing, isLoadingOrg]);
 
+  // Track how long we've been in a user+org+no-role state after initializing.
+  // A new user's doc propagates within ~1s. After 4s with no role, assume this
+  // account doesn't belong to this org and sign them out.
+  useEffect(() => {
+    if (!initializing && !isLoadingOrg && user && org && !role) {
+      const start = Date.now();
+      const interval = setInterval(() => setNoRoleMs(Date.now() - start), 500);
+      return () => clearInterval(interval);
+    }
+    setNoRoleMs(0);
+  }, [initializing, isLoadingOrg, user, org, role]);
+
+  useEffect(() => {
+    if (noRoleMs >= 4000) {
+      signOut(auth).catch(() => {});
+    }
+  }, [noRoleMs]);
+
   if (initializing || isLoadingOrg) {
     return <LoadingScreen />;
   }
 
   // User is in an org but their role hasn't resolved yet (new account race condition).
   // Hold on the loading screen rather than briefly showing the wrong stack.
+  // The effect above will sign them out after 4s if the role never arrives.
   if (user && org && !role) {
     return <LoadingScreen />;
   }
