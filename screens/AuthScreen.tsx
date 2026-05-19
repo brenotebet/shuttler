@@ -171,6 +171,8 @@ function PasswordInput({
 }
 
 function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: string; initialEmail?: string }) {
+  const { org } = useOrg();
+  const selfRegAllowed = (org?.allowedEmailDomains?.length ?? 0) > 0;
   const [mode, setMode] = useState<'signin' | 'signup'>(initialEmail ? 'signup' : 'signin');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -332,7 +334,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
             Creating your admin account for <Text style={{ fontWeight: '700' }}>{initialEmail}</Text>
           </Text>
         </View>
-      ) : (
+      ) : selfRegAllowed ? (
         <View style={styles.tabRow}>
           <TouchableOpacity
             style={[styles.tab, mode === 'signin' && styles.tabActive]}
@@ -346,6 +348,13 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           >
             <Text style={[styles.tabText, mode === 'signup' && styles.tabTextActive]}>Create Account</Text>
           </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.noSelfRegNotice}>
+          <Icon name="lock-outline" size={15} color="#6b7280" />
+          <Text style={styles.noSelfRegText}>
+            Accounts are managed by your administrator. Sign in below or contact them to get access.
+          </Text>
         </View>
       )}
 
@@ -769,6 +778,23 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     color: '#1e40af',
+    lineHeight: 18,
+  },
+  noSelfRegNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 12,
+    marginBottom: 16,
+  },
+  noSelfRegText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#6b7280',
     lineHeight: 18,
   },
   errorText: {

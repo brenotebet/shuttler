@@ -21,19 +21,35 @@ export function useFirstLoginOnboarding() {
   const { org } = useOrg();
   const navigation = useNavigation<Nav>();
   const didNavigate = useRef(false);
+  // Track how long the current role has been stable before acting on it.
+  const stableRole = useRef<OnboardingRole | null>(null);
 
   useEffect(() => {
     const onboardingRole = toOnboardingRole(role);
+
+    // Reset stability if role changed to something different.
+    if (onboardingRole !== stableRole.current) {
+      stableRole.current = onboardingRole;
+    }
+
     if (!user || !org || !onboardingRole || didNavigate.current) return;
 
-    const key = `onboarding_seen_${org.orgId}_${user.uid}`;
-    AsyncStorage.getItem(key).then((seen) => {
-      // Re-check role hasn't changed while we waited for AsyncStorage
-      if (!seen && !didNavigate.current && toOnboardingRole(role) === onboardingRole) {
-        didNavigate.current = true;
-        AsyncStorage.setItem(key, '1').catch(() => {});
-        navigation.navigate('HowToUse', { role: onboardingRole, isOnboarding: true });
-      }
-    }).catch(() => {});
+    // Key is role-specific so admins see admin onboarding, students see rider
+    // onboarding — even if they previously saw a different role's onboarding.
+    const key = `onboarding_seen_${org.orgId}_${user.uid}_${onboardingRole}`;
+
+    // Wait 400ms to ensure the role is stable and not a transient value.
+    const timer = setTimeout(() => {
+      if (toOnboardingRole(role) !== onboardingRole || didNavigate.current) return;
+      AsyncStorage.getItem(key).then((seen) => {
+        if (!seen && !didNavigate.current && toOnboardingRole(role) === onboardingRole) {
+          didNavigate.current = true;
+          AsyncStorage.setItem(key, '1').catch(() => {});
+          navigation.navigate('HowToUse', { role: onboardingRole, isOnboarding: true });
+        }
+      }).catch(() => {});
+    }, 400);
+
+    return () => clearTimeout(timer);
   }, [user?.uid, org?.orgId, role]);
 }

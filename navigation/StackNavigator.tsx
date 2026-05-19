@@ -107,7 +107,7 @@ function RejectedOrgScreen() {
 }
 
 export default function StackNavigator() {
-  const { user, role, initializing, emailVerified } = useAuth();
+  const { user, role, initializing, signingOut, emailVerified } = useAuth();
   const { org, isLoadingOrg } = useOrg();
   const [noRoleMs, setNoRoleMs] = React.useState(0);
 
@@ -134,6 +134,12 @@ export default function StackNavigator() {
       signOut(auth).catch(() => {});
     }
   }, [noRoleMs]);
+
+  // During signout (e.g. unauthorized user kicked out) skip all screens and
+  // go straight to a blank view — the auth stack renders as soon as user=null.
+  if (signingOut) {
+    return <LoadingScreen />;
+  }
 
   if (initializing || isLoadingOrg) {
     return <LoadingScreen />;

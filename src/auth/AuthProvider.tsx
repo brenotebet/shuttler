@@ -18,6 +18,7 @@ type AuthContextType = {
   orgId: string | null;
   displayName: string | null;
   initializing: boolean;
+  signingOut: boolean;
   emailVerified: boolean;
   isSuperAdmin: boolean;
   reloadUser: () => Promise<void>;
@@ -29,6 +30,7 @@ const AuthContext = createContext<AuthContextType>({
   orgId: null,
   displayName: null,
   initializing: true,
+  signingOut: false,
   emailVerified: false,
   isSuperAdmin: false,
   reloadUser: async () => {},
@@ -41,6 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<Role | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [signingOut, setSigningOut] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
@@ -109,9 +112,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       },
       (error) => {
         if ((error as any).code === 'permission-denied') {
-          // User doesn't belong to this org — sign them out.
-          signOut(auth).catch(() => {});
+          // User doesn't belong to this org — sign them out silently.
+          setSigningOut(true);
           setRole(null);
+          signOut(auth).catch(() => {}).finally(() => setSigningOut(false));
         } else {
           // Network failure — degrade gracefully.
           setRole('student');
@@ -133,7 +137,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const orgId = org?.orgId ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, role, orgId, displayName, initializing, emailVerified, isSuperAdmin, reloadUser }}>
+    <AuthContext.Provider value={{ user, role, orgId, displayName, initializing, signingOut, emailVerified, isSuperAdmin, reloadUser }}>
       {children}
     </AuthContext.Provider>
   );
