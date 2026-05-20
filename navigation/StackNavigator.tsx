@@ -109,31 +109,11 @@ function RejectedOrgScreen() {
 export default function StackNavigator() {
   const { user, role, initializing, signingOut, emailVerified } = useAuth();
   const { org, isLoadingOrg } = useOrg();
-  const [noRoleMs, setNoRoleMs] = React.useState(0);
-
   useEffect(() => {
     if (!initializing && !isLoadingOrg) {
       SplashScreen.hideAsync().catch(() => {});
     }
   }, [initializing, isLoadingOrg]);
-
-  // Track how long we've been in a user+org+no-role state after initializing.
-  // A new user's doc propagates within ~1s. After 4s with no role, assume this
-  // account doesn't belong to this org and sign them out.
-  useEffect(() => {
-    if (!initializing && !isLoadingOrg && user && org && !role) {
-      const start = Date.now();
-      const interval = setInterval(() => setNoRoleMs(Date.now() - start), 500);
-      return () => clearInterval(interval);
-    }
-    setNoRoleMs(0);
-  }, [initializing, isLoadingOrg, user, org, role]);
-
-  useEffect(() => {
-    if (noRoleMs >= 4000) {
-      signOut(auth).catch(() => {});
-    }
-  }, [noRoleMs]);
 
   // During signout (e.g. unauthorized user kicked out) skip all screens and
   // go straight to a blank view — the auth stack renders as soon as user=null.

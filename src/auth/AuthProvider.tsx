@@ -53,13 +53,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       setEmailVerified(firebaseUser?.emailVerified ?? false);
+      // Always wipe the role on any auth state change so stale in-memory role
+      // from a previous session can never briefly render the wrong stack while
+      // Effect 2's snapshot re-validates membership.
+      setRole(null);
+      setInitializing(true);
 
       if (!firebaseUser) {
-        setRole(null);
         setDisplayName(null);
         setIsSuperAdmin(false);
         setClaimedOrgId(null);
         setInitializing(false);
+        setSigningOut(false); // clear after user=null is confirmed — prevents brief screen flash
         return;
       }
 
@@ -99,29 +104,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsub = onSnapshot(
       doc(db, 'orgs', resolvedOrgId, 'users', uid),
       (snap) => {
+        // Firestore fires twice: first with local cache, then with server data.
+        // Never grant access based on stale cache — only act on server-confirmed results.
+        if (snap.metadata.fromCache) return;
+
         if (snap.exists()) {
           setRole(normalizeRole(snap.data()?.role));
           setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
         } else {
-          // Document not yet created (new user) — keep null; StackNavigator
-          // will hold on the loading screen until the next snapshot fires.
+          // Server confirmed: no membership doc → not a member of this org.
+          setSigningOut(true);
           setRole(null);
-          setDisplayName(user?.displayName ?? null);
+          signOut(auth).catch(() => {});
+          // signingOut cleared by onAuthStateChanged(null) once sign-out confirms
         }
         setInitializing(false);
       },
       (error) => {
-        if ((error as any).code === 'permission-denied') {
-          // User doesn't belong to this org — sign them out silently.
-          setSigningOut(true);
-          setRole(null);
-          signOut(auth).catch(() => {}).finally(() => setSigningOut(false));
-        } else {
-          // Network failure — degrade gracefully.
-          setRole('student');
-          setDisplayName(user?.displayName ?? null);
-        }
+        console.warn('[AuthProvider] user doc snapshot error:', (error as any).code, (error as any).message);
+        setSigningOut(true);
+        setRole(null);
         setInitializing(false);
+        signOut(auth).catch(() => {});
+        // signingOut cleared by onAuthStateChanged(null) once sign-out confirms
       },
     );
 

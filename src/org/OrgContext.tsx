@@ -241,7 +241,10 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         },
         (error) => {
-          console.warn('[OrgContext] org snapshot error — will retry on next auth event:', error.message);
+          // permission-denied is expected when a non-member is being signed out — not a real error
+          if ((error as any).code !== 'permission-denied') {
+            console.warn('[OrgContext] org snapshot error — will retry on next auth event:', error.message);
+          }
           snapshotUnsub = null;
         },
       );

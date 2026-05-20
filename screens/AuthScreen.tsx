@@ -172,7 +172,9 @@ function PasswordInput({
 
 function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: string; initialEmail?: string }) {
   const { org } = useOrg();
-  const selfRegAllowed = (org?.allowedEmailDomains?.length ?? 0) > 0;
+  // Show "Create Account" unless org explicitly sets allowedEmailDomains to [] (empty = admin-managed).
+  // undefined means open self-reg; a non-empty array means domain-filtered self-reg.
+  const selfRegAllowed = org?.allowedEmailDomains == null || org.allowedEmailDomains.length > 0;
   const [mode, setMode] = useState<'signin' | 'signup'>(initialEmail ? 'signup' : 'signin');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -235,25 +237,42 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       // Verify this account belongs to the selected org before proceeding.
       const userRef = doc(db, 'orgs', orgId, 'users', cred.user.uid);
       let snap;
+      let memberCheckFailed = false;
       try {
         snap = await getDoc(userRef);
       } catch {
-        // permission-denied means the user is not a member of this org.
-        await signOut(auth);
-        showAlert(
-          "You don't have an account with this organisation. Ask your administrator to add you.",
-          'Access Denied',
-        );
+        memberCheckFailed = true;
+      }
+
+      if (memberCheckFailed || !snap?.exists()) {
+        // Check if their account belongs to a different org and hint accordingly.
+        let hintShown = false;
+        try {
+          const tokenResult = await cred.user.getIdTokenResult(true);
+          const claimedOrgId = tokenResult.claims.orgId as string | undefined;
+          if (claimedOrgId && claimedOrgId !== orgId) {
+            const orgRes = await fetch(`${SHUTTLER_API_URL}/orgs/by-id/${claimedOrgId}`);
+            if (orgRes.ok) {
+              const otherOrg = await orgRes.json();
+              await signOut(auth);
+              showAlert(
+                `Your account is registered with "${otherOrg.name}". Go back and select that organisation, or create a new account here instead.`,
+                'Wrong Organization',
+              );
+              hintShown = true;
+            }
+          }
+        } catch {}
+        if (!hintShown) {
+          await signOut(auth);
+          showAlert(
+            "You don't have an account with this organisation. Ask your administrator to add you.",
+            'Access Denied',
+          );
+        }
         return;
       }
-      if (!snap.exists()) {
-        await signOut(auth);
-        showAlert(
-          "You don't have an account with this organisation. Ask your administrator to add you.",
-          'Access Denied',
-        );
-        return;
-      }
+
       await updateDoc(userRef, { lastLoginAt: serverTimestamp() }).catch(() => {});
     } catch (e: any) {
       const msg =
