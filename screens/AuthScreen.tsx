@@ -234,46 +234,47 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
     try {
       const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
 
-      // Verify this account belongs to the selected org before proceeding.
-      const userRef = doc(db, 'orgs', orgId, 'users', cred.user.uid);
-      let snap;
-      let memberCheckFailed = false;
+      // Read token claims NOW while we're definitively authenticated.
+      // Doing this before getDoc avoids a race where AuthProvider's snapshot
+      // fires permission-denied and signs the user out before we can read claims.
+      let claimedOrgId: string | undefined;
       try {
-        snap = await getDoc(userRef);
+        const tokenResult = await cred.user.getIdTokenResult();
+        claimedOrgId = tokenResult.claims.orgId as string | undefined;
+      } catch {}
+
+      // Verify this account belongs to the selected org.
+      const userRef = doc(db, 'orgs', orgId, 'users', cred.user.uid);
+      let memberExists = false;
+      try {
+        const snap = await getDoc(userRef);
+        memberExists = snap.exists();
       } catch {
-        memberCheckFailed = true;
+        // permission-denied — not a member of this org
       }
 
-      if (memberCheckFailed || !snap?.exists()) {
-        // Check if their account belongs to a different org and hint accordingly.
-        let hintShown = false;
-        try {
-          const tokenResult = await cred.user.getIdTokenResult(true);
-          const claimedOrgId = tokenResult.claims.orgId as string | undefined;
-          if (claimedOrgId && claimedOrgId !== orgId) {
+      if (!memberExists) {
+        // Build the message before signing out so we always have the right copy.
+        let message = "You don't have an account with this organisation. Ask your administrator to add you.";
+        let title = 'Access Denied';
+        if (claimedOrgId && claimedOrgId !== orgId) {
+          try {
             const orgRes = await fetch(`${SHUTTLER_API_URL}/orgs/by-id/${claimedOrgId}`);
             if (orgRes.ok) {
               const otherOrg = await orgRes.json();
-              await signOut(auth);
-              showAlert(
-                `Your account is registered with "${otherOrg.name}". Go back and select that organisation, or create a new account here instead.`,
-                'Wrong Organization',
-              );
-              hintShown = true;
+              message = `Your account is registered with "${otherOrg.name}". Go back and select that organisation, or create a new account here.`;
+              title = 'Wrong Organization';
             }
-          }
-        } catch {}
-        if (!hintShown) {
-          await signOut(auth);
-          showAlert(
-            "You don't have an account with this organisation. Ask your administrator to add you.",
-            'Access Denied',
-          );
+          } catch {}
         }
+        await signOut(auth);
+        showAlert(message, title);
         return;
       }
 
       await updateDoc(userRef, { lastLoginAt: serverTimestamp() }).catch(() => {});
+      // Success — AuthProvider's snapshot resolves the role.
+      // StackNavigator routes to EmailVerificationScreen if email is not yet verified.
     } catch (e: any) {
       const msg =
         e?.code === 'auth/invalid-credential' || e?.code === 'auth/wrong-password'
@@ -285,7 +286,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password, orgId, mode]);
+  }, [email, password, orgId]);
 
   const handleSignUp = useCallback(async () => {
     if (!validate()) return;

@@ -708,7 +708,8 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
       name: orgName,
       slug,
       authMethod: 'email',
-      allowedEmailDomains: [],
+      // allowedEmailDomains not set = open self-registration (any email can sign up).
+      // Admin can later restrict by setting specific domains or [] to disable.
       stops: [],
       routes: [],
       mapCenter: { latitude: 0, longitude: 0 },
@@ -765,7 +766,6 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
       name: orgName,
       slug,
       authMethod: 'email' as const,
-      allowedEmailDomains: [],
       stops: [],
       mapCenter: { latitude: 0, longitude: 0 },
       subscriptionStatus: 'trialing' as const,
@@ -1008,9 +1008,13 @@ app.post(
 
     const update: Record<string, any> = {
       authMethod,
-      allowedEmailDomains: allowedEmailDomains ?? [],
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
+    // Only overwrite allowedEmailDomains when the admin explicitly sends it.
+    // Omitting it preserves whatever was previously configured.
+    if (allowedEmailDomains !== undefined) {
+      update.allowedEmailDomains = allowedEmailDomains;
+    }
 
     let spEntityId: string | undefined;
     let acsUrl: string | undefined;
@@ -1431,7 +1435,7 @@ app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) 
       name,
       slug,
       authMethod,
-      allowedEmailDomains: allowedEmailDomains ?? [],
+      ...(allowedEmailDomains != null ? { allowedEmailDomains } : {}),
       stops: [],
       mapCenter: { latitude: 0, longitude: 0 },
       subscriptionStatus: 'trialing',
