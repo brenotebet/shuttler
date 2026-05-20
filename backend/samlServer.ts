@@ -800,28 +800,8 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Org subscription is not active' });
     }
 
-    // Self-registration rules (exception: the org founder can always register):
-    //   allowedEmailDomains undefined/null → open self-reg, any email allowed
-    //   allowedEmailDomains: ['domain.com'] → self-reg restricted to those domains
-    //   allowedEmailDomains: []             → self-reg disabled, admin must add users
-    const isFounderEmail =
-      typeof org.founderEmail === 'string' &&
-      org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
-
-    if (!isFounderEmail) {
-      const domains: string[] | undefined = org.allowedEmailDomains;
-      if (domains != null && domains.length === 0) {
-        return res.status(403).json({
-          error: 'Self-registration is not enabled for this organisation. Contact your administrator to be added.',
-        });
-      }
-      if (domains && domains.length > 0) {
-        const domain = (email as string).split('@')[1]?.toLowerCase();
-        if (!domains.includes(domain)) {
-          return res.status(403).json({ error: 'Email domain not permitted for this organization' });
-        }
-      }
-    }
+    // Email/password orgs allow open self-registration — any email can sign up.
+    // Org admins control access by managing the users collection directly if needed.
 
     // Check if a Firebase Auth user already exists for this email.
     // This happens when Firestore data is wiped but Auth users are not — the email
