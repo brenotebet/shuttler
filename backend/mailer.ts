@@ -186,7 +186,7 @@ export function welcomeTemplate(opts: {
     ${infoBox('Getting started', `
       <ul style="margin:0;padding:0 0 0 18px;font-size:14px;color:#374151;line-height:2.1;">
         <li>Download or open the Shuttler app</li>
-        <li>Select <strong>${opts.orgName}</strong> as your organisation</li>
+        <li>Select <strong>${opts.orgName}</strong> as your organization</li>
         <li>Sign in with your email and password</li>
       </ul>
     `)}
@@ -248,7 +248,7 @@ export function orgApprovedTemplate(opts: {
   const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
   return layout(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">
-      Your organisation is approved &#127881;
+      Your organization is approved &#127881;
     </h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
       Hi ${firstName}, great news &mdash; <strong>${opts.orgName}</strong> has been approved on

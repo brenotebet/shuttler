@@ -197,11 +197,11 @@ export default function CreateOrgScreen() {
       return;
     }
     if (!orgName.trim()) {
-      Alert.alert('Required', 'Please enter an organisation name.');
+      Alert.alert('Required', 'Please enter an organization name.');
       return;
     }
     if (!orgType) {
-      Alert.alert('Required', 'Please select an organisation type.');
+      Alert.alert('Required', 'Please select an organization type.');
       return;
     }
     if (password.length < 8) {
@@ -234,7 +234,7 @@ export default function CreateOrgScreen() {
       });
 
       const orgData = await orgRes.json();
-      if (!orgRes.ok) throw new Error(orgData?.error ?? 'Failed to create organisation');
+      if (!orgRes.ok) throw new Error(orgData?.error ?? 'Failed to create organization');
       const newOrg = orgData as OrgConfig & { slug: string };
 
       // Step 2: register the admin account in one shot
@@ -357,7 +357,7 @@ export default function CreateOrgScreen() {
 
           {/* ── Organisation info ── */}
           <View style={styles.divider} />
-          <Text style={styles.sectionTitle}>About your organisation</Text>
+          <Text style={styles.sectionTitle}>About your organization</Text>
 
           <Text style={styles.label}>Organisation name *</Text>
           <TextInput
@@ -384,7 +384,7 @@ export default function CreateOrgScreen() {
             autoCapitalize="none"
             autoCorrect={false}
           />
-          <FieldInfo text="Helps our team verify your organisation during review. Include the full URL (https://…)." />
+          <FieldInfo text="Helps our team verify your organization during review. Include the full URL (https://…)." />
 
           {/* ── Extra context ── */}
           <View style={styles.divider} />

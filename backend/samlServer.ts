@@ -775,7 +775,7 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
     });
   } catch (e) {
     console.error('[orgs/create] error:', e);
-    return res.status(500).json({ error: 'Failed to create organisation' });
+    return res.status(500).json({ error: 'Failed to create organization' });
   }
 });
 
@@ -800,8 +800,16 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Org subscription is not active' });
     }
 
-    // Email/password orgs allow open self-registration — any email can sign up.
-    // Org admins control access by managing the users collection directly if needed.
+    // Enforce allowed email domains if the org has configured them.
+    const allowedDomains: string[] = org.allowedEmailDomains ?? [];
+    if (allowedDomains.length > 0) {
+      const emailDomain = (email as string).split('@')[1]?.toLowerCase() ?? '';
+      if (!allowedDomains.includes(emailDomain)) {
+        return res.status(403).json({
+          error: `Registration is restricted to ${allowedDomains.join(', ')} email addresses.`,
+        });
+      }
+    }
 
     // Check if a Firebase Auth user already exists for this email.
     // This happens when Firestore data is wiped but Auth users are not — the email
@@ -818,10 +826,12 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       if (existingProfile.exists) {
         return res.status(409).json({ error: 'An account with this email already exists' });
       }
-      // Orphaned auth user (no org profile) — update password and reuse
+      // Orphaned auth user (no org profile) — update password, reset emailVerified so the
+      // new signup must re-confirm ownership of the address.
       await admin.auth().updateUser(authUser.uid, {
         password: password as string,
         displayName: displayName as string | undefined,
+        emailVerified: false,
       });
       isRecovery = true;
       console.log(`[register] Recovering orphaned auth user uid=${authUser.uid} for orgId=${orgId}`);
@@ -1586,7 +1596,7 @@ app.post('/auth/send-verification', requireAuth, async (req: Request, res: Respo
     if (!userRecord.email) return res.status(400).json({ error: 'User has no email address' });
 
     const orgId = (req as any).claims?.orgId as string | undefined;
-    let orgName = 'your organisation';
+    let orgName = 'your organization';
     if (orgId) {
       const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
       orgName = orgDoc.data()?.name ?? orgName;
@@ -1619,7 +1629,7 @@ app.post('/auth/send-password-reset', async (req: Request, res: Response) => {
   }
 
   try {
-    let orgName = 'your organisation';
+    let orgName = 'your organization';
     let displayName = (email as string).split('@')[0];
 
     try {

@@ -252,14 +252,14 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
 
       if (!memberExists) {
         // Build the message before signing out so we always have the right copy.
-        let message = "You don't have an account with this organisation. Ask your administrator to add you.";
+        let message = "You don't have an account with this organization. Ask your administrator to add you.";
         let title = 'Access Denied';
         if (claimedOrgId && claimedOrgId !== orgId) {
           try {
             const orgRes = await fetch(`${SHUTTLER_API_URL}/orgs/by-id/${claimedOrgId}`);
             if (orgRes.ok) {
               const otherOrg = await orgRes.json();
-              message = `Your account is registered with "${otherOrg.name}". Go back and select that organisation, or create a new account here.`;
+              message = `Your account is registered with "${otherOrg.name}". Go back and select that organization, or create a new account here.`;
               title = 'Wrong Organization';
             }
           } catch {}

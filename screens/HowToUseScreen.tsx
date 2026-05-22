@@ -159,7 +159,7 @@ const ADMIN_SETUP_STEPS: Step[] = [
   {
     icon: 'celebration',
     title: "You're in!",
-    body: "Welcome to Shuttler. Your organisation is set up and your admin account is ready. Let's get your shuttle service live in a few quick steps.",
+    body: "Welcome to Shuttler. Your organization is set up and your admin account is ready. Let's get your shuttle service live in a few quick steps.",
     color: '#6366F1',
   },
   {
