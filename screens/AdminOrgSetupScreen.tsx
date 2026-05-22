@@ -15,6 +15,7 @@ import {
   Modal,
   Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -33,6 +34,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE } from '../src/org/OrgContext';
+import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
@@ -570,6 +572,50 @@ const stopStyles = StyleSheet.create({
   },
 });
 
+const setupGuideStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    gap: 10,
+  },
+  title: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0369a1',
+    marginBottom: 2,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  badge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#0369a1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  num: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  text: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0c4a6e',
+    lineHeight: 19,
+  },
+});
+
 // ---- Stop Configuration Tab ----
 
 function calcBoundsFromStops(stops: Stop[]) {
@@ -907,7 +953,26 @@ function StopsTab() {
             {stops.length}/{planLimits.maxStops === Infinity ? '∞' : planLimits.maxStops}
           </Text>
         </View>
-        <Text style={styles.hint}>Search for a location or tap the map to place a pin.</Text>
+
+        {stops.length === 0 ? (
+          <View style={setupGuideStyles.card}>
+            <Text style={setupGuideStyles.title}>How to add stops</Text>
+            {[
+              'Search for a place above, or tap the map to drop a pin',
+              'Give it a name — e.g. "Main Entrance" or "Library"',
+              'Tap "Add Stop" — you need at least 2 to unlock the rider map',
+            ].map((text, i) => (
+              <View key={i} style={setupGuideStyles.row}>
+                <View style={setupGuideStyles.badge}>
+                  <Text style={setupGuideStyles.num}>{i + 1}</Text>
+                </View>
+                <Text style={setupGuideStyles.text}>{text}</Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.hint}>Search for a location or tap the map to place a pin.</Text>
+        )}
 
         {/* Search bar */}
         <View style={styles.searchBarRow}>
@@ -1176,6 +1241,7 @@ const ROLE_COLORS: Record<string, string> = {
 
 function UsersTab() {
   const { org } = useOrg();
+  const { user: currentUser } = useAuth();
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1264,6 +1330,10 @@ function UsersTab() {
   const handleChangeRole = useCallback(
     (member: OrgMember) => {
       if (!org) return;
+      if (member.uid === currentUser?.uid) {
+        Alert.alert('Cannot change your own role', 'Ask another admin to change your role.');
+        return;
+      }
       Alert.alert(
         `Change role for ${member.displayName ?? member.email}`,
         `Current role: ${ROLE_LABELS[member.role]}`,
@@ -1275,7 +1345,7 @@ function UsersTab() {
         ],
       );
     },
-    [org],
+    [org, currentUser?.uid],
   );
 
   const applyRole = useCallback(
@@ -1302,6 +1372,10 @@ function UsersTab() {
   const handleRemoveUser = useCallback(
     (member: OrgMember) => {
       if (!org) return;
+      if (member.uid === currentUser?.uid) {
+        Alert.alert('Cannot remove yourself', 'Ask another admin to remove your account.');
+        return;
+      }
       Alert.alert(
         'Remove member',
         `Remove ${member.displayName ?? member.email} from ${org.name}? They will lose access immediately.`,
@@ -1327,7 +1401,7 @@ function UsersTab() {
         ],
       );
     },
-    [org],
+    [org, currentUser?.uid],
   );
 
   if (isLoading) {
@@ -1347,29 +1421,61 @@ function UsersTab() {
     );
   }
 
+  const orgSlug = org?.slug ?? org?.orgId ?? '';
+
+  const handleShareInvite = () => {
+    Share.share({
+      message: `Join ${org?.name ?? 'our shuttle'} on Shuttler!\n\nOpen the Shuttler app, search for "${org?.name ?? orgSlug}", and sign up. Organization ID: ${orgSlug}`,
+    }).catch(() => {});
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
+      {/* Invite card */}
+      <TouchableOpacity style={usersStyles.inviteCard} onPress={handleShareInvite} activeOpacity={0.8}>
+        <View style={usersStyles.inviteIconWrap}>
+          <Icon name="share" size={20} color={PRIMARY_COLOR} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={usersStyles.inviteTitle}>Invite people to join</Text>
+          <Text style={usersStyles.inviteBody} numberOfLines={1}>
+            Org ID: <Text style={usersStyles.inviteSlug}>{orgSlug}</Text>
+          </Text>
+        </View>
+        <Icon name="chevron-right" size={20} color="#d1d5db" />
+      </TouchableOpacity>
+
       <Text style={styles.hint}>
         Tap a member's role badge to change it. Tap the route badge on drivers to assign a default route.
       </Text>
+
       {members.length === 0 && (
-        <Text style={styles.hint}>No members yet. Share your org slug so people can register.</Text>
+        <Text style={styles.hint}>No members yet — share your org ID above so people can find you.</Text>
       )}
+
       {members.map((member) => {
         const isDriver = member.role === 'driver' || member.role === 'admin';
         const assignedRouteId = driverDefaults[member.uid] ?? null;
         const assignedRoute = assignedRouteId ? orgRoutes.find((r) => r.id === assignedRouteId) : null;
+        const isSelf = member.uid === currentUser?.uid;
         return (
           <View key={member.uid} style={styles.memberRow}>
-            <View style={styles.memberAvatar}>
+            <View style={[styles.memberAvatar, isSelf && usersStyles.selfAvatar]}>
               <Text style={styles.memberAvatarText}>
                 {(member.displayName ?? member.email).charAt(0).toUpperCase()}
               </Text>
             </View>
             <View style={styles.memberInfo}>
-              <Text style={styles.memberName} numberOfLines={1}>
-                {member.displayName ?? '—'}
-              </Text>
+              <View style={usersStyles.nameRow}>
+                <Text style={styles.memberName} numberOfLines={1}>
+                  {member.displayName ?? '—'}
+                </Text>
+                {isSelf && (
+                  <View style={usersStyles.youBadge}>
+                    <Text style={usersStyles.youBadgeText}>You</Text>
+                  </View>
+                )}
+              </View>
               <Text style={styles.memberEmail} numberOfLines={1}>{member.email}</Text>
             </View>
             {isDriver && orgRoutes.length > 0 && (
@@ -1388,15 +1494,18 @@ function UsersTab() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              style={[styles.roleBadge, { backgroundColor: `${ROLE_COLORS[member.role]}20` }]}
+              style={[styles.roleBadge, { backgroundColor: `${ROLE_COLORS[member.role]}20` }, isSelf && usersStyles.roleBadgeSelf]}
               onPress={() => handleChangeRole(member)}
             >
               <Text style={[styles.roleBadgeText, { color: ROLE_COLORS[member.role] }]}>
                 {ROLE_LABELS[member.role]}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => handleRemoveUser(member)} style={styles.removeUserBtn}>
-              <Icon name="person-remove" size={18} color="#e53935" />
+            <TouchableOpacity
+              onPress={() => handleRemoveUser(member)}
+              style={[styles.removeUserBtn, isSelf && usersStyles.removeDisabled]}
+            >
+              <Icon name="person-remove" size={18} color={isSelf ? '#d1d5db' : '#e53935'} />
             </TouchableOpacity>
           </View>
         );
@@ -1404,6 +1513,67 @@ function UsersTab() {
     </ScrollView>
   );
 }
+
+const usersStyles = StyleSheet.create({
+  inviteCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: `${PRIMARY_COLOR}0d`,
+    borderWidth: 1,
+    borderColor: `${PRIMARY_COLOR}30`,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  inviteIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: `${PRIMARY_COLOR}18`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inviteTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111',
+    marginBottom: 2,
+  },
+  inviteBody: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  inviteSlug: {
+    fontWeight: '700',
+    color: PRIMARY_COLOR,
+  },
+  selfAvatar: {
+    backgroundColor: `${PRIMARY_COLOR}25`,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  youBadge: {
+    backgroundColor: '#e0f2fe',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  youBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0369a1',
+  },
+  roleBadgeSelf: {
+    opacity: 0.5,
+  },
+  removeDisabled: {
+    opacity: 0.3,
+  },
+});
 
 // ---- Billing Tab ----
 
@@ -1605,6 +1775,7 @@ function AnalyticsTab() {
   const [records, setRecords] = useState<BoardingCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [driverNames, setDriverNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!org) return;
@@ -1625,6 +1796,23 @@ function AnalyticsTab() {
     };
     load();
   }, [org?.orgId]);
+
+  // Load driver display names from publicUsers once records arrive
+  useEffect(() => {
+    if (!org || records.length === 0) return;
+    const uids = [...new Set(records.map((r) => r.driverUid).filter(Boolean))];
+    Promise.all(
+      uids.map(async (uid) => {
+        try {
+          const snap = await getDoc(doc(db, 'orgs', org.orgId, 'publicUsers', uid));
+          const name: string = snap.data()?.displayName ?? '';
+          return [uid, name.split(' ')[0] || uid.slice(0, 8)] as const;
+        } catch {
+          return [uid, uid.slice(0, 8)] as const;
+        }
+      }),
+    ).then((pairs) => setDriverNames(Object.fromEntries(pairs)));
+  }, [records, org?.orgId]);
 
   if (isLoading) {
     return (
@@ -1721,8 +1909,8 @@ function AnalyticsTab() {
             <View style={analyticsStyles.rankBadge}>
               <Text style={analyticsStyles.rankText}>{i + 1}</Text>
             </View>
-            <Text style={[analyticsStyles.listLabel, { fontFamily: 'Menlo', fontSize: 12 }]} numberOfLines={1}>
-              {d.driverUid.slice(0, 16)}…
+            <Text style={analyticsStyles.listLabel} numberOfLines={1}>
+              {driverNames[d.driverUid] ?? d.driverUid.slice(0, 8)}
             </Text>
             <Text style={analyticsStyles.listValue}>{d.total} boarded</Text>
           </View>
@@ -1842,11 +2030,22 @@ export default function AdminOrgSetupScreen() {
             <Icon name="logout" size={24} color={PRIMARY_COLOR} />
           </TouchableOpacity>
         )}
-        <Text style={styles.headerTitle}>Organization Setup</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>Org Setup</Text>
+          {setupOrg?.name ? (
+            <Text style={styles.headerSubtitle}>{setupOrg.name}</Text>
+          ) : null}
+        </View>
       </View>
 
-      {/* Tab Bar */}
-      <View style={styles.tabBar}>
+      {/* Tab Bar — horizontal scroll so tabs never get squished */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabBar}
+        contentContainerStyle={styles.tabBarContent}
+        bounces={false}
+      >
         {tabs.map((t) => (
           <TouchableOpacity
             key={t.key}
@@ -1859,7 +2058,7 @@ export default function AdminOrgSetupScreen() {
             </Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
       {/* Tab Content */}
       <KeyboardAvoidingView
@@ -1891,21 +2090,29 @@ const styles = StyleSheet.create({
     marginRight: spacing.section,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: '#111',
   },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 1,
+  },
   tabBar: {
-    flexDirection: 'row',
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
     backgroundColor: '#fff',
   },
+  tabBarContent: {
+    flexDirection: 'row',
+  },
   tabBarItem: {
-    flex: 1,
     alignItems: 'center',
     paddingVertical: 10,
+    paddingHorizontal: 14,
     gap: 3,
+    minWidth: 68,
   },
   tabBarItemActive: {
     borderBottomWidth: 2,

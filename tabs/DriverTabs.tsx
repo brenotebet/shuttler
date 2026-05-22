@@ -7,13 +7,16 @@ import DriverMenuScreen from '../screens/DriverMenuScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { useAuth } from '../src/auth/AuthProvider';
 
 const Tab = createBottomTabNavigator();
 
 export default function DriverTabs() {
   const { primaryColor } = useOrgTheme();
+  const { role } = useAuth();
   return (
     <Tab.Navigator
+      initialRouteName={role === 'admin' ? 'Menu' : 'LiveLocation'}
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarShowLabel: false,

@@ -168,15 +168,26 @@ export default function StackNavigator() {
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </>
       ) : role === 'driver' || role === 'admin' ? (
-        // Logged in as driver/admin with stops configured
-        <>
-          <Stack.Screen name="DriverHome" component={DriverTabs} />
-          <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
-          <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
-          <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
-          <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
-          <Stack.Screen name="HowToUse" component={HowToUseScreen} />
-        </>
+        // New admin with no stops goes straight to org setup; others start at DriverHome
+        role === 'admin' && !(org?.stops?.length) ? (
+          <>
+            <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
+            <Stack.Screen name="DriverHome" component={DriverTabs} />
+            <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
+            <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+            <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+            <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+          </>
+        ) : (
+          <>
+            <Stack.Screen name="DriverHome" component={DriverTabs} />
+            <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
+            <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+            <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+            <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
+            <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+          </>
+        )
       ) : (
         // Logged in as student (default)
         <>

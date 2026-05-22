@@ -18,11 +18,13 @@ import MenuItem from '../components/MenuItem';
 import ScreenContainer from '../components/ScreenContainer';
 import { spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 
 export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { primaryColor } = useOrgTheme();
   const { logout: clearDriverContext } = useDriver();
+  useFirstLoginOnboarding();
   const { stopSharing, isSharing } = useLocationSharing();
   const { role, displayName } = useAuth();
   const firstName = displayName?.split(' ')[0] ?? null;
@@ -69,8 +71,12 @@ export default function DriverMenuScreen() {
         {firstName ? (
           <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={[styles.title, { color: primaryColor }]}>Driver Hub</Text>
-        <Text style={styles.subtitle}>Stay on top of requests and routes</Text>
+        <Text style={[styles.title, { color: primaryColor }]}>
+          {role === 'admin' ? 'Admin Hub' : 'Driver Hub'}
+        </Text>
+        <Text style={styles.subtitle}>
+          {role === 'admin' ? 'Manage your org and operations' : 'Stay on top of requests and routes'}
+        </Text>
       </View>
 
       <View style={styles.menuSection}>

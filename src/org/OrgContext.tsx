@@ -226,10 +226,18 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (!prev) return prev;
             const updated: OrgConfig = {
               ...prev,
+              // Admin-editable branding & config
+              name: data.name ?? prev.name,
+              logoUrl: data.logoUrl ?? prev.logoUrl,
+              primaryColor: data.primaryColor ?? prev.primaryColor,
+              authMethod: data.authMethod ?? prev.authMethod,
+              allowedEmailDomains: Array.isArray(data.allowedEmailDomains) ? data.allowedEmailDomains : prev.allowedEmailDomains,
+              // Stops & routes
               stops: Array.isArray(data.stops) ? data.stops : prev.stops,
               routes: Array.isArray(data.routes) ? data.routes : prev.routes,
               mapCenter: data.mapCenter ?? prev.mapCenter,
               mapBoundingBox: data.mapBoundingBox ?? prev.mapBoundingBox,
+              // Subscription
               subscriptionStatus: data.subscriptionStatus ?? prev.subscriptionStatus,
               subscriptionPlan: data.subscriptionPlan ?? prev.subscriptionPlan,
               approved: data.approved ?? prev.approved,

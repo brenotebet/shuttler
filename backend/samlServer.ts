@@ -1489,8 +1489,8 @@ async function sendExpoPushNotifications(
  *  Reads all driver/admin users in the org and sends them a push notification.
  */
 app.post('/notifications/stop-request-created', requireAuth, async (req: Request, res: Response) => {
-  const { orgId } = req.body as { orgId?: string };
-  if (!orgId) return res.status(400).json({ error: 'orgId required' });
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
 
   try {
     const usersSnap = await admin.firestore()
@@ -1518,12 +1518,10 @@ app.post('/notifications/stop-request-created', requireAuth, async (req: Request
  *  Sends a push notification to the student who made the request.
  */
 app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: Response) => {
-  const { orgId, studentUid, stopName } = req.body as {
-    orgId?: string;
-    studentUid?: string;
-    stopName?: string;
-  };
-  if (!orgId || !studentUid) return res.status(400).json({ error: 'orgId and studentUid required' });
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  const { studentUid, stopName } = req.body as { studentUid?: string; stopName?: string };
+  if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
+  if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
 
   try {
     const userDoc = await admin.firestore()
@@ -1551,12 +1549,10 @@ app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: R
  *  Sends a push notification to the student who made the request.
  */
 app.post('/notifications/stop-completed', requireAuth, async (req: Request, res: Response) => {
-  const { orgId, studentUid, stopName } = req.body as {
-    orgId?: string;
-    studentUid?: string;
-    stopName?: string;
-  };
-  if (!orgId || !studentUid) return res.status(400).json({ error: 'orgId and studentUid required' });
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  const { studentUid, stopName } = req.body as { studentUid?: string; stopName?: string };
+  if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
+  if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
 
   try {
     const userDoc = await admin.firestore()

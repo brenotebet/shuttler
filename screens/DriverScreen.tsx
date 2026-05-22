@@ -852,7 +852,7 @@ export default function DriverScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.headerTitle}>Driver Dashboard</Text>
+        <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
         <TouchableOpacity
           style={[styles.shareButton, { backgroundColor: primaryColor }, isToggling && styles.shareButtonDisabled]}
           disabled={isToggling}

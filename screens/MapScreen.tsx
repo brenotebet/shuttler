@@ -55,6 +55,9 @@ import { notifyDriversNewRequest } from '../src/utils/pushNotifications';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
@@ -233,15 +236,19 @@ type BusPopup = {
 };
 
 export default function MapScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { org } = useOrg();
   const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
   useFirstLoginOnboarding();
   const stops = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
-  // Returns a Firestore CollectionReference scoped to the current org
-  const orgCol = (name: string) =>
-    orgId ? collection(db, 'orgs', orgId, name) : collection(db, name);
+  // Returns a Firestore CollectionReference scoped to the current org.
+  // Throws if orgId is not loaded — callers must only run after org is available.
+  const orgCol = (name: string) => {
+    if (!orgId) throw new Error(`orgCol('${name}') called before orgId is available`);
+    return collection(db, 'orgs', orgId, name);
+  };
 
   // Tick every 60s so schedule-based UI updates without a restart
   const [clockTick, setClockTick] = useState(0);
@@ -294,6 +301,7 @@ export default function MapScreen() {
   const [request, setRequest] = useState<any>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [ownRequest, setOwnRequest] = useState<any>(null);
+  const [dismissedRequestId, setDismissedRequestId] = useState<string | null>(null);
 
   const [ownRequestReady, setOwnRequestReady] = useState(false);
 
@@ -505,7 +513,9 @@ export default function MapScreen() {
     }
   };
 
-  const rideActive = !!request && (request.status === 'pending' || request.status === 'accepted');
+  // Suppress the bottom card for a dismissed expired/completed request
+  const visibleRequest = request && request.id === dismissedRequestId ? null : request;
+  const rideActive = !!visibleRequest && (visibleRequest.status === 'pending' || visibleRequest.status === 'accepted');
 
   const resolvedDriverId = useMemo(() => {
     if (!request?.stop) return driverId;
@@ -1135,12 +1145,12 @@ export default function MapScreen() {
   }, [request, driverId, activeBusIds]);
 
   useEffect(() => {
-    if (request) {
+    if (visibleRequest) {
       Animated.timing(slideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
     } else {
       Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     }
-  }, [request, slideAnim]);
+  }, [visibleRequest, slideAnim]);
 
   useEffect(() => {
     if (!selectedBusId) return;
@@ -1204,7 +1214,8 @@ export default function MapScreen() {
     const remainingMs = expiresAtMs - Date.now();
 
     const expireRequest = () => {
-      updateDoc(doc(db, 'orgs', orgId ?? '', 'stopRequests', requestId), {
+      if (!orgId) return;
+      updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), {
         status: 'cancelled',
         cancelledAt: serverTimestamp(),
         cancelledReason: 'ttl_expired_15m',
@@ -1378,7 +1389,7 @@ const handleRequest = async (entry: RequestableStop) => {
     try {
       const activeChild = selectedChild ?? (childProfiles.length === 1 ? childProfiles[0] : null);
       const ref = await addDoc(orgCol('stopRequests'), {
-        orgId: orgId ?? '',
+        orgId: orgId,
         studentUid,
         studentEmail: studentEmail ?? null,
         childName: activeChild ? activeChild.name : null,
@@ -1398,7 +1409,7 @@ const handleRequest = async (entry: RequestableStop) => {
       });
 
       if (__DEV__) console.log('[handleRequest] created stopRequest', ref.id);
-      void notifyDriversNewRequest(orgId ?? '');
+      if (orgId) void notifyDriversNewRequest(orgId);
     } catch (e: any) {
       console.error('[handleRequest] addDoc FAILED', e?.code, e?.message);
       throw e;
@@ -1488,8 +1499,41 @@ const handleRequest = async (entry: RequestableStop) => {
         </TouchableOpacity>
       )}
 
+      {/* Parent: "Link a child" CTA when no children are linked yet */}
+      {role === 'parent' && childProfiles.length === 0 && !rideActive && !selectedBusId && (
+        <TouchableOpacity
+          style={[styles.parentCtaCard, { top: topOverlay + 60 }]}
+          onPress={() => navigation.navigate('ParentChildLink')}
+          activeOpacity={0.85}
+        >
+          <Icon name="child-care" size={22} color={primaryColor} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.parentCtaTitle}>Link a child to get started</Text>
+            <Text style={styles.parentCtaBody}>Tap here to add your child's account so you can track their shuttle.</Text>
+          </View>
+          <Icon name="chevron-right" size={20} color={primaryColor} />
+        </TouchableOpacity>
+      )}
+
+      {/* Parent: active child indicator pill */}
+      {role === 'parent' && selectedChild && !rideActive && !selectedBusId && (
+        <TouchableOpacity
+          style={[styles.activeChildPill, { top: topOverlay + 60, borderColor: primaryColor + '40' }]}
+          onPress={() => childProfiles.length > 1 && setShowChildPicker(true)}
+          activeOpacity={childProfiles.length > 1 ? 0.7 : 1}
+        >
+          <View style={[styles.activeChildDot, { backgroundColor: primaryColor }]} />
+          <Text style={[styles.activeChildText, { color: primaryColor }]}>
+            Tracking {selectedChild.name.split(' ')[0]}
+          </Text>
+          {childProfiles.length > 1 && (
+            <Icon name="swap-horiz" size={16} color={primaryColor} style={{ marginLeft: 2 }} />
+          )}
+        </TouchableOpacity>
+      )}
+
       {!rideActive && !showLocationList && !selectedBusId && (
-        <View style={[styles.tipContainer, { top: topOverlay + 60 }]}>
+        <View style={[styles.tipContainer, { top: role === 'parent' && childProfiles.length === 0 ? topOverlay + 130 : (role === 'parent' && selectedChild ? topOverlay + 110 : topOverlay + 60) }]}>
           {!serviceIsOpen ? (
             // Outside operating hours — show schedule
             <View style={styles.hoursCard}>
@@ -1785,26 +1829,26 @@ const handleRequest = async (entry: RequestableStop) => {
           },
         ]}
       >
-        {request ? (
+        {visibleRequest ? (
           <>
             <View style={styles.cardHandle} />
 
             <View style={styles.cardRow}>
-              {request.stop?.name ? (
-                <Text style={styles.cardStopName}>{request.stop.name}</Text>
+              {visibleRequest.stop?.name ? (
+                <Text style={styles.cardStopName}>{visibleRequest.stop.name}</Text>
               ) : null}
               <View style={[
                 styles.cardBadge,
-                request.status === 'completed'
+                visibleRequest.status === 'completed'
                   ? styles.cardBadgeDone
-                  : request.status === 'cancelled'
+                  : visibleRequest.status === 'cancelled'
                     ? styles.cardBadgeExpired
                     : styles.cardBadgeActive,
               ]}>
                 <Text style={styles.cardBadgeText}>
-                  {request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
+                  {visibleRequest.status === 'cancelled' && visibleRequest.cancelledReason === 'ttl_expired_15m'
                     ? 'Expired'
-                    : request.status === 'completed'
+                    : visibleRequest.status === 'completed'
                       ? 'Completed'
                       : 'Active'}
                 </Text>
@@ -1812,7 +1856,7 @@ const handleRequest = async (entry: RequestableStop) => {
             </View>
 
             {(() => {
-              const info = routeStopMap.get(request.stop?.id);
+              const info = routeStopMap.get(visibleRequest.stop?.id);
               if (!info) return null;
               return (
                 <Text style={styles.cardRouteMeta}>
@@ -1822,12 +1866,12 @@ const handleRequest = async (entry: RequestableStop) => {
             })()}
 
             <Text style={styles.cardSubtitle}>
-              {request.status === 'cancelled' && request.cancelledReason === 'ttl_expired_15m'
+              {visibleRequest.status === 'cancelled' && visibleRequest.cancelledReason === 'ttl_expired_15m'
                 ? 'The request timed out after 15 minutes.'
-                : request.status === 'completed'
+                : visibleRequest.status === 'completed'
                   ? 'The bus has passed this stop.'
                   : role === 'parent'
-                    ? `${request.childName ? `${request.childName}'s` : "Your child's"} stop is confirmed. The bus will pick them up.`
+                    ? `${visibleRequest.childName ? `${visibleRequest.childName}'s` : "Your child's"} stop is confirmed. The bus will pick them up.`
                     : 'Your stop is confirmed. The bus will pick you up.'}
             </Text>
 
@@ -1848,7 +1892,18 @@ const handleRequest = async (entry: RequestableStop) => {
               </View>
             )}
 
-            {request.studentUid === studentUid && (request.status === 'accepted' || request.status === 'pending') && (
+            {/* Dismiss button for terminal states — expired or completed */}
+            {(visibleRequest.status === 'completed' ||
+              (visibleRequest.status === 'cancelled' && visibleRequest.cancelledReason === 'ttl_expired_15m')) && (
+              <TouchableOpacity
+                style={styles.dismissButton}
+                onPress={() => setDismissedRequestId(visibleRequest.id)}
+              >
+                <Text style={styles.dismissButtonText}>Dismiss</Text>
+              </TouchableOpacity>
+            )}
+
+            {visibleRequest.studentUid === studentUid && (visibleRequest.status === 'accepted' || visibleRequest.status === 'pending') && (
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => {
@@ -1861,8 +1916,8 @@ const handleRequest = async (entry: RequestableStop) => {
                         text: 'Cancel request',
                         style: 'destructive',
                         onPress: async () => {
-                          if (!requestId) return;
-                          await updateDoc(doc(db, 'orgs', orgId ?? '', 'stopRequests', requestId), { status: 'cancelled' });
+                          if (!requestId || !orgId) return;
+                          await updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), { status: 'cancelled' });
                           setRequest(null);
                           setRequestId(null);
                           setRouteCoords([]);
@@ -2154,6 +2209,15 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   cancelButtonText: { color: '#DC2626', fontSize: 15, fontWeight: '600' },
+  dismissButton: {
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  dismissButtonText: { color: '#6B7280', fontSize: 15, fontWeight: '600' },
   noRideText: { fontSize: 16, color: '#888', textAlign: 'center' },
   childPickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   childPickerSheet: {
@@ -2230,5 +2294,60 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     fontWeight: '600',
     marginBottom: 4,
+  },
+  parentCtaCard: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 14,
+    padding: 14,
+    zIndex: 90,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  parentCtaTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111',
+    marginBottom: 2,
+  },
+  parentCtaBody: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 17,
+  },
+  activeChildPill: {
+    position: 'absolute',
+    left: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1.5,
+    zIndex: 90,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  activeChildDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  activeChildText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

@@ -85,14 +85,13 @@ function requireUid(): string {
 }
 
 async function assertDriverRole(uid: string, orgId: string) {
+  if (!orgId) throw new Error(`Cannot verify driver role for uid ${uid}: orgId is empty.`);
   try {
-    const path = orgId
-      ? doc(db, 'orgs', orgId, 'users', uid)
-      : doc(db, 'users', uid);
+    const path = doc(db, 'orgs', orgId, 'users', uid);
     const snap = await getDoc(path);
 
     if (!snap.exists()) {
-      throw new Error(`Missing user doc for uid ${uid} in org ${orgId || '(none)'}.`);
+      throw new Error(`Missing user doc for uid ${uid} in org ${orgId}.`);
     }
 
     const role = (snap.data() as any)?.role ?? null;
@@ -233,7 +232,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         const uid = auth.currentUser?.uid;
         if (!uid) return;
 
-        const busRef = orgId ? doc(db, 'orgs', orgId, 'buses', uid) : doc(db, 'buses', uid);
+        if (!orgId) return;
+        const busRef = doc(db, 'orgs', orgId, 'buses', uid);
         const snap = await getDoc(busRef);
         if (!snap.exists()) return;
 
