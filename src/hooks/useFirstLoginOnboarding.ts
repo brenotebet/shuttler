@@ -17,28 +17,26 @@ function toOnboardingRole(role: string | null | undefined): OnboardingRole | nul
 }
 
 export function useFirstLoginOnboarding() {
-  const { user, role } = useAuth();
-  const { org } = useOrg();
+  const { user, role, initializing } = useAuth();
+  const { org, isLoadingOrg } = useOrg();
   const navigation = useNavigation<Nav>();
   const didNavigate = useRef(false);
-  // Track how long the current role has been stable before acting on it.
   const stableRole = useRef<OnboardingRole | null>(null);
 
   useEffect(() => {
     const onboardingRole = toOnboardingRole(role);
 
-    // Reset stability if role changed to something different.
     if (onboardingRole !== stableRole.current) {
       stableRole.current = onboardingRole;
     }
 
-    if (!user || !org || !onboardingRole || didNavigate.current) return;
+    // Don't fire while auth or org is still loading — the overlay is still showing
+    // and navigation would be invisible or race against the screen appearing.
+    if (!user || !org || !onboardingRole || didNavigate.current || initializing || isLoadingOrg) return;
 
-    // Key is role-specific so admins see admin onboarding, students see rider
-    // onboarding — even if they previously saw a different role's onboarding.
     const key = `onboarding_seen_${org.orgId}_${user.uid}_${onboardingRole}`;
 
-    // Wait 400ms to ensure the role is stable and not a transient value.
+    // 600ms delay — long enough for the screen transition and overlay fade to complete.
     const timer = setTimeout(() => {
       if (toOnboardingRole(role) !== onboardingRole || didNavigate.current) return;
       AsyncStorage.getItem(key).then((seen) => {
@@ -48,8 +46,8 @@ export function useFirstLoginOnboarding() {
           navigation.navigate('HowToUse', { role: onboardingRole, isOnboarding: true });
         }
       }).catch(() => {});
-    }, 400);
+    }, 600);
 
     return () => clearTimeout(timer);
-  }, [user?.uid, org?.orgId, role]);
+  }, [user?.uid, org?.orgId, role, initializing, isLoadingOrg]);
 }

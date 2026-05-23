@@ -1,7 +1,7 @@
 // navigation/StackNavigator.tsx
 
 import React, { useEffect } from 'react';
-import { ActivityIndicator, Text, View, StyleSheet, TouchableOpacity } from 'react-native';
+import { ActivityIndicator, Animated, Text, View, StyleSheet, TouchableOpacity } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
@@ -50,11 +50,20 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-function LoadingScreen() {
+function LoadingOverlay({ visible }: { visible: boolean }) {
+  const opacity = React.useRef(new Animated.Value(visible ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(opacity, {
+      toValue: visible ? 1 : 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start();
+  }, [visible]);
+  if (!visible) return null;
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+    <Animated.View style={[styles.loadingOverlay, { opacity }]} pointerEvents="auto">
       <ActivityIndicator size="large" color={PRIMARY_COLOR} />
-    </View>
+    </Animated.View>
   );
 }
 
@@ -109,95 +118,101 @@ function RejectedOrgScreen() {
 export default function StackNavigator() {
   const { user, role, initializing, signingOut, emailVerified } = useAuth();
   const { org, isLoadingOrg } = useOrg();
+
   useEffect(() => {
     if (!initializing && !isLoadingOrg) {
       SplashScreen.hideAsync().catch(() => {});
     }
   }, [initializing, isLoadingOrg]);
 
-  // During signout (e.g. unauthorized user kicked out) skip all screens and
-  // go straight to a blank view — the auth stack renders as soon as user=null.
-  if (signingOut) {
-    return <LoadingScreen />;
-  }
+  // Show overlay (not a black screen) for all transient loading states so the
+  // user stays on whatever they were looking at while auth resolves.
+  const isLoading = signingOut || initializing || isLoadingOrg || (!!user && !!org && !role);
 
-  if (initializing || isLoadingOrg) {
-    return <LoadingScreen />;
-  }
-
-  // User is in an org but their role hasn't resolved yet (new account race condition).
-  // Hold on the loading screen rather than briefly showing the wrong stack.
-  // The effect above will sign them out after 4s if the role never arrives.
-  if (user && org && !role) {
-    return <LoadingScreen />;
-  }
-
-  // Hard-block if org application was rejected
-  if (user && org && org.reviewStatus === 'rejected') {
-    return <RejectedOrgScreen />;
-  }
-
-  // Hard-block non-admins only on fully canceled/unpaid (past_due gets a grace period)
-  if (user && org && role !== 'admin' && ['canceled', 'unpaid'].includes(org.subscriptionStatus ?? '')) {
-    return <SubscriptionExpiredScreen />;
-  }
-
-  // Email auth: require verification before entering the app
-  if (user && org?.authMethod === 'email' && !emailVerified) {
-    return (
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="EmailVerification" component={EmailVerificationScreen} />
-      </Stack.Navigator>
-    );
-  }
-
-  return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      {!user ? (
-        // Logged out — two-step login flow
-        <>
+  // Decide which content to render beneath the overlay.
+  // Hard-block screens (rejected, expired) are only surfaced once loading clears.
+  const renderContent = () => {
+    if (isLoading || !user) {
+      // While loading: show login stack as placeholder — it's fully hidden by the overlay.
+      // When not loading and no user: login stack is the correct destination.
+      return (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="OrgSelector" component={OrgSelectorScreen} />
           <Stack.Screen name="CreateOrg" component={CreateOrgScreen} />
           <Stack.Screen name="Auth" component={AuthScreen} />
-        </>
-      ) : role === 'parent' ? (
-        <>
+        </Stack.Navigator>
+      );
+    }
+
+    if (org?.reviewStatus === 'rejected') return <RejectedOrgScreen />;
+
+    if (role !== 'admin' && ['canceled', 'unpaid'].includes(org?.subscriptionStatus ?? '')) {
+      return <SubscriptionExpiredScreen />;
+    }
+
+    // Email auth: block until address is verified.
+    // This is a stable (non-loading) gate, so no overlay needed here.
+    if (org?.authMethod === 'email' && !emailVerified) {
+      return (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="EmailVerification" component={EmailVerificationScreen} />
+        </Stack.Navigator>
+      );
+    }
+
+    if (role === 'parent') {
+      return (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="StudentHome" component={StudentTabs} />
           <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
           <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
-        </>
-      ) : role === 'driver' || role === 'admin' ? (
-        // New admin with no stops goes straight to org setup; others start at DriverHome
-        role === 'admin' && !(org?.stops?.length) ? (
-          <>
+        </Stack.Navigator>
+      );
+    }
+
+    if (role === 'driver' || role === 'admin') {
+      // New admin with no stops goes straight to org setup
+      if (role === 'admin' && !(org?.stops?.length)) {
+        return (
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
             <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
             <Stack.Screen name="DriverHome" component={DriverTabs} />
             <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
             <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
             <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
             <Stack.Screen name="HowToUse" component={HowToUseScreen} />
-          </>
-        ) : (
-          <>
-            <Stack.Screen name="DriverHome" component={DriverTabs} />
-            <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
-            <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
-            <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
-            <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
-            <Stack.Screen name="HowToUse" component={HowToUseScreen} />
-          </>
-        )
-      ) : (
-        // Logged in as student (default)
-        <>
-          <Stack.Screen name="StudentHome" component={StudentTabs} />
-          <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
-          <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
+          </Stack.Navigator>
+        );
+      }
+      return (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="DriverHome" component={DriverTabs} />
+          <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
+          <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
+          <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+          <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
-        </>
-      )}
-    </Stack.Navigator>
+        </Stack.Navigator>
+      );
+    }
+
+    // Default: student
+    return (
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="StudentHome" component={StudentTabs} />
+        <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
+        <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
+        <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+      </Stack.Navigator>
+    );
+  };
+
+  return (
+    <View style={styles.root}>
+      {renderContent()}
+      <LoadingOverlay visible={isLoading} />
+    </View>
   );
 }
 
@@ -265,5 +280,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#7f1d1d',
     lineHeight: 20,
+  },
+  root: {
+    flex: 1,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 255, 255, 0.97)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
