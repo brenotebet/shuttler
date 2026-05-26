@@ -1475,9 +1475,9 @@ const handleRequest = async (entry: RequestableStop) => {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
-      {role !== 'parent' && !rideActive && !selectedBusId && (
+      {(role !== 'parent' || childProfiles.length > 0) && !rideActive && !selectedBusId && (
         <TouchableOpacity
-          style={[styles.searchContainer, { top: topOverlay, borderColor: primaryColor + '30', shadowColor: primaryColor }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
+          style={[styles.searchContainer, { top: role === 'parent' ? topOverlay + 46 : topOverlay, borderColor: primaryColor + '30', shadowColor: primaryColor }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
           onPress={() => {
             if (!serviceIsOpen) {
               showAlert('Service is currently closed. Check the hours shown on the map.');
@@ -1502,7 +1502,7 @@ const handleRequest = async (entry: RequestableStop) => {
       {/* Parent: "Link a child" CTA when no children are linked yet */}
       {role === 'parent' && childProfiles.length === 0 && !rideActive && !selectedBusId && (
         <TouchableOpacity
-          style={[styles.parentCtaCard, { top: topOverlay + 60 }]}
+          style={[styles.parentCtaCard, { top: topOverlay }]}
           onPress={() => navigation.navigate('ParentChildLink')}
           activeOpacity={0.85}
         >
@@ -1518,7 +1518,7 @@ const handleRequest = async (entry: RequestableStop) => {
       {/* Parent: active child indicator pill */}
       {role === 'parent' && selectedChild && !rideActive && !selectedBusId && (
         <TouchableOpacity
-          style={[styles.activeChildPill, { top: topOverlay + 60, borderColor: primaryColor + '40' }]}
+          style={[styles.activeChildPill, { top: topOverlay, borderColor: primaryColor + '40' }]}
           onPress={() => childProfiles.length > 1 && setShowChildPicker(true)}
           activeOpacity={childProfiles.length > 1 ? 0.7 : 1}
         >
@@ -1533,7 +1533,13 @@ const handleRequest = async (entry: RequestableStop) => {
       )}
 
       {!rideActive && !showLocationList && !selectedBusId && (
-        <View style={[styles.tipContainer, { top: role === 'parent' && childProfiles.length === 0 ? topOverlay + 130 : (role === 'parent' && selectedChild ? topOverlay + 110 : topOverlay + 60) }]}>
+        <View style={[styles.tipContainer, {
+          top: role === 'parent' && childProfiles.length === 0
+            ? topOverlay + 96    // CTA card (~82px) + 14 gap
+            : role === 'parent' && childProfiles.length > 0
+              ? topOverlay + 116  // pill (36) + gap (10) + search bar (50) + gap (20)
+              : topOverlay + 60,  // search bar (50) + gap (10)
+        }]}>
           {!serviceIsOpen ? (
             // Outside operating hours — show schedule
             <View style={styles.hoursCard}>
@@ -1587,10 +1593,10 @@ const handleRequest = async (entry: RequestableStop) => {
         </View>
       )}
 
-      {role !== 'parent' && !rideActive && showLocationList && !selectedBusId && (
+      {!rideActive && showLocationList && !selectedBusId && (
         <TouchableWithoutFeedback onPress={() => setShowLocationList(false)}>
           <View style={styles.overlay}>
-            <View style={[styles.locationListContainer, { top: topOverlay + 60 }]}>
+            <View style={[styles.locationListContainer, { top: role === 'parent' ? topOverlay + 106 : topOverlay + 60 }]}>
               <FlatList
                 data={requestableStops}
                 keyExtractor={(item) => item.key}
@@ -1700,7 +1706,7 @@ const handleRequest = async (entry: RequestableStop) => {
               >
                 <Image
                   source={busIcon}
-                  style={{ width: 54, height: 54, opacity: loc.isFresh ? 1 : 0.55 }}
+                  style={{ width: 70, height: 70, opacity: loc.isFresh ? 1 : 0.55 }}
                   resizeMode="contain"
                 />
               </MarkerAnimated>

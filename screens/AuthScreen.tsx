@@ -28,9 +28,12 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import InfoBanner from '../components/InfoBanner';
 import { useOrg } from '../src/org/OrgContext';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { persistSamlHandoffFromUrl, trySamlHandoffLogin } from '../src/auth/samlAuth';
 import { startSamlLogin } from '../src/auth/startSamlLogin';
 import { showAlert } from '../src/utils/alerts';
+import { showToast } from '../src/components/Toast';
+import ErrorBanner from '../src/components/ErrorBanner';
 import { auth, db } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
@@ -120,6 +123,40 @@ type FieldErrors = Partial<Record<
   string
 >>;
 
+const PASSWORD_RULES = [
+  { key: 'length',    label: 'At least 8 characters',        test: (p: string) => p.length >= 8 },
+  { key: 'upper',     label: 'One uppercase letter (A–Z)',    test: (p: string) => /[A-Z]/.test(p) },
+  { key: 'lower',     label: 'One lowercase letter (a–z)',    test: (p: string) => /[a-z]/.test(p) },
+  { key: 'number',    label: 'One number (0–9)',              test: (p: string) => /\d/.test(p) },
+  { key: 'special',   label: 'One special character (!@#…)',  test: (p: string) => /[^A-Za-z0-9]/.test(p) },
+];
+
+const STRENGTH_LABELS = ['', 'Weak', 'Fair', 'Good', 'Strong', 'Very strong'];
+const STRENGTH_COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#eab308', '#22c55e', '#16a34a'];
+
+function PasswordStrengthBar({ score }: { score: number }) {
+  return (
+    <View style={styles.strengthWrap}>
+      <View style={styles.strengthBar}>
+        {[1, 2, 3, 4, 5].map((i) => (
+          <View
+            key={i}
+            style={[
+              styles.strengthSegment,
+              { backgroundColor: i <= score ? STRENGTH_COLORS[score] : '#e5e7eb' },
+            ]}
+          />
+        ))}
+      </View>
+      {score > 0 && (
+        <Text style={[styles.strengthLabel, { color: STRENGTH_COLORS[score] }]}>
+          {STRENGTH_LABELS[score]}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function PasswordInput({
   value,
   onChangeText,
@@ -137,8 +174,10 @@ function PasswordInput({
 }) {
   const [visible, setVisible] = useState(false);
   const [focused, setFocused] = useState(false);
-  const hasLength = value.length >= 8;
-  const showReqs = showRequirements && focused && value.length > 0;
+
+  const metCount = PASSWORD_RULES.filter((r) => r.test(value)).length;
+  const showReqs = showRequirements && (focused || value.length > 0);
+
   return (
     <>
       {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
@@ -160,9 +199,21 @@ function PasswordInput({
         </TouchableOpacity>
       </View>
       {showReqs && (
-        <View style={styles.reqRow}>
-          <Icon name={hasLength ? 'check-circle' : 'radio-button-unchecked'} size={13} color={hasLength ? '#16a34a' : '#9ca3af'} />
-          <Text style={[styles.reqText, hasLength && styles.reqTextMet]}>At least 8 characters</Text>
+        <View style={styles.reqList}>
+          <PasswordStrengthBar score={metCount} />
+          {PASSWORD_RULES.map((rule) => {
+            const met = rule.test(value);
+            return (
+              <View key={rule.key} style={styles.reqRow}>
+                <Icon
+                  name={met ? 'check-circle' : 'radio-button-unchecked'}
+                  size={13}
+                  color={met ? '#16a34a' : '#9ca3af'}
+                />
+                <Text style={[styles.reqText, met && styles.reqTextMet]}>{rule.label}</Text>
+              </View>
+            );
+          })}
         </View>
       )}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -172,6 +223,7 @@ function PasswordInput({
 
 function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: string; initialEmail?: string }) {
   const { org } = useOrg();
+  const { primaryColor } = useOrgTheme();
   const [mode, setMode] = useState<'signin' | 'signup'>(initialEmail ? 'signup' : 'signin');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -180,11 +232,13 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const switchMode = (next: 'signin' | 'signup') => {
     setMode(next);
     setErrors({});
+    setFormError(null);
     setFirstName('');
     setLastName('');
     setPhone('');
@@ -202,6 +256,11 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
     }
     if (!password) {
       errs.password = 'Password is required.';
+    } else if (mode === 'signup') {
+      const unmet = PASSWORD_RULES.filter((r) => !r.test(password));
+      if (unmet.length > 0) {
+        errs.password = `Password must include: ${unmet.map((r) => r.label.toLowerCase()).join(', ')}.`;
+      }
     } else if (password.length < 8) {
       errs.password = 'Password must be at least 8 characters.';
     }
@@ -226,6 +285,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   };
 
   const handleSignIn = useCallback(async () => {
+    setFormError(null);
     if (!validate()) return;
     setIsSubmitting(true);
     try {
@@ -265,7 +325,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           } catch {}
         }
         await signOut(auth);
-        showAlert(message, title);
+        setFormError(message);
         return;
       }
 
@@ -279,13 +339,14 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           : e?.code === 'auth/user-not-found'
           ? 'No account found with that email.'
           : e?.message ?? 'Sign in failed.';
-      showAlert(msg, 'Sign In Error');
+      setFormError(msg);
     } finally {
       setIsSubmitting(false);
     }
   }, [email, password, orgId]);
 
   const handleSignUp = useCallback(async () => {
+    setFormError(null);
     if (!validate()) return;
     setIsSubmitting(true);
     const displayName = `${firstName.trim()} ${lastName.trim()}`;
@@ -313,7 +374,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
         }).catch(() => {}); // fire-and-forget; user can resend from EmailVerificationScreen
       }
     } catch (e: any) {
-      showAlert(e?.message ?? 'Registration failed.', 'Sign Up Error');
+      setFormError(e?.message ?? 'Registration failed.');
     } finally {
       setIsSubmitting(false);
     }
@@ -322,7 +383,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const handleForgotPassword = useCallback(async () => {
     const trimmed = email.trim();
     if (!trimmed) {
-      showAlert('Enter your email address above, then tap "Forgot password?".', 'Email required');
+      setFormError('Enter your email address above, then tap "Forgot password?".');
       return;
     }
     try {
@@ -333,17 +394,18 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       });
       // Always show success — the endpoint never reveals whether the email exists
       if (res.ok || res.status < 500) {
-        showAlert(`If an account exists for ${trimmed}, a password reset link has been sent.`, 'Email sent');
+        showToast(`If an account exists for ${trimmed}, a reset link has been sent.`, 'success');
       } else {
         throw new Error(`Server error ${res.status}`);
       }
     } catch (e: any) {
-      showAlert(e?.message ?? 'Failed to send reset email.', 'Error');
+      setFormError(e?.message ?? 'Failed to send reset email.');
     }
   }, [email]);
 
   return (
     <View style={styles.card}>
+      <ErrorBanner message={formError} onDismiss={() => setFormError(null)} />
       {initialEmail ? (
         <View style={styles.founderBanner}>
           <Icon name="admin-panel-settings" size={18} color="#1d4ed8" />
@@ -354,16 +416,16 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       ) : (
         <View style={styles.tabRow}>
           <TouchableOpacity
-            style={[styles.tab, mode === 'signin' && styles.tabActive]}
+            style={[styles.tab, mode === 'signin' && styles.tabActive, mode === 'signin' && { borderBottomColor: primaryColor }]}
             onPress={() => switchMode('signin')}
           >
-            <Text style={[styles.tabText, mode === 'signin' && styles.tabTextActive]}>Sign In</Text>
+            <Text style={[styles.tabText, mode === 'signin' && styles.tabTextActive, mode === 'signin' && { color: primaryColor }]}>Sign In</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tab, mode === 'signup' && styles.tabActive]}
+            style={[styles.tab, mode === 'signup' && styles.tabActive, mode === 'signup' && { borderBottomColor: primaryColor }]}
             onPress={() => switchMode('signup')}
           >
-            <Text style={[styles.tabText, mode === 'signup' && styles.tabTextActive]}>Create Account</Text>
+            <Text style={[styles.tabText, mode === 'signup' && styles.tabTextActive, mode === 'signup' && { color: primaryColor }]}>Create Account</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -466,7 +528,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
 
       {mode === 'signin' && (
         <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotButton}>
-          <Text style={styles.forgotText}>Forgot password?</Text>
+          <Text style={[styles.forgotText, { color: primaryColor }]}>Forgot password?</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -478,6 +540,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
 // First-time users are created with role:'parent' in the org's user collection.
 
 function PhonePanel({ orgId }: { orgId: string }) {
+  const { primaryColor } = useOrgTheme();
   const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationId, setVerificationId] = useState<string | null>(null);
@@ -591,7 +654,7 @@ function PhonePanel({ orgId }: { orgId: string }) {
             onPress={() => { setVerificationId(null); setCode(''); }}
             style={styles.forgotButton}
           >
-            <Text style={styles.forgotText}>Wrong number? Start over</Text>
+            <Text style={[styles.forgotText, { color: primaryColor }]}>Wrong number? Start over</Text>
           </TouchableOpacity>
         </>
       )}
@@ -605,6 +668,7 @@ export default function AuthScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteT>();
   const { org } = useOrg();
+  const { primaryColor } = useOrgTheme();
   const { initialEmail } = route.params;
 
   if (!org) {
@@ -645,8 +709,8 @@ export default function AuthScreen() {
         >
           {/* Back to org selector */}
           <TouchableOpacity style={styles.backButton} onPress={() => navigation.replace('OrgSelector')}>
-            <Icon name="arrow-back" size={20} color={PRIMARY_COLOR} />
-            <Text style={styles.backText}>Change organization</Text>
+            <Icon name="arrow-back" size={20} color={primaryColor} />
+            <Text style={[styles.backText, { color: primaryColor }]}>Change organization</Text>
           </TouchableOpacity>
 
           {/* Org identity */}
@@ -654,8 +718,8 @@ export default function AuthScreen() {
             {org.logoUrl ? (
               <Image source={{ uri: org.logoUrl }} style={styles.orgLogo} resizeMode="contain" />
             ) : (
-              <View style={[styles.orgLogo, styles.orgLogoPlaceholder]}>
-                <Icon name="directions-bus" size={30} color={PRIMARY_COLOR} />
+              <View style={[styles.orgLogo, styles.orgLogoPlaceholder, { backgroundColor: `${primaryColor}15` }]}>
+                <Icon name="directions-bus" size={30} color={primaryColor} />
               </View>
             )}
             <Text style={styles.orgName}>{org.name}</Text>
@@ -852,12 +916,38 @@ const styles = StyleSheet.create({
     marginBottom: spacing.item / 2,
     lineHeight: 15,
   },
+  reqList: {
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  strengthWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  strengthBar: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 4,
+    height: 4,
+  },
+  strengthSegment: {
+    flex: 1,
+    borderRadius: 2,
+  },
+  strengthLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    width: 68,
+    textAlign: 'right',
+  },
   reqRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    marginTop: 4,
-    marginBottom: 4,
+    marginBottom: 3,
   },
   reqText: {
     fontSize: 12,

@@ -150,7 +150,7 @@ export default function DriverScreen() {
   const [totalBoardedSession, setTotalBoardedSession] = useState(0);
   const [todayBoardedTotal, setTodayBoardedTotal] = useState(0);
   const [shiftStartMs, setShiftStartMs] = useState<number | null>(null);
-  const [showShiftCard, setShowShiftCard] = useState(false);
+  const [showShiftCard, setShowShiftCard] = useState(true);
 
   type OtherBusRaw = { id: string; latitude: number; longitude: number; routeId: string | null; isFresh: boolean };
   const [otherBusesRaw, setOtherBusesRaw] = useState<OtherBusRaw[]>([]);
@@ -852,7 +852,14 @@ export default function DriverScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
+        <View>
+          <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
+          {activeRoute && (
+            <Text style={styles.headerSubtitle}>
+              <Icon name="route" size={12} color="#6b7280" /> {activeRoute.name}
+            </Text>
+          )}
+        </View>
         <TouchableOpacity
           style={[styles.shareButton, { backgroundColor: primaryColor }, isToggling && styles.shareButtonDisabled]}
           disabled={isToggling}
@@ -968,23 +975,28 @@ export default function DriverScreen() {
         )}
 
         {!isSharing && hasLocationPermission && (
-          <View style={styles.banner}>
-            <Text style={styles.bannerText}>Not sharing location. Tap Start Sharing to go online.</Text>
+          <View style={styles.offlineBanner}>
+            <Icon name="gps-off" size={16} color="#374151" />
+            <Text style={styles.offlineBannerText}>{"You are offline — tap \"Start Sharing\" to go online."}</Text>
           </View>
         )}
 
         {isSharing && !activeBusIds.includes(driverId) && hasLocationPermission && (
-          <View style={styles.banner}>
-            <Text style={styles.bannerText}>Sharing is ON, but your location hasn’t updated yet.</Text>
+          <View style={styles.waitingBanner}>
+            <ActivityIndicator size="small" color="#92400e" />
+            <Text style={styles.waitingBannerText}>Location ON — waiting for first GPS ping…</Text>
           </View>
         )}
 
         {!hasLocationPermission && (
-          <View style={styles.banner}>
-            <Text style={styles.bannerText}>Location permission denied. Enable location to share your position.</Text>
-            <TouchableOpacity onPress={() => Linking.openSettings()} style={{ marginTop: 6 }}>
-              <Text style={[styles.bannerText, { fontWeight: '700', textDecorationLine: 'underline' }]}>Open Settings →</Text>
-            </TouchableOpacity>
+          <View style={styles.permissionBanner}>
+            <Icon name="location-off" size={16} color="#991b1b" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.permissionBannerText}>Location permission denied. Enable it to share your position.</Text>
+              <TouchableOpacity onPress={() => Linking.openSettings()} style={{ marginTop: 4 }}>
+                <Text style={styles.permissionBannerLink}>Open Settings →</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
@@ -1017,7 +1029,9 @@ export default function DriverScreen() {
               setShowBoardingCard(true);
             }}
           >
-            <Text style={styles.actionButtonText}>Add Students</Text>
+            <Text style={styles.actionButtonText}>
+              {!isSharing ? 'Go online first' : !nearestStop ? 'Drive to a stop' : 'Add Students'}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -1030,13 +1044,18 @@ export default function DriverScreen() {
 
         {isSharing && (
           <TouchableOpacity
-            style={styles.card}
+            style={styles.shiftCard}
             onPress={() => setShowShiftCard((v) => !v)}
-            activeOpacity={0.85}
+            activeOpacity={0.8}
           >
             <View style={styles.shiftCardHeader}>
-              <Text style={styles.cardTitle}>My Shift</Text>
-              <Icon name={showShiftCard ? 'expand-less' : 'expand-more'} size={20} color="#9ca3af" />
+              <View style={styles.shiftCardTitleRow}>
+                <Icon name="timer" size={18} color={primaryColor} />
+                <Text style={styles.cardTitle}>My Shift</Text>
+              </View>
+              <View style={styles.shiftChevron}>
+                <Icon name={showShiftCard ? 'expand-less' : 'expand-more'} size={20} color={primaryColor} />
+              </View>
             </View>
             {showShiftCard && (
               <View style={styles.shiftStats}>
@@ -1267,6 +1286,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   headerTitle: { fontSize: 22, fontWeight: '700', color: '#111' },
+  headerSubtitle: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   scrollContent: {
     paddingHorizontal: 14,
     gap: 12,
@@ -1320,12 +1340,40 @@ const styles = StyleSheet.create({
   },
   pastDueBannerText: { flex: 1, fontSize: 13, color: '#7c2d12', fontWeight: '500' },
   pastDueBannerLink: { fontSize: 13, color: '#dc2626', fontWeight: '700' },
-  banner: {
-    backgroundColor: 'rgba(255,165,0,0.9)',
-    padding: 12,
-    borderRadius: 10,
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 14,
   },
-  bannerText: { color: '#000', fontSize: 14, textAlign: 'center' },
+  offlineBannerText: { flex: 1, fontSize: 13, color: '#374151' },
+  waitingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    borderRadius: 12,
+    padding: 14,
+  },
+  waitingBannerText: { flex: 1, fontSize: 13, color: '#92400e', fontWeight: '500' },
+  permissionBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    padding: 14,
+  },
+  permissionBannerText: { fontSize: 13, color: '#991b1b' },
+  permissionBannerLink: { fontSize: 13, color: '#dc2626', fontWeight: '700' },
   card: {
     backgroundColor: '#fff',
     borderRadius: 14,
@@ -1335,6 +1383,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 14,
     padding: 16,
+  },
+  shiftCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#e0e7ff',
+  },
+  shiftCardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  shiftChevron: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f0f4ff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   shiftCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   shiftStats: { flexDirection: 'row', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f0f0f0' },

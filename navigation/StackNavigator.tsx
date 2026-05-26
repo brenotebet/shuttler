@@ -25,6 +25,7 @@ import ParentChildLinkScreen from '../screens/ParentChildLinkScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
 import { PRIMARY_COLOR } from '../src/constants/theme';
+import { ToastContainer } from '../src/components/Toast';
 
 export type RootStackParamList = {
   OrgSelector: undefined;
@@ -212,6 +213,7 @@ export default function StackNavigator() {
     <View style={styles.root}>
       {renderContent()}
       <LoadingOverlay visible={isLoading} />
+      <ToastContainer />
     </View>
   );
 }

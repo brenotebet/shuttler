@@ -36,8 +36,10 @@ import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+import { showToast } from '../src/components/Toast';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
+import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { getPlanLimits, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
 import ScreenContainer from '../components/ScreenContainer';
@@ -79,7 +81,7 @@ function ProfileTab() {
   const handlePickLogo = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== 'granted') {
-      Alert.alert('Permission required', 'Allow photo library access to upload a logo.');
+      showToast('Allow photo library access to upload a logo.', 'error');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -113,12 +115,9 @@ function ProfileTab() {
     } catch (e: any) {
       const msg: string = e?.message ?? '';
       if (msg.includes('storage/unauthorized') || msg.includes('permission')) {
-        Alert.alert(
-          'Upload failed',
-          'Storage permission denied. In Firebase Console → Storage → Rules, allow authenticated writes to /orgs/{orgId}/.',
-        );
+        showToast('Storage permission denied. Check Firebase Storage rules for /orgs/{orgId}/.', 'error');
       } else {
-        Alert.alert('Upload failed', msg || 'Could not upload logo.');
+        showToast(msg || 'Could not upload logo.', 'error');
       }
     } finally {
       setIsUploadingLogo(false);
@@ -137,9 +136,9 @@ function ProfileTab() {
         updatedAt: serverTimestamp(),
       });
       await refreshOrg();
-      Alert.alert('Saved', 'Profile updated.');
+      showToast('Profile updated.', 'success');
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to save.');
+      showToast(e?.message ?? 'Failed to save.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -250,6 +249,7 @@ type AuthMethod = 'saml' | 'email' | 'phone';
 
 function AuthTab() {
   const { org, refreshOrg } = useOrg();
+  const { primaryColor } = useOrgTheme();
   const [authMethod, setAuthMethod] = useState<AuthMethod>(
     (org?.authMethod as AuthMethod) ?? 'email',
   );
@@ -286,9 +286,9 @@ function AuthTab() {
       if (!res.ok) throw new Error(data?.error ?? 'Failed to save auth config');
       await refreshOrg();
       setSavedSpInfo({ spEntityId: data.spEntityId, acsUrl: data.acsUrl });
-      Alert.alert('Saved', 'Auth configuration updated.');
+      showToast('Auth configuration updated.', 'success');
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to save.');
+      showToast(e?.message ?? 'Failed to save.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -301,10 +301,10 @@ function AuthTab() {
       {(['email', 'phone', 'saml'] as AuthMethod[]).map((m) => (
         <TouchableOpacity
           key={m}
-          style={[styles.radioRow, authMethod === m && styles.radioRowActive]}
+          style={[styles.radioRow, authMethod === m && styles.radioRowActive, authMethod === m && { borderColor: primaryColor }]}
           onPress={() => setAuthMethod(m)}
         >
-          <View style={[styles.radio, authMethod === m && styles.radioSelected]} />
+          <View style={[styles.radio, authMethod === m && styles.radioSelected, authMethod === m && { borderColor: primaryColor, backgroundColor: primaryColor }]} />
           <Text style={styles.radioLabel}>
             {m === 'email'
               ? 'Email / Password'
@@ -362,7 +362,7 @@ function AuthTab() {
 
       {savedSpInfo?.acsUrl && (
         <View style={styles.infoBox}>
-          <Text style={styles.infoBoxTitle}>Give these to your IT team:</Text>
+          <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Give these to your IT team:</Text>
           <Text style={styles.infoBoxLabel}>ACS URL</Text>
           <Text style={styles.infoBoxValue} selectable>{savedSpInfo.acsUrl}</Text>
           <Text style={styles.infoBoxLabel}>SP Entity ID</Text>
@@ -409,6 +409,7 @@ function ScheduleEditor({
   route: Route;
   onChange: (schedule: WeekSchedule) => void;
 }) {
+  const { primaryColor } = useOrgTheme();
   const schedule: WeekSchedule = route.schedule ?? { ...DEFAULT_WEEK_SCHEDULE };
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerField, setPickerField] = useState<{ dayKey: keyof WeekSchedule; field: 'open' | 'close' } | null>(null);
@@ -443,7 +444,7 @@ function ScheduleEditor({
             <Switch
               value={day.isOpen}
               onValueChange={(v) => update(key, { isOpen: v })}
-              trackColor={{ false: '#e5e7eb', true: PRIMARY_COLOR }}
+              trackColor={{ false: '#e5e7eb', true: primaryColor }}
               thumbColor="#fff"
             />
             <Text style={[hoursStyles.dayLabel, !day.isOpen && { color: '#bbb' }]}>{label}</Text>
@@ -472,7 +473,7 @@ function ScheduleEditor({
               <Text style={hoursStyles.pickerCancel}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={confirmPicker}>
-              <Text style={hoursStyles.pickerDone}>Done</Text>
+              <Text style={[hoursStyles.pickerDone, { color: primaryColor }]}>Done</Text>
             </TouchableOpacity>
           </View>
           <Picker selectedValue={pickerTemp} onValueChange={(v) => setPickerTemp(v as string)}>
@@ -637,6 +638,8 @@ function calcBoundsFromStops(stops: Stop[]) {
 
 function StopsTab() {
   const { org, refreshOrg } = useOrg();
+  const { primaryColor } = useOrgTheme();
+  const navigation = useNavigation<any>();
   const planLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
   const mapRef = useRef<MapView>(null);
   const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
@@ -749,7 +752,7 @@ function StopsTab() {
     const lat = parseFloat(manualLat);
     const lon = parseFloat(manualLon);
     if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      Alert.alert('Invalid coordinates', 'Latitude must be −90 to 90, longitude −180 to 180.');
+      showToast('Latitude must be −90 to 90, longitude −180 to 180.', 'error');
       return;
     }
     const coords = { latitude: lat, longitude: lon };
@@ -773,18 +776,15 @@ function StopsTab() {
 
   const handleAddStop = useCallback(() => {
     if (!pendingName.trim()) {
-      Alert.alert('Name required', 'Enter a stop name.');
+      showToast('Enter a stop name.', 'error');
       return;
     }
     if (!pendingCoords) {
-      Alert.alert('Coordinates required', 'Tap the map or enter latitude and longitude.');
+      showToast('Tap the map or enter latitude and longitude.', 'error');
       return;
     }
     if (stops.length >= planLimits.maxStops) {
-      Alert.alert(
-        'Stop limit reached',
-        `Your ${planLimits.label} plan allows ${stopLimitText(planLimits)}. Upgrade to Campus for unlimited stops.`,
-      );
+      showToast(`Stop limit reached. Your ${planLimits.label} plan allows ${stopLimitText(planLimits)}. Upgrade to Campus for unlimited stops.`, 'error');
       return;
     }
     const newStop: Stop = {
@@ -818,6 +818,7 @@ function StopsTab() {
 
   const handleSaveAll = useCallback(async () => {
     if (!org) return;
+    const isFirstSave = !(org.stops?.length);
     setIsSaving(true);
     try {
       const bounds = calcBoundsFromStops(stops);
@@ -829,22 +830,23 @@ function StopsTab() {
         updatedAt: serverTimestamp(),
       });
       await refreshOrg();
-      Alert.alert('Saved', 'Stops, routes, and map bounds updated.');
+      if (isFirstSave && stops.length > 0) {
+        navigation.navigate('DriverHome');
+      } else {
+        showToast('Stops, routes, and map bounds updated.', 'success');
+      }
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to save.');
+      showToast(e?.message ?? 'Failed to save.', 'error');
     } finally {
       setIsSaving(false);
     }
-  }, [org, stops, routes, mapCenter, refreshOrg]);
+  }, [org, stops, routes, mapCenter, refreshOrg, navigation]);
 
   // Route helpers
   const handleAddRoute = useCallback(() => {
     if (!newRouteName.trim()) return;
     if (routes.length >= planLimits.maxRoutes) {
-      Alert.alert(
-        'Route limit reached',
-        `Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}. Upgrade to Campus for unlimited routes.`,
-      );
+      showToast(`Route limit reached. Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}. Upgrade to Campus for unlimited routes.`, 'error');
       return;
     }
     setRoutes((prev) => [
@@ -930,7 +932,7 @@ function StopsTab() {
             key={stop.id}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             title={stop.name}
-            pinColor={PRIMARY_COLOR}
+            pinColor={primaryColor}
             onCalloutPress={() => handleDeleteStop(stop.id)}
           />
         ))}
@@ -986,7 +988,7 @@ function StopsTab() {
             returnKeyType="search"
             autoCorrect={false}
           />
-          {isSearching && <ActivityIndicator size="small" color={PRIMARY_COLOR} style={{ marginLeft: 6 }} />}
+          {isSearching && <ActivityIndicator size="small" color={primaryColor} style={{ marginLeft: 6 }} />}
           {searchQuery.length > 0 && !isSearching && (
             <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
               <Icon name="close" size={16} color="#9ca3af" style={{ marginLeft: 6 }} />
@@ -1044,7 +1046,7 @@ function StopsTab() {
               />
             </View>
             <TouchableOpacity
-              style={[stopStyles.applyBtn, (!manualLat || !manualLon) && { opacity: 0.4 }]}
+              style={[stopStyles.applyBtn, { backgroundColor: primaryColor }, (!manualLat || !manualLon) && { opacity: 0.4 }]}
               onPress={handleApplyManualCoords}
               disabled={!manualLat || !manualLon}
             >
@@ -1067,7 +1069,7 @@ function StopsTab() {
             </Text>
           )}
           <TouchableOpacity
-            style={[styles.addStopBtn, (!pendingName.trim() || !pendingCoords) && styles.addStopBtnDisabled]}
+            style={[styles.addStopBtn, { backgroundColor: primaryColor }, (!pendingName.trim() || !pendingCoords) && styles.addStopBtnDisabled]}
             onPress={handleAddStop}
             disabled={!pendingName.trim() || !pendingCoords}
           >
@@ -1078,7 +1080,7 @@ function StopsTab() {
 
         {stops.map((stop) => (
           <View key={stop.id} style={styles.stopRow}>
-            <Icon name="place" size={18} color={PRIMARY_COLOR} />
+            <Icon name="place" size={18} color={primaryColor} />
             <Text style={styles.stopName} numberOfLines={1}>{stop.name}</Text>
             <TouchableOpacity onPress={() => handleDeleteStop(stop.id)}>
               <Icon name="close" size={18} color="#e53935" />
@@ -1096,10 +1098,7 @@ function StopsTab() {
           <TouchableOpacity
             onPress={() => {
               if (routes.length >= planLimits.maxRoutes) {
-                Alert.alert(
-                  'Route limit reached',
-                  `Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}. Upgrade to Campus for unlimited routes.`,
-                );
+                showToast(`Route limit reached. Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}.`, 'error');
                 return;
               }
               setShowRouteForm(true);
@@ -1108,7 +1107,7 @@ function StopsTab() {
             <Icon
               name="add-circle"
               size={24}
-              color={routes.length >= planLimits.maxRoutes ? '#ccc' : PRIMARY_COLOR}
+              color={routes.length >= planLimits.maxRoutes ? '#ccc' : primaryColor}
             />
           </TouchableOpacity>
         </View>
@@ -1125,7 +1124,7 @@ function StopsTab() {
               onChangeText={setNewRouteName}
               placeholderTextColor="#aaa"
             />
-            <TouchableOpacity style={styles.addStopBtn} onPress={handleAddRoute}>
+            <TouchableOpacity style={[styles.addStopBtn, { backgroundColor: primaryColor }]} onPress={handleAddRoute}>
               <Icon name="check" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -1139,7 +1138,7 @@ function StopsTab() {
                 style={styles.routeCardHeader}
                 onPress={() => setEditingRouteId(isExpanded ? null : route.id)}
               >
-                <Icon name="directions-bus" size={18} color={PRIMARY_COLOR} />
+                <Icon name="directions-bus" size={18} color={primaryColor} />
                 <Text style={styles.routeName}>{route.name}</Text>
                 <Text style={styles.routeStopCount}>{route.stopIds.length} stop{route.stopIds.length !== 1 ? 's' : ''}</Text>
                 <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={20} color="#888" />
@@ -1180,7 +1179,7 @@ function StopsTab() {
                       style={styles.routeStopAvailable}
                       onPress={() => handleToggleStopInRoute(route.id, stop.id)}
                     >
-                      <Icon name="add-circle-outline" size={18} color={PRIMARY_COLOR} />
+                      <Icon name="add-circle-outline" size={18} color={primaryColor} />
                       <Text style={styles.routeStopName}>{stop.name}</Text>
                     </TouchableOpacity>
                   ))}
@@ -1235,12 +1234,13 @@ const ROLE_LABELS: Record<string, string> = {
 const ROLE_COLORS: Record<string, string> = {
   student: '#3b82f6',
   driver: '#f59e0b',
-  admin: PRIMARY_COLOR,
+  admin: '#16a34a',
   parent: '#10b981',
 };
 
 function UsersTab() {
   const { org } = useOrg();
+  const { primaryColor } = useOrgTheme();
   const { user: currentUser } = useAuth();
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -1319,7 +1319,7 @@ function UsersTab() {
         );
         setDriverDefaults((prev) => ({ ...prev, [uid]: routeId }));
       } catch (e: any) {
-        Alert.alert('Error', e?.message ?? 'Could not save route assignment.');
+        showToast(e?.message ?? 'Could not save route assignment.', 'error');
       } finally {
         setSavingRoute(null);
       }
@@ -1331,7 +1331,7 @@ function UsersTab() {
     (member: OrgMember) => {
       if (!org) return;
       if (member.uid === currentUser?.uid) {
-        Alert.alert('Cannot change your own role', 'Ask another admin to change your role.');
+        showToast('Ask another admin to change your role.', 'error');
         return;
       }
       Alert.alert(
@@ -1363,7 +1363,7 @@ function UsersTab() {
           prev.map((m) => (m.uid === uid ? { ...m, role: role as OrgMember['role'] } : m)),
         );
       } catch (e: any) {
-        Alert.alert('Error', e?.message ?? 'Could not update role.');
+        showToast(e?.message ?? 'Could not update role.', 'error');
       }
     },
     [org],
@@ -1373,7 +1373,7 @@ function UsersTab() {
     (member: OrgMember) => {
       if (!org) return;
       if (member.uid === currentUser?.uid) {
-        Alert.alert('Cannot remove yourself', 'Ask another admin to remove your account.');
+        showToast('Ask another admin to remove your account.', 'error');
         return;
       }
       Alert.alert(
@@ -1394,7 +1394,7 @@ function UsersTab() {
                 if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
                 setMembers((prev) => prev.filter((m) => m.uid !== member.uid));
               } catch (e: any) {
-                Alert.alert('Error', e?.message ?? 'Could not remove user.');
+                showToast(e?.message ?? 'Could not remove user.', 'error');
               }
             },
           },
@@ -1407,7 +1407,7 @@ function UsersTab() {
   if (isLoading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+        <ActivityIndicator size="large" color={primaryColor} />
       </View>
     );
   }
@@ -1432,14 +1432,14 @@ function UsersTab() {
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
       {/* Invite card */}
-      <TouchableOpacity style={usersStyles.inviteCard} onPress={handleShareInvite} activeOpacity={0.8}>
-        <View style={usersStyles.inviteIconWrap}>
-          <Icon name="share" size={20} color={PRIMARY_COLOR} />
+      <TouchableOpacity style={[usersStyles.inviteCard, { backgroundColor: `${primaryColor}0d`, borderColor: `${primaryColor}30` }]} onPress={handleShareInvite} activeOpacity={0.8}>
+        <View style={[usersStyles.inviteIconWrap, { backgroundColor: `${primaryColor}18` }]}>
+          <Icon name="share" size={20} color={primaryColor} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={usersStyles.inviteTitle}>Invite people to join</Text>
           <Text style={usersStyles.inviteBody} numberOfLines={1}>
-            Org ID: <Text style={usersStyles.inviteSlug}>{orgSlug}</Text>
+            Org ID: <Text style={[usersStyles.inviteSlug, { color: primaryColor }]}>{orgSlug}</Text>
           </Text>
         </View>
         <Icon name="chevron-right" size={20} color="#d1d5db" />
@@ -1460,8 +1460,8 @@ function UsersTab() {
         const isSelf = member.uid === currentUser?.uid;
         return (
           <View key={member.uid} style={styles.memberRow}>
-            <View style={[styles.memberAvatar, isSelf && usersStyles.selfAvatar]}>
-              <Text style={styles.memberAvatarText}>
+            <View style={[styles.memberAvatar, isSelf && usersStyles.selfAvatar, isSelf && { backgroundColor: `${primaryColor}25` }]}>
+              <Text style={[styles.memberAvatarText, { color: primaryColor }]}>
                 {(member.displayName ?? member.email).charAt(0).toUpperCase()}
               </Text>
             </View>
@@ -1485,7 +1485,7 @@ function UsersTab() {
                 disabled={savingRoute === member.uid}
               >
                 {savingRoute === member.uid ? (
-                  <ActivityIndicator size="small" color={PRIMARY_COLOR} />
+                  <ActivityIndicator size="small" color={primaryColor} />
                 ) : (
                   <Text style={styles.routeBadgeText} numberOfLines={1}>
                     {assignedRoute ? assignedRoute.name : 'Route…'}
@@ -1494,10 +1494,10 @@ function UsersTab() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              style={[styles.roleBadge, { backgroundColor: `${ROLE_COLORS[member.role]}20` }, isSelf && usersStyles.roleBadgeSelf]}
+              style={[styles.roleBadge, { backgroundColor: `${member.role === 'admin' ? primaryColor : ROLE_COLORS[member.role]}20` }, isSelf && usersStyles.roleBadgeSelf]}
               onPress={() => handleChangeRole(member)}
             >
-              <Text style={[styles.roleBadgeText, { color: ROLE_COLORS[member.role] }]}>
+              <Text style={[styles.roleBadgeText, { color: member.role === 'admin' ? primaryColor : ROLE_COLORS[member.role] }]}>
                 {ROLE_LABELS[member.role]}
               </Text>
             </TouchableOpacity>
@@ -1579,6 +1579,7 @@ const usersStyles = StyleSheet.create({
 
 function BillingTab() {
   const { org, refreshOrg } = useOrg();
+  const { primaryColor } = useOrgTheme();
   const [isLoading, setIsLoading] = useState(false);
 
   const openCheckout = useCallback(
@@ -1601,7 +1602,7 @@ function BillingTab() {
           await refreshOrg();
         }
       } catch (e: any) {
-        Alert.alert('Error', e?.message ?? 'Failed to open billing.');
+        showToast(e?.message ?? 'Failed to open billing.', 'error');
       } finally {
         setIsLoading(false);
       }
@@ -1628,7 +1629,7 @@ function BillingTab() {
         await refreshOrg();
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to open billing portal.');
+      showToast(e?.message ?? 'Failed to open billing portal.', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -1704,14 +1705,14 @@ function BillingTab() {
       {PLANS.map((plan) => {
         const isCurrent = org?.subscriptionPlan === plan.key && isActive;
         return (
-          <View key={plan.key} style={[styles.planCard, isCurrent && styles.planCardActive]}>
+          <View key={plan.key} style={[styles.planCard, isCurrent && styles.planCardActive, isCurrent && { borderColor: primaryColor }]}>
             <View style={styles.planInfo}>
               <View style={styles.planNameRow}>
                 <Text style={styles.planName}>{plan.label}</Text>
-                {plan.popular && <View style={styles.popularBadge}><Text style={styles.popularBadgeText}>Most Popular</Text></View>}
+                {plan.popular && <View style={[styles.popularBadge, { backgroundColor: `${primaryColor}20` }]}><Text style={[styles.popularBadgeText, { color: primaryColor }]}>Most Popular</Text></View>}
                 {isCurrent && <View style={styles.currentBadge}><Text style={styles.currentBadgeText}>Current</Text></View>}
               </View>
-              <Text style={styles.planPrice}>{plan.price}</Text>
+              <Text style={[styles.planPrice, { color: primaryColor }]}>{plan.price}</Text>
               <Text style={styles.planDesc}>{plan.desc}</Text>
             </View>
             <AppButton
@@ -1727,7 +1728,7 @@ function BillingTab() {
       <View style={styles.planCard}>
         <View style={styles.planInfo}>
           <Text style={styles.planName}>Enterprise</Text>
-          <Text style={styles.planPrice}>Custom pricing</Text>
+          <Text style={[styles.planPrice, { color: primaryColor }]}>Custom pricing</Text>
           <Text style={styles.planDesc}>Unlimited vehicles · SSO · SLA · Custom branding</Text>
         </View>
         <AppButton
@@ -1772,6 +1773,7 @@ interface DriverStat {
 
 function AnalyticsTab() {
   const { org } = useOrg();
+  const { primaryColor } = useOrgTheme();
   const [records, setRecords] = useState<BoardingCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1817,7 +1819,7 @@ function AnalyticsTab() {
   if (isLoading) {
     return (
       <View style={analyticsStyles.center}>
-        <ActivityIndicator size="large" color={PRIMARY_COLOR} />
+        <ActivityIndicator size="large" color={primaryColor} />
       </View>
     );
   }
@@ -1871,17 +1873,17 @@ function AnalyticsTab() {
       {/* Summary cards */}
       <View style={analyticsStyles.cardRow}>
         <View style={[analyticsStyles.card, { flex: 1 }]}>
-          <Icon name="people" size={24} color={PRIMARY_COLOR} />
+          <Icon name="people" size={24} color={primaryColor} />
           <Text style={analyticsStyles.cardValue}>{totalBoarded}</Text>
           <Text style={analyticsStyles.cardLabel}>Total Boarded</Text>
         </View>
         <View style={[analyticsStyles.card, { flex: 1 }]}>
-          <Icon name="place" size={24} color={PRIMARY_COLOR} />
+          <Icon name="place" size={24} color={primaryColor} />
           <Text style={analyticsStyles.cardValue}>{stopMap.size}</Text>
           <Text style={analyticsStyles.cardLabel}>Active Stops</Text>
         </View>
         <View style={[analyticsStyles.card, { flex: 1 }]}>
-          <Icon name="directions-bus" size={24} color={PRIMARY_COLOR} />
+          <Icon name="directions-bus" size={24} color={primaryColor} />
           <Text style={analyticsStyles.cardValue}>{driverMap.size}</Text>
           <Text style={analyticsStyles.cardLabel}>Active Drivers</Text>
         </View>
@@ -1996,6 +1998,7 @@ const analyticsStyles = StyleSheet.create({
 export default function AdminOrgSetupScreen() {
   const navigation = useNavigation();
   const { org: setupOrg } = useOrg();
+  const { primaryColor } = useOrgTheme();
   useFirstLoginOnboarding();
   const [activeTab, setActiveTab] = useState<Tab>(
     (setupOrg?.stops?.length ?? 0) === 0 ? 'stops' : 'profile',
@@ -2015,7 +2018,7 @@ export default function AdminOrgSetupScreen() {
       <View style={styles.headerRow}>
         {(navigation as any).canGoBack() ? (
           <TouchableOpacity onPress={() => (navigation as any).goBack()} style={styles.backButton}>
-            <Icon name="arrow-back" size={24} color={PRIMARY_COLOR} />
+            <Icon name="arrow-back" size={24} color={primaryColor} />
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
@@ -2027,7 +2030,7 @@ export default function AdminOrgSetupScreen() {
             }
             style={styles.backButton}
           >
-            <Icon name="logout" size={24} color={PRIMARY_COLOR} />
+            <Icon name="logout" size={24} color={primaryColor} />
           </TouchableOpacity>
         )}
         <View style={{ flex: 1 }}>
@@ -2038,27 +2041,28 @@ export default function AdminOrgSetupScreen() {
         </View>
       </View>
 
-      {/* Tab Bar — horizontal scroll so tabs never get squished */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabBar}
-        contentContainerStyle={styles.tabBarContent}
-        bounces={false}
-      >
-        {tabs.map((t) => (
-          <TouchableOpacity
-            key={t.key}
-            style={[styles.tabBarItem, activeTab === t.key && styles.tabBarItemActive]}
-            onPress={() => setActiveTab(t.key)}
-          >
-            <Icon name={t.icon} size={20} color={activeTab === t.key ? PRIMARY_COLOR : '#aaa'} />
-            <Text style={[styles.tabBarLabel, activeTab === t.key && styles.tabBarLabelActive]}>
-              {t.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* Tab Bar — wrapped in a fixed-height View so the ScrollView can't flex-expand */}
+      <View style={styles.tabBar}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabBarContent}
+          bounces={false}
+        >
+          {tabs.map((t) => (
+            <TouchableOpacity
+              key={t.key}
+              style={[styles.tabBarItem, activeTab === t.key && styles.tabBarItemActive, activeTab === t.key && { borderBottomColor: primaryColor }]}
+              onPress={() => setActiveTab(t.key)}
+            >
+              <Icon name={t.icon} size={20} color={activeTab === t.key ? primaryColor : '#aaa'} />
+              <Text style={[styles.tabBarLabel, activeTab === t.key && styles.tabBarLabelActive, activeTab === t.key && { color: primaryColor }]}>
+                {t.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
       {/* Tab Content */}
       <KeyboardAvoidingView
@@ -2100,6 +2104,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   tabBar: {
+    height: 60,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
     backgroundColor: '#fff',
