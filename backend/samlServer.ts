@@ -1789,16 +1789,18 @@ app.post('/ai/admin-chat', requireAuth, async (req: Request, res: Response) => {
       .collection('users').doc(uid)
       .get();
 
-    if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
+    if (!memberDoc.exists) {
+      return res.status(403).json({ error: 'Not a member of this org' });
     }
+
+    const memberRole: string = memberDoc.data()?.role ?? 'student';
 
     const sanitized: { role: 'user' | 'assistant'; content: string }[] = messages.map((m) => ({
       role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
       content: String(m.content).slice(0, 4000),
     }));
 
-    const reply = await handleAdminChat(orgId, sanitized);
+    const reply = await handleAdminChat(orgId, sanitized, memberRole);
     return res.json({ reply });
   } catch (e: any) {
     console.error('[ai/admin-chat]', e?.message ?? e);

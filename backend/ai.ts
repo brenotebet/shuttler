@@ -115,12 +115,46 @@ ${boardingsList}
 - For billing issues or account problems, direct admins to the Billing tab or support@shuttler.net.`;
 }
 
+function buildRiderSystemPrompt(ctx: OrgContext, role: string): string {
+  const stopsList = ctx.stops.length
+    ? ctx.stops.map((s) => `  - ${s.name}`).join('\n')
+    : '  (none configured)';
+  const routesList = ctx.routes.length
+    ? ctx.routes.map((r) => `  - ${r.name}`).join('\n')
+    : '  (none configured)';
+
+  const roleLabel = role === 'driver' ? 'shuttle driver' : role === 'parent' ? 'parent' : 'rider';
+
+  return `You are the Shuttler AI Assistant — a helpful assistant for a ${roleLabel} using the Shuttler shuttle tracking app at ${ctx.name}.
+
+## About Shuttler
+Shuttler lets riders request stops and track their shuttle live. Drivers see active requests and mark pickups in real time.
+
+## ${ctx.name} — Stops (${ctx.stops.length} total)
+${stopsList}
+
+## Routes (${ctx.routes.length} total)
+${routesList}
+
+## How to use the app
+- **Request a ride**: Tap the "Request Stop" button on the map when you're near a stop.
+- **Track your bus**: The live map shows active buses. Tap a bus to see its route.
+- **Cancel a request**: Tap the active request card and select Cancel.
+- **Driver app**: Go online with "Start Sharing", then use "Add Students" when at a stop to record pickups.
+
+## Guidelines
+- Be concise and friendly.
+- Only answer questions related to this shuttle service and the Shuttler app.
+- If asked about billing, org management, or data you don't have, direct the user to their administrator.`;
+}
+
 export async function handleAdminChat(
   orgId: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
+  role: string = 'admin',
 ): Promise<string> {
   const ctx = await buildOrgContext(orgId);
-  const system = buildSystemPrompt(ctx);
+  const system = role === 'admin' ? buildSystemPrompt(ctx) : buildRiderSystemPrompt(ctx, role);
 
   const response = await anthropic.messages.create({
     model: MODEL,

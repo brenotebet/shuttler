@@ -22,6 +22,8 @@ import CreateOrgScreen from '../screens/CreateOrgScreen';
 import HowToUseScreen from '../screens/HowToUseScreen';
 import ParentChildLinkScreen from '../screens/ParentChildLinkScreen';
 import AdminChatScreen from '../screens/AdminChatScreen';
+import AdminAnalyticsScreen from '../screens/AdminAnalyticsScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -45,7 +47,9 @@ export type RootStackParamList = {
   AdminDriver: undefined;
   AdminDashboard: undefined;
   AdminOrgSetup: undefined;
+  AdminAnalytics: undefined;
   AdminChat: undefined;
+  Profile: undefined;
   HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent'; isOnboarding?: boolean };
 
   SubscriptionExpired: undefined;
@@ -169,6 +173,8 @@ export default function StackNavigator() {
           <Stack.Screen name="StudentHome" component={StudentTabs} />
           <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
           <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
+          <Stack.Screen name="Profile" component={ProfileScreen} />
+          <Stack.Screen name="AdminChat" component={AdminChatScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </Stack.Navigator>
       );
@@ -184,6 +190,8 @@ export default function StackNavigator() {
             <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
             <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
             <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+            <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />
+            <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="AdminChat" component={AdminChatScreen} />
             <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           </Stack.Navigator>
@@ -196,6 +204,8 @@ export default function StackNavigator() {
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
           <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
+          <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />
+          <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="AdminChat" component={AdminChatScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </Stack.Navigator>
@@ -208,6 +218,8 @@ export default function StackNavigator() {
         <Stack.Screen name="StudentHome" component={StudentTabs} />
         <Stack.Screen name="StudentHistory" component={StudentHistoryScreen} />
         <Stack.Screen name="ParentChildLink" component={ParentChildLinkScreen} />
+        <Stack.Screen name="Profile" component={ProfileScreen} />
+        <Stack.Screen name="AdminChat" component={AdminChatScreen} />
         <Stack.Screen name="HowToUse" component={HowToUseScreen} />
       </Stack.Navigator>
     );

@@ -1,7 +1,7 @@
 // src/screens/DriverMenuScreen.tsx
 
 import React from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -66,7 +66,11 @@ export default function DriverMenuScreen() {
   };
 
   return (
-    <ScreenContainer style={styles.container}>
+    <ScreenContainer>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.container}
+      >
       <View style={styles.hero}>
         {firstName ? (
           <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
@@ -80,6 +84,20 @@ export default function DriverMenuScreen() {
       </View>
 
       <View style={styles.menuSection}>
+        <MenuItem
+          icon="person"
+          title="My Profile"
+          description="Edit your name, phone, and preferences"
+          onPress={() => navigation.navigate('Profile')}
+        />
+
+        <MenuItem
+          icon="auto-awesome"
+          title="AI Assistant"
+          description="Ask questions about routes, stops, or your operation"
+          onPress={() => navigation.navigate('AdminChat')}
+        />
+
         <MenuItem
           icon="history"
           title="History"
@@ -104,8 +122,17 @@ export default function DriverMenuScreen() {
           <MenuItem
             icon="dashboard"
             title="Dashboard"
-            description="Live driver activity, pickups, and stop trends"
+            description="Live driver activity and status"
             onPress={() => navigation.navigate('AdminDashboard')}
+          />
+        )}
+
+        {role === 'admin' && (
+          <MenuItem
+            icon="bar-chart"
+            title="Analytics"
+            description="Insights, trends, and raw boarding data"
+            onPress={() => navigation.navigate('AdminAnalytics')}
           />
         )}
 
@@ -119,15 +146,6 @@ export default function DriverMenuScreen() {
                 : 'Manage stops, routes, users and billing'
             }
             onPress={() => navigation.navigate('AdminOrgSetup')}
-          />
-        )}
-
-        {role === 'admin' && (
-          <MenuItem
-            icon="auto-awesome"
-            title="AI Assistant"
-            description="Ask questions about your data and operations"
-            onPress={() => navigation.navigate('AdminChat')}
           />
         )}
 
@@ -146,6 +164,7 @@ export default function DriverMenuScreen() {
           variant="danger"
         />
       </View>
+      </ScrollView>
     </ScreenContainer>
   );
 }
@@ -154,6 +173,7 @@ const styles = StyleSheet.create({
   container: {
     paddingTop: spacing.section * 3,
     paddingBottom: spacing.section * 2,
+    flexGrow: 1,
   },
   hero: {
     marginBottom: spacing.section * 1.5,

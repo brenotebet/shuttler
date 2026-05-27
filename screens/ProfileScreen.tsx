@@ -15,6 +15,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import ScreenContainer from '../components/ScreenContainer';
+import HeaderBar from '../components/HeaderBar';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -148,8 +149,12 @@ export default function ProfileScreen() {
   const initials = getInitials(displayName, email);
 
   return (
-    <ScreenContainer style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+    <ScreenContainer padded={false}>
+      <HeaderBar title="My Profile" />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
         {/* Avatar */}
         <View style={styles.avatarSection}>
           <View style={[styles.avatar, { backgroundColor: primaryColor }]}>
@@ -289,8 +294,9 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    paddingTop: spacing.section * 3,
+  scrollContent: {
+    paddingHorizontal: spacing.screenPadding,
+    paddingTop: spacing.section,
     paddingBottom: spacing.section * 2,
   },
   avatarSection: {

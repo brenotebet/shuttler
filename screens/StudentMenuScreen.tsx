@@ -1,7 +1,7 @@
 // src/screens/StudentMenuScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Alert, Switch } from 'react-native';
+import { View, Text, StyleSheet, Alert, Switch, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signOut } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
@@ -57,7 +57,11 @@ export default function StudentMenuScreen() {
   };
 
   return (
-    <ScreenContainer style={styles.container}>
+    <ScreenContainer>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.container}
+      >
       <View style={styles.hero}>
         {firstName ? (
           <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
@@ -77,6 +81,20 @@ export default function StudentMenuScreen() {
             onPress={() => navigation.navigate('ParentChildLink')}
           />
         )}
+
+        <MenuItem
+          icon="person"
+          title="My Profile"
+          description="Edit your name, phone, and preferences"
+          onPress={() => navigation.navigate('Profile')}
+        />
+
+        <MenuItem
+          icon="auto-awesome"
+          title="AI Assistant"
+          description="Ask questions about routes, stops, or how to use the app"
+          onPress={() => navigation.navigate('AdminChat')}
+        />
 
         <MenuItem
           icon="history"
@@ -113,6 +131,7 @@ export default function StudentMenuScreen() {
           variant="danger"
         />
       </View>
+      </ScrollView>
     </ScreenContainer>
   );
 }
@@ -121,6 +140,7 @@ const styles = StyleSheet.create({
   container: {
     paddingTop: spacing.section * 3,
     paddingBottom: spacing.section * 2,
+    flexGrow: 1,
   },
   hero: {
     marginBottom: spacing.section * 1.5,

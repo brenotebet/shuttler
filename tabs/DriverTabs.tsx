@@ -5,7 +5,6 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import DriverScreen from '../screens/DriverScreen';
 import DriverMenuScreen from '../screens/DriverMenuScreen';
 import RoutesScreen from '../screens/RoutesScreen';
-import ProfileScreen from '../screens/ProfileScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
@@ -34,7 +33,6 @@ export default function DriverTabs() {
           const icons: Record<string, string> = {
             LiveLocation: 'location-on',
             Routes: 'directions-bus',
-            Profile: 'person',
             Menu: 'menu',
           };
           return <Icon name={icons[route.name] ?? 'help-outline'} size={size} color={color} />;
@@ -45,7 +43,6 @@ export default function DriverTabs() {
     >
       <Tab.Screen name="LiveLocation" component={DriverScreen} />
       <Tab.Screen name="Routes" component={RoutesScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
       <Tab.Screen name="Menu" component={DriverMenuScreen} />
     </Tab.Navigator>
   );
