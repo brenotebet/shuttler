@@ -12,6 +12,9 @@ const _env: Record<string, string> = {
   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '',
   EXPO_PUBLIC_SHUTTLER_API_URL: process.env.EXPO_PUBLIC_SHUTTLER_API_URL ?? '',
   EXPO_PUBLIC_SENTRY_DSN: process.env.EXPO_PUBLIC_SENTRY_DSN ?? '',
+  EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',
+  EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
+  EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '',
 };
 
 const getPublicEnvVar = (key: string): string => {
@@ -42,3 +45,10 @@ export const SHUTTLER_API_URL = getSecureUrlEnvVar('EXPO_PUBLIC_SHUTTLER_API_URL
 
 // Deep link scheme for this app
 export const APP_SCHEME = 'shuttler';
+
+// Google OAuth client IDs — set in .env and Firebase Console
+// Web client ID: used by expo-auth-session redirect on all platforms
+// iOS / Android client IDs: platform-specific native credentials
+export const GOOGLE_WEB_CLIENT_ID = _env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+export const GOOGLE_IOS_CLIENT_ID = _env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+export const GOOGLE_ANDROID_CLIENT_ID = _env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;

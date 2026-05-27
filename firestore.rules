@@ -85,7 +85,8 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.auth.uid == uid
         && request.resource.data.orgId == orgId
-        && request.resource.data.role == 'student';
+        && request.resource.data.role == 'student'
+        && orgIsActive(orgId);
 
       // Update own profile but never change role or orgId.
       // Admins may also set defaultRouteId on any member's doc.

@@ -24,6 +24,7 @@ import ParentChildLinkScreen from '../screens/ParentChildLinkScreen';
 import AdminChatScreen from '../screens/AdminChatScreen';
 import AdminAnalyticsScreen from '../screens/AdminAnalyticsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import LegalScreen from '../screens/LegalScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -51,6 +52,7 @@ export type RootStackParamList = {
   AdminChat: undefined;
   Profile: undefined;
   HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent'; isOnboarding?: boolean };
+  Legal: undefined;
 
   SubscriptionExpired: undefined;
 };
@@ -176,6 +178,7 @@ export default function StackNavigator() {
           <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="AdminChat" component={AdminChatScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+          <Stack.Screen name="Legal" component={LegalScreen} />
         </Stack.Navigator>
       );
     }
@@ -194,6 +197,7 @@ export default function StackNavigator() {
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="AdminChat" component={AdminChatScreen} />
             <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+            <Stack.Screen name="Legal" component={LegalScreen} />
           </Stack.Navigator>
         );
       }
@@ -208,6 +212,7 @@ export default function StackNavigator() {
           <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="AdminChat" component={AdminChatScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+          <Stack.Screen name="Legal" component={LegalScreen} />
         </Stack.Navigator>
       );
     }
@@ -221,6 +226,7 @@ export default function StackNavigator() {
         <Stack.Screen name="Profile" component={ProfileScreen} />
         <Stack.Screen name="AdminChat" component={AdminChatScreen} />
         <Stack.Screen name="HowToUse" component={HowToUseScreen} />
+        <Stack.Screen name="Legal" component={LegalScreen} />
       </Stack.Navigator>
     );
   };

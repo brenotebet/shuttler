@@ -150,6 +150,13 @@ export default function DriverMenuScreen() {
         />
 
         <MenuItem
+          icon="gavel"
+          title="Legal"
+          description="Terms of Service and Privacy Policy"
+          onPress={() => navigation.navigate('Legal')}
+        />
+
+        <MenuItem
           icon="logout"
           title="Logout"
           description="Sign out of your account"

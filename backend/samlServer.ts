@@ -195,22 +195,27 @@ async function consumeHandoffToken(token: string): Promise<HandoffTokenPayload |
   }
 }
 
-// ---------- Rate limiter ----------
+// ---------- Rate limiters ----------
 
-const EXCHANGE_WINDOW_MS = 60_000;
-const MAX_EXCHANGE_REQUESTS = 10;
-const exchangeRateMap = new Map<string, { count: number; windowStart: number }>();
-
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = exchangeRateMap.get(ip);
-  if (!entry || now - entry.windowStart > EXCHANGE_WINDOW_MS) {
-    exchangeRateMap.set(ip, { count: 1, windowStart: now });
-    return false;
-  }
-  entry.count += 1;
-  return entry.count > MAX_EXCHANGE_REQUESTS;
+function createRateLimiter(windowMs: number, max: number) {
+  const map = new Map<string, { count: number; windowStart: number }>();
+  return function check(ip: string): boolean {
+    const now = Date.now();
+    const entry = map.get(ip);
+    if (!entry || now - entry.windowStart > windowMs) {
+      map.set(ip, { count: 1, windowStart: now });
+      return false;
+    }
+    entry.count += 1;
+    return entry.count > max;
+  };
 }
+
+const exchangeLimit = createRateLimiter(60_000, 10);
+const aiChatLimit = createRateLimiter(60_000, 20);
+const registerLimit = createRateLimiter(60_000, 5);
+const passwordResetLimit = createRateLimiter(60_000, 5);
+const orgCreateLimit = createRateLimiter(60_000, 3);
 
 // ---------- Org helpers ----------
 
@@ -350,12 +355,20 @@ const app = express();
 
 Sentry.setupExpressErrorHandler(app);
 
-// CORS — allow the admin web dashboard and local dev
-const ALLOWED_ORIGINS = (process.env.ADMIN_ORIGIN ?? '')
+// CORS — allow the admin web dashboard and (in dev only) local dev servers
+const isProduction = process.env.NODE_ENV === 'production';
+const configuredOrigins = (process.env.ADMIN_ORIGIN ?? '')
   .split(',')
   .map((s: string) => s.trim())
-  .filter(Boolean)
-  .concat(['http://localhost:5173', 'http://localhost:4173']);
+  .filter(Boolean);
+
+if (isProduction && configuredOrigins.length === 0) {
+  console.warn('[cors] WARNING: ADMIN_ORIGIN is not set. Browser CORS for the admin dashboard will be blocked in production.');
+}
+
+const ALLOWED_ORIGINS = isProduction
+  ? configuredOrigins
+  : [...configuredOrigins, 'http://localhost:5173', 'http://localhost:4173'];
 
 app.use(cors({
   origin: (origin, cb) => {
@@ -594,7 +607,7 @@ app.get('/saml/exchange', (_req: Request, res: Response) =>
 
 app.post('/saml/exchange', async (req: Request, res: Response) => {
   const clientIp = req.ip ?? 'unknown';
-  if (isRateLimited(clientIp)) {
+  if (exchangeLimit(clientIp)) {
     return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
   }
 
@@ -668,6 +681,10 @@ app.get('/saml/:orgSlug/metadata', async (req: Request, res: Response) => {
 // ---- Self-serve org creation ----
 
 app.post('/orgs/create', async (req: Request, res: Response) => {
+  if (orgCreateLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
   const {
     contactFirstName,
     contactLastName,
@@ -679,6 +696,7 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
     estimatedRiders,
     heardAboutUs,
     description,
+    agreedToTerms,
   } = req.body;
 
   if (!contactFirstName || !contactLastName || !contactEmail || !orgName || !orgType) {
@@ -730,6 +748,7 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
       approved: false,
       reviewStatus: 'pending',
       founderEmail: (contactEmail as string).toLowerCase().trim(),
+      agreedToTermsAt: agreedToTerms ? admin.firestore.FieldValue.serverTimestamp() : null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -792,7 +811,11 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
 // ---- Email/password registration ----
 
 app.post('/auth/email/register', async (req: Request, res: Response) => {
-  const { orgSlug, email, password, displayName, phone } = req.body;
+  if (registerLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
+  const { orgSlug, email, password, displayName, phone, agreedToTerms } = req.body;
   if (!orgSlug || !email || !password) {
     return res.status(400).json({ error: 'orgSlug, email and password are required' });
   }
@@ -874,6 +897,7 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
           displayName: displayName ?? null,
           phone: phone ?? null,
           role,
+          agreedToTermsAt: agreedToTerms ? admin.firestore.FieldValue.serverTimestamp() : null,
           lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
@@ -1088,10 +1112,10 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
     // Surface actionable Stripe errors so misconfiguration is easy to spot
     const type: string = e?.type ?? '';
     if (type === 'StripeAuthenticationError' || e?.message?.includes('API key')) {
-      return res.status(500).json({ error: 'Stripe API key is invalid. Check STRIPE_SECRET_KEY on Railway.' });
+      return res.status(500).json({ error: 'Payment service is misconfigured. Please contact support.' });
     }
     if (type === 'StripeInvalidRequestError') {
-      return res.status(500).json({ error: `Stripe config error: ${e.message}` });
+      return res.status(500).json({ error: 'Payment configuration error. Please contact support.' });
     }
     return res.status(500).json({ error: 'Failed to create checkout session' });
   }
@@ -1142,7 +1166,7 @@ app.post('/billing/create-addon-checkout-session', requireAuth, async (req: Requ
     }
 
     if (!STRIPE_PRICE_DATA_ADDON) {
-      return res.status(500).json({ error: 'Data add-on price not configured. Set STRIPE_PRICE_DATA_ADDON.' });
+      return res.status(500).json({ error: 'Data add-on is not available. Please contact support.' });
     }
 
     let customerId: string = org.stripeCustomerId;
@@ -1197,6 +1221,22 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
 
   if (!handledTypes.includes(event.type)) {
     return res.json({ received: true });
+  }
+
+  // Idempotency: skip events already processed (Stripe retries on non-2xx)
+  const eventDocRef = admin.firestore().collection('processedWebhookEvents').doc(event.id);
+  try {
+    const alreadyProcessed = await eventDocRef.get();
+    if (alreadyProcessed.exists) {
+      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`);
+      return res.json({ received: true });
+    }
+    await eventDocRef.set({
+      type: event.type,
+      processedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (idempErr) {
+    console.warn('[webhook] Could not check idempotency record — proceeding:', idempErr);
   }
 
   try {
@@ -1730,6 +1770,10 @@ app.post('/auth/send-verification', requireAuth, async (req: Request, res: Respo
 // sendPasswordResetEmail(), but uses our template. Always returns 200 so as
 // not to reveal whether an account exists for the given email address.
 app.post('/auth/send-password-reset', async (req: Request, res: Response) => {
+  if (passwordResetLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
   const { email } = req.body;
   if (!email || typeof email !== 'string') {
     return res.status(400).json({ error: 'email is required' });
@@ -1770,9 +1814,32 @@ app.post('/auth/send-password-reset', async (req: Request, res: Response) => {
   }
 });
 
+// ---- Social sign-in (Google / Apple) completion ----
+// Called after Firebase signInWithCredential on the client. Sets the orgId
+// custom claim so AuthProvider can resolve the user's org on next token refresh.
+
+app.post('/auth/social/complete', requireAuth, async (req: Request, res: Response) => {
+  const { orgId } = req.body as { orgId?: string };
+  const uid = (req as any).uid as string;
+
+  if (!orgId) return res.status(400).json({ error: 'orgId is required' });
+
+  try {
+    await admin.auth().setCustomUserClaims(uid, { orgId });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[auth/social/complete]', e);
+    return res.status(500).json({ error: 'Failed to set org claims' });
+  }
+});
+
 // ---------- AI ----------
 
 app.post('/ai/admin-chat', requireAuth, async (req: Request, res: Response) => {
+  if (aiChatLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
   try {
     const { orgId, messages } = req.body as {
       orgId?: string;

@@ -16,6 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Linking from 'expo-linking';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -185,6 +186,7 @@ export default function CreateOrgScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = useCallback(async () => {
@@ -212,6 +214,10 @@ export default function CreateOrgScreen() {
       Alert.alert('Required', 'Passwords do not match.');
       return;
     }
+    if (!termsAccepted) {
+      Alert.alert('Required', 'Please accept the Terms of Service and Privacy Policy to continue.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -230,6 +236,7 @@ export default function CreateOrgScreen() {
           estimatedRiders: estimatedRiders || undefined,
           heardAboutUs: heardAboutUs || undefined,
           description: description.trim() || undefined,
+          agreedToTerms: true,
         }),
       });
 
@@ -247,6 +254,7 @@ export default function CreateOrgScreen() {
           password,
           displayName: `${firstName.trim()} ${lastName.trim()}`,
           phone: phone.trim() || undefined,
+          agreedToTerms: true,
         }),
       });
 
@@ -275,7 +283,7 @@ export default function CreateOrgScreen() {
     firstName, lastName, email, phone,
     orgName, orgType, website,
     estimatedRiders, heardAboutUs, description,
-    password, confirmPassword,
+    password, confirmPassword, termsAccepted,
     selectOrg,
   ]);
 
@@ -454,16 +462,40 @@ export default function CreateOrgScreen() {
             </Text>
           </View>
 
+          <TouchableOpacity
+            style={styles.termsRow}
+            onPress={() => setTermsAccepted((v) => !v)}
+            activeOpacity={0.8}
+          >
+            <Icon
+              name={termsAccepted ? 'check-box' : 'check-box-outline-blank'}
+              size={22}
+              color={termsAccepted ? PRIMARY_COLOR : '#9ca3af'}
+            />
+            <Text style={styles.termsText}>
+              I agree to Shuttler's{' '}
+              <Text
+                style={styles.termsLink}
+                onPress={() => Linking.openURL('https://shuttler.net/terms')}
+              >
+                Terms of Service
+              </Text>
+              {' '}and{' '}
+              <Text
+                style={styles.termsLink}
+                onPress={() => Linking.openURL('https://shuttler.net/privacy')}
+              >
+                Privacy Policy
+              </Text>
+            </Text>
+          </TouchableOpacity>
+
           <AppButton
             label={isSubmitting ? 'Setting up…' : 'Start free trial'}
             onPress={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !termsAccepted}
             style={styles.submitBtn}
           />
-
-          <Text style={styles.terms}>
-            By continuing you agree to Shuttler's Terms of Service and Privacy Policy.
-          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </ScreenContainer>
@@ -576,13 +608,24 @@ const styles = StyleSheet.create({
     color: '#374151',
     lineHeight: 19,
   },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: spacing.section,
+  },
+  termsText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#4b5563',
+    lineHeight: 20,
+    paddingTop: 2,
+  },
+  termsLink: {
+    color: PRIMARY_COLOR,
+    textDecorationLine: 'underline',
+  },
   submitBtn: {
     marginBottom: spacing.item,
-  },
-  terms: {
-    fontSize: 11,
-    color: '#aaa',
-    textAlign: 'center',
-    lineHeight: 16,
   },
 });

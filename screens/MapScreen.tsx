@@ -1400,9 +1400,14 @@ const handleRequest = async (entry: RequestableStop) => {
   const { stop: selectedStop, routeId: entryRouteId } = entry;
 
   // Block requests from users who aren't physically near a stop.
-  // We check distance to the nearest stop rather than the campus bounding box
-  // so the threshold is consistent regardless of campus shape or size.
-  if (stops.length > 0 && userLocRef.current) {
+  if (stops.length > 0) {
+    if (!userLocRef.current) {
+      showAlert(
+        'Your location isn\'t available yet. Make sure GPS is enabled and wait a moment, then try again.',
+        'Location required',
+      );
+      return;
+    }
     const { latitude: ulat, longitude: ulng } = userLocRef.current;
     let nearestDist = Infinity;
     for (const s of stops) {
@@ -1734,7 +1739,7 @@ const handleRequest = async (entry: RequestableStop) => {
         {/* Campus stops — hidden destination stop while ride is active */}
         {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
           <Marker
-            key={stop.id}
+            key={`${stop.id}-${primaryColor}`}
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
             zIndex={2}

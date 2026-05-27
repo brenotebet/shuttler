@@ -66,6 +66,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ['expo-notifications', { mode: 'production' }],
     ['expo-location'],
     ['expo-image-picker'],
+    ['expo-apple-authentication'],
     ["@stripe/stripe-react-native", { merchantIdentifier: "merchant.com.shuttler.app" }]
   ],
   extra: {

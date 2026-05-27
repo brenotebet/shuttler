@@ -18,8 +18,11 @@ import {
 } from 'react-native';
 import { type RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { signInWithEmailAndPassword, signOut, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber, GoogleAuthProvider, OAuthProvider } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import * as Google from 'expo-auth-session/providers/google';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { app } from '../firebase/firebaseconfig';
 import * as Linking from 'expo-linking';
@@ -35,7 +38,7 @@ import { showAlert } from '../src/utils/alerts';
 import { showToast } from '../src/components/Toast';
 import ErrorBanner from '../src/components/ErrorBanner';
 import { auth, db } from '../firebase/firebaseconfig';
-import { SHUTTLER_API_URL } from '../config';
+import { SHUTTLER_API_URL, GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -225,6 +228,13 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const { org } = useOrg();
   const { primaryColor } = useOrgTheme();
   const [mode, setMode] = useState<'signin' | 'signup'>(initialEmail ? 'signup' : 'signin');
+
+  // ---- Google Sign-In ----
+  const [, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
+    clientId: GOOGLE_WEB_CLIENT_ID || undefined,
+    iosClientId: GOOGLE_IOS_CLIENT_ID || undefined,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID || undefined,
+  });
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
@@ -233,7 +243,109 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [isSocialLoading, setIsSocialLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Shared post-auth handler for Google and Apple sign-in.
+  // Creates the user doc if new, enforces domain restrictions, then sets org claim.
+  const completeSocialSignIn = useCallback(async (
+    firebaseUser: import('firebase/auth').User,
+    email: string | null,
+    displayName: string | null,
+  ) => {
+    const userRef = doc(db, 'orgs', orgId, 'users', firebaseUser.uid);
+    const snap = await getDoc(userRef);
+
+    if (snap.exists()) {
+      await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
+      return;
+    }
+
+    // Domain restriction check for new users
+    const allowedDomains: string[] = org?.allowedEmailDomains ?? [];
+    if (allowedDomains.length > 0 && email) {
+      const domain = email.split('@')[1]?.toLowerCase() ?? '';
+      if (!allowedDomains.includes(domain)) {
+        await signOut(auth);
+        throw new Error(`Registration is restricted to ${allowedDomains.join(', ')} email addresses.`);
+      }
+    }
+
+    await setDoc(userRef, {
+      uid: firebaseUser.uid,
+      orgId,
+      email: email ?? null,
+      displayName: displayName ?? null,
+      role: 'student',
+      agreedToTermsAt: serverTimestamp(),
+      lastLoginAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+    });
+
+    // Set orgId custom claim on the backend
+    const token = await firebaseUser.getIdToken();
+    await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ orgId }),
+    });
+
+    // Force-refresh token so AuthProvider picks up the new orgId claim
+    await firebaseUser.getIdToken(true);
+  }, [orgId, org?.allowedEmailDomains]);
+
+  // React to Google OAuth response
+  useEffect(() => {
+    if (googleResponse?.type !== 'success') return;
+    const idToken = (googleResponse as any).params?.id_token;
+    if (!idToken) return;
+
+    setIsSocialLoading(true);
+    const credential = GoogleAuthProvider.credential(idToken);
+    signInWithCredential(auth, credential)
+      .then((result) =>
+        completeSocialSignIn(result.user, result.user.email, result.user.displayName),
+      )
+      .catch((e: any) => setFormError(e?.message ?? 'Google sign-in failed.'))
+      .finally(() => setIsSocialLoading(false));
+  }, [googleResponse, completeSocialSignIn]);
+
+  const handleAppleSignIn = useCallback(async () => {
+    setIsSocialLoading(true);
+    setFormError(null);
+    try {
+      const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      const hashedNonce = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        nonce,
+      );
+      const appleCredential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: hashedNonce,
+      });
+      const provider = new OAuthProvider('apple.com');
+      const firebaseCredential = provider.credential({
+        idToken: appleCredential.identityToken!,
+        rawNonce: nonce,
+      });
+      const result = await signInWithCredential(auth, firebaseCredential);
+      const displayName = appleCredential.fullName
+        ? [appleCredential.fullName.givenName, appleCredential.fullName.familyName]
+            .filter(Boolean).join(' ') || null
+        : result.user.displayName;
+      await completeSocialSignIn(result.user, result.user.email, displayName);
+    } catch (e: any) {
+      if (e?.code !== 'ERR_REQUEST_CANCELED') {
+        setFormError(e?.message ?? 'Apple sign-in failed.');
+      }
+    } finally {
+      setIsSocialLoading(false);
+    }
+  }, [completeSocialSignIn]);
 
   const switchMode = (next: 'signin' | 'signup') => {
     setMode(next);
@@ -244,6 +356,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
     setPhone('');
     setPassword('');
     setConfirmPassword('');
+    setAgreedToTerms(false);
   };
 
   const validate = (): boolean => {
@@ -348,6 +461,10 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const handleSignUp = useCallback(async () => {
     setFormError(null);
     if (!validate()) return;
+    if (!agreedToTerms) {
+      setFormError('Please accept the Terms of Service and Privacy Policy to continue.');
+      return;
+    }
     setIsSubmitting(true);
     const displayName = `${firstName.trim()} ${lastName.trim()}`;
     try {
@@ -360,6 +477,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           password,
           displayName,
           phone: phone.trim(),
+          agreedToTerms: true,
         }),
       });
       const body = await res.json();
@@ -378,7 +496,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password, firstName, lastName, phone, confirmPassword, orgSlug, mode]);
+  }, [email, password, firstName, lastName, phone, confirmPassword, agreedToTerms, orgSlug, mode]);
 
   const handleForgotPassword = useCallback(async () => {
     const trimmed = email.trim();
@@ -519,6 +637,36 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
         />
       )}
 
+      {mode === 'signup' && (
+        <TouchableOpacity
+          style={styles.termsRow}
+          onPress={() => setAgreedToTerms((v) => !v)}
+          activeOpacity={0.8}
+        >
+          <Icon
+            name={agreedToTerms ? 'check-box' : 'check-box-outline-blank'}
+            size={22}
+            color={agreedToTerms ? primaryColor : '#9ca3af'}
+          />
+          <Text style={styles.termsText}>
+            I agree to Shuttler's{' '}
+            <Text
+              style={[styles.termsLink, { color: primaryColor }]}
+              onPress={() => Linking.openURL('https://shuttler.net/terms')}
+            >
+              Terms of Service
+            </Text>
+            {' '}and{' '}
+            <Text
+              style={[styles.termsLink, { color: primaryColor }]}
+              onPress={() => Linking.openURL('https://shuttler.net/privacy')}
+            >
+              Privacy Policy
+            </Text>
+          </Text>
+        </TouchableOpacity>
+      )}
+
       <AppButton
         label={isSubmitting ? (mode === 'signin' ? 'Signing in…' : 'Creating account…') : mode === 'signin' ? 'Sign In' : 'Create Account'}
         onPress={mode === 'signin' ? handleSignIn : handleSignUp}
@@ -531,6 +679,49 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           <Text style={[styles.forgotText, { color: primaryColor }]}>Forgot password?</Text>
         </TouchableOpacity>
       )}
+
+      {GOOGLE_WEB_CLIENT_ID ? (
+        <>
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.socialButton, isSocialLoading && styles.socialButtonDisabled]}
+            onPress={() => { setFormError(null); promptGoogleAsync(); }}
+            disabled={isSocialLoading}
+            activeOpacity={0.8}
+          >
+            <Icon name="login" size={18} color="#4285F4" />
+            <Text style={styles.socialButtonText}>Continue with Google</Text>
+          </TouchableOpacity>
+
+          {Platform.OS === 'ios' && (
+            <TouchableOpacity
+              style={[styles.socialButton, styles.appleButton, isSocialLoading && styles.socialButtonDisabled]}
+              onPress={handleAppleSignIn}
+              disabled={isSocialLoading}
+              activeOpacity={0.8}
+            >
+              <Icon name="apple" size={18} color="#fff" />
+              <Text style={[styles.socialButtonText, styles.appleButtonText]}>Continue with Apple</Text>
+            </TouchableOpacity>
+          )}
+
+          <Text style={styles.socialDisclaimer}>
+            By continuing with Google{Platform.OS === 'ios' ? ' or Apple' : ''}, you agree to our{' '}
+            <Text style={{ color: primaryColor }} onPress={() => Linking.openURL('https://shuttler.net/terms')}>
+              Terms
+            </Text>
+            {' & '}
+            <Text style={{ color: primaryColor }} onPress={() => Linking.openURL('https://shuttler.net/privacy')}>
+              Privacy Policy
+            </Text>
+          </Text>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -955,5 +1146,72 @@ const styles = StyleSheet.create({
   },
   reqTextMet: {
     color: '#16a34a',
+  },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  termsText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#4b5563',
+    lineHeight: 20,
+    paddingTop: 2,
+  },
+  termsLink: {
+    textDecorationLine: 'underline',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 16,
+    gap: 8,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e5e7eb',
+  },
+  dividerText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    fontWeight: '500',
+  },
+  socialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    marginBottom: 10,
+    backgroundColor: '#fafafa',
+  },
+  appleButton: {
+    backgroundColor: '#000',
+    borderColor: '#000',
+  },
+  socialButtonDisabled: {
+    opacity: 0.5,
+  },
+  socialButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111',
+  },
+  appleButtonText: {
+    color: '#fff',
+  },
+  socialDisclaimer: {
+    fontSize: 11,
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 16,
+    marginTop: 4,
   },
 });
