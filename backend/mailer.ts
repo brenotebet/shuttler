@@ -304,3 +304,54 @@ export function subscriptionConfirmedTemplate(opts: {
     </p>
   `);
 }
+
+export function weeklyDigestTemplate(opts: {
+  adminName: string;
+  orgName: string;
+  totalBoardings: number;
+  activeDrivers: number;
+  topStop: string | null;
+  narrative: string;
+}): string {
+  const firstName = (opts.adminName.split(' ')[0] || opts.adminName).trim();
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const topStopLabel = opts.topStop ? opts.topStop.split(' (')[0].trim() : '&mdash;';
+
+  return layout(`
+    <h1 style="margin:0 0 4px;font-size:22px;font-weight:700;color:#111827;">Your weekly summary</h1>
+    <p style="margin:0 0 24px;font-size:13px;color:#9ca3af;">Week ending ${today}</p>
+    <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.7;">
+      Hi ${firstName}, here&rsquo;s what happened at <strong>${opts.orgName}</strong> this week.
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;border-collapse:separate;border-spacing:8px 0;">
+      <tr>
+        <td style="width:33%;vertical-align:top;">
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 12px;text-align:center;">
+            <p style="margin:0;font-size:30px;font-weight:800;color:${PRIMARY};">${opts.totalBoardings}</p>
+            <p style="margin:6px 0 0;font-size:11px;color:#166534;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Boardings</p>
+          </div>
+        </td>
+        <td style="width:33%;vertical-align:top;">
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 12px;text-align:center;">
+            <p style="margin:0;font-size:30px;font-weight:800;color:#2563eb;">${opts.activeDrivers}</p>
+            <p style="margin:6px 0 0;font-size:11px;color:#1d4ed8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Active Drivers</p>
+          </div>
+        </td>
+        <td style="width:33%;vertical-align:top;">
+          <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:16px 12px;text-align:center;">
+            <p style="margin:0;font-size:13px;font-weight:700;color:#7c3aed;line-height:1.4;">${topStopLabel}</p>
+            <p style="margin:6px 0 0;font-size:11px;color:#6d28d9;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Top Stop</p>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    ${opts.narrative ? infoBox('AI Insights', `<p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">${opts.narrative}</p>`) : ''}
+
+    <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;line-height:1.6;">
+      View full analytics in the Shuttler app under <strong>Dashboard</strong>.
+      Questions? Reply to this email anytime.
+    </p>
+  `);
+}

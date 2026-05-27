@@ -138,6 +138,7 @@ export default function DriverScreen() {
 
   const [isToggling, setIsToggling] = useState(false);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const manuallySelectedRoute = useRef(false);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
   const [busOnline, setBusOnline] = useState(false);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
@@ -196,24 +197,38 @@ export default function DriverScreen() {
     return orgRoutes.find((r) => r.id === selectedRouteId) ?? orgRoutes[0];
   }, [orgRoutes, selectedRouteId]);
 
-  // Pre-select the admin-assigned default route on mount + write public profile so
-  // students see the driver's name when they tap the bus.
+  // Watch the driver's user doc for admin-assigned route changes + write public profile
+  // once on mount so students see the driver's name when they tap the bus.
+  const didWritePublicProfile = useRef(false);
   useEffect(() => {
     if (!driverId || !orgId) return;
-    getDoc(doc(db, 'orgs', orgId, 'users', driverId)).then((snap) => {
-      if (!snap.exists()) return;
-      const defaultRouteId: string | undefined = snap.data()?.defaultRouteId;
-      if (defaultRouteId) setSelectedRouteId(defaultRouteId);
+    return onSnapshot(
+      doc(db, 'orgs', orgId, 'users', driverId),
+      (snap) => {
+        if (!snap.exists()) return;
 
-      const storedName: string | null = snap.data()?.displayName ?? auth.currentUser?.displayName ?? null;
-      if (storedName) {
-        setDoc(
-          doc(db, 'orgs', orgId, 'publicUsers', driverId),
-          { displayName: storedName, updatedAt: serverTimestamp() },
-          { merge: true },
-        ).catch(() => {});
-      }
-    }).catch(() => {});
+        // Write public display name once on first snapshot
+        if (!didWritePublicProfile.current) {
+          didWritePublicProfile.current = true;
+          const storedName: string | null = snap.data()?.displayName ?? auth.currentUser?.displayName ?? null;
+          if (storedName) {
+            setDoc(
+              doc(db, 'orgs', orgId, 'publicUsers', driverId),
+              { displayName: storedName, updatedAt: serverTimestamp() },
+              { merge: true },
+            ).catch(() => {});
+          }
+        }
+
+        // Apply admin-assigned default route only when the driver hasn't manually
+        // picked a different route themselves.
+        const defaultRouteId: string | undefined = snap.data()?.defaultRouteId;
+        if (defaultRouteId && !manuallySelectedRoute.current) {
+          setSelectedRouteId(defaultRouteId);
+        }
+      },
+      () => {},
+    );
   }, [driverId, orgId]);
 
   // Keep the bus doc's routeId field in sync so MapScreen can do route-aware bus matching.
@@ -1002,7 +1017,7 @@ export default function DriverScreen() {
 
         <View style={styles.cardLarge}>
           <Text style={styles.cardTitle}>Current Stop</Text>
-          <Text style={[styles.cardMainValue, { color: primaryColor }]}>
+          <Text style={[styles.cardMainValue, { color: primaryColor }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>
             {nearestStop?.name ?? (driverCoords ? 'En route…' : 'Waiting for location...')}
           </Text>
           <Text style={styles.cardMeta}>Active requests: {nearestStop ? countsByStopId[nearestStop.id] ?? 0 : 0}</Text>
@@ -1037,7 +1052,7 @@ export default function DriverScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Next Stop</Text>
-          <Text style={[styles.cardMainValue, { color: primaryColor }]}>{nextStop?.name ?? '—'}</Text>
+          <Text style={[styles.cardMainValue, { color: primaryColor }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>{nextStop?.name ?? '—'}</Text>
           <Text style={styles.cardMeta}>Active requests: {nextStop ? countsByStopId[nextStop.id] ?? 0 : 0}</Text>
           <Text style={styles.cardMeta}>Latest: {nextStats?.latestMs ? formatTimeAgo(nextStats.latestMs) : '—'}</Text>
         </View>
@@ -1160,7 +1175,7 @@ export default function DriverScreen() {
                   <TouchableOpacity
                     key={route.id}
                     style={[styles.routeChip, { borderColor: primaryColor }, isSelected && { backgroundColor: primaryColor }]}
-                    onPress={() => setSelectedRouteId(route.id)}
+                    onPress={() => { manuallySelectedRoute.current = true; setSelectedRouteId(route.id); }}
                   >
                     <Text style={[styles.routeChipText, { color: primaryColor }, isSelected && styles.routeChipTextSelected]}>
                       {route.name}

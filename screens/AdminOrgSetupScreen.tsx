@@ -573,47 +573,139 @@ const stopStyles = StyleSheet.create({
   },
 });
 
-const setupGuideStyles = StyleSheet.create({
+const newStopStyles = StyleSheet.create({
   card: {
-    backgroundColor: '#f0f9ff',
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#bae6fd',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
+    borderColor: '#e5e7eb',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
     gap: 10,
   },
-  title: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0369a1',
-    marginBottom: 2,
-  },
-  row: {
+  stepHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
   },
-  badge: {
+  stepHeaderDisabled: {
+    opacity: 0.4,
+  },
+  stepBadge: {
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#0369a1',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
-    marginTop: 1,
   },
-  num: {
-    color: '#fff',
+  stepBadgeInactive: {
+    backgroundColor: '#e5e7eb',
+  },
+  stepNum: {
     fontSize: 12,
     fontWeight: '700',
+    color: '#6b7280',
   },
-  text: {
+  stepLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111',
+  },
+  stepHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginLeft: 2,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111',
+    padding: 0,
+  },
+  dropdown: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginTop: -4,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  locationChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  locationChipText: {
     flex: 1,
     fontSize: 13,
-    color: '#0c4a6e',
-    lineHeight: 19,
+    fontWeight: '500',
+  },
+  tapHint: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'center',
+    marginVertical: 2,
+  },
+  manualToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  manualToggleText: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#f3f4f6',
+    marginVertical: 4,
+  },
+  inputDisabled: {
+    backgroundColor: '#f9fafb',
+    color: '#9ca3af',
+  },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: 10,
+    paddingVertical: 13,
+    marginTop: 4,
+  },
+  addBtnDisabled: {
+    opacity: 0.4,
+  },
+  addBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
   },
 });
 
@@ -956,125 +1048,143 @@ function StopsTab() {
           </Text>
         </View>
 
-        {stops.length === 0 ? (
-          <View style={setupGuideStyles.card}>
-            <Text style={setupGuideStyles.title}>How to add stops</Text>
-            {[
-              'Search for a place above, or tap the map to drop a pin',
-              'Give it a name — e.g. "Main Entrance" or "Library"',
-              'Tap "Add Stop" — you need at least 2 to unlock the rider map',
-            ].map((text, i) => (
-              <View key={i} style={setupGuideStyles.row}>
-                <View style={setupGuideStyles.badge}>
-                  <Text style={setupGuideStyles.num}>{i + 1}</Text>
-                </View>
-                <Text style={setupGuideStyles.text}>{text}</Text>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <Text style={styles.hint}>Search for a location or tap the map to place a pin.</Text>
-        )}
+        {/* Unified add-stop card */}
+        <View style={newStopStyles.card}>
 
-        {/* Search bar */}
-        <View style={styles.searchBarRow}>
-          <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 6 }} />
-          <TextInput
-            style={styles.searchBarInput}
-            placeholder="Search address or place…"
-            value={searchQuery}
-            onChangeText={handleSearchChange}
-            placeholderTextColor="#aaa"
-            returnKeyType="search"
-            autoCorrect={false}
-          />
-          {isSearching && <ActivityIndicator size="small" color={primaryColor} style={{ marginLeft: 6 }} />}
-          {searchQuery.length > 0 && !isSearching && (
-            <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-              <Icon name="close" size={16} color="#9ca3af" style={{ marginLeft: 6 }} />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Autocomplete dropdown */}
-        {searchResults.length > 0 && (
-          <View style={styles.searchDropdown}>
-            {searchResults.map((s) => (
-              <TouchableOpacity
-                key={s.placeId}
-                style={styles.searchDropdownItem}
-                onPress={() => handleSelectPlace(s)}
-              >
-                <Icon name="place" size={14} color="#9ca3af" style={{ marginRight: 8, marginTop: 1 }} />
-                <Text style={styles.searchDropdownText} numberOfLines={2}>{s.description}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* Manual coordinate entry — collapsible */}
-        <TouchableOpacity
-          style={stopStyles.manualToggle}
-          onPress={() => setShowManualCoords((v) => !v)}
-        >
-          <Icon name="my-location" size={14} color="#6b7280" />
-          <Text style={stopStyles.manualToggleText}>Enter coordinates manually</Text>
-          <Icon name={showManualCoords ? 'expand-less' : 'expand-more'} size={16} color="#9ca3af" />
-        </TouchableOpacity>
-
-        {showManualCoords && (
-          <View style={stopStyles.manualCoordsBox}>
-            <View style={stopStyles.manualCoordsRow}>
-              <TextInput
-                style={[styles.input, stopStyles.coordInput]}
-                placeholder="Latitude (e.g. 38.9071)"
-                value={manualLat}
-                onChangeText={setManualLat}
-                keyboardType="numbers-and-punctuation"
-                placeholderTextColor="#aaa"
-                returnKeyType="next"
-              />
-              <TextInput
-                style={[styles.input, stopStyles.coordInput]}
-                placeholder="Longitude (e.g. −77.0369)"
-                value={manualLon}
-                onChangeText={setManualLon}
-                keyboardType="numbers-and-punctuation"
-                placeholderTextColor="#aaa"
-                returnKeyType="done"
-                onSubmitEditing={handleApplyManualCoords}
-              />
+          {/* ── Step 1: Find a location ── */}
+          <View style={newStopStyles.stepHeader}>
+            <View style={[newStopStyles.stepBadge, pendingCoords ? { backgroundColor: primaryColor } : newStopStyles.stepBadgeInactive]}>
+              {pendingCoords
+                ? <Icon name="check" size={12} color="#fff" />
+                : <Text style={newStopStyles.stepNum}>1</Text>}
             </View>
-            <TouchableOpacity
-              style={[stopStyles.applyBtn, { backgroundColor: primaryColor }, (!manualLat || !manualLon) && { opacity: 0.4 }]}
-              onPress={handleApplyManualCoords}
-              disabled={!manualLat || !manualLon}
-            >
-              <Text style={stopStyles.applyBtnText}>Use These Coordinates</Text>
-            </TouchableOpacity>
+            <Text style={newStopStyles.stepLabel}>Find a location</Text>
+            <Text style={newStopStyles.stepHint}>search or tap the map</Text>
           </View>
-        )}
 
-        <View style={styles.addStopForm}>
+          {/* Search bar */}
+          <View style={newStopStyles.searchRow}>
+            <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 6 }} />
+            <TextInput
+              style={newStopStyles.searchInput}
+              placeholder="Search address or place…"
+              value={searchQuery}
+              onChangeText={handleSearchChange}
+              placeholderTextColor="#aaa"
+              returnKeyType="search"
+              autoCorrect={false}
+            />
+            {isSearching && <ActivityIndicator size="small" color={primaryColor} style={{ marginLeft: 6 }} />}
+            {searchQuery.length > 0 && !isSearching && (
+              <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                <Icon name="close" size={16} color="#9ca3af" style={{ marginLeft: 6 }} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Autocomplete dropdown */}
+          {searchResults.length > 0 && (
+            <View style={newStopStyles.dropdown}>
+              {searchResults.map((s) => (
+                <TouchableOpacity
+                  key={s.placeId}
+                  style={newStopStyles.dropdownItem}
+                  onPress={() => handleSelectPlace(s)}
+                >
+                  <Icon name="place" size={14} color="#9ca3af" style={{ marginRight: 8, marginTop: 1 }} />
+                  <Text style={styles.searchDropdownText} numberOfLines={2}>{s.description}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Selected location chip OR tap hint */}
+          {pendingCoords ? (
+            <View style={[newStopStyles.locationChip, { borderColor: `${primaryColor}40`, backgroundColor: `${primaryColor}0d` }]}>
+              <Icon name="place" size={15} color={primaryColor} />
+              <Text style={[newStopStyles.locationChipText, { color: primaryColor }]} numberOfLines={1}>
+                {pendingCoords.latitude.toFixed(5)}, {pendingCoords.longitude.toFixed(5)}
+              </Text>
+              <TouchableOpacity onPress={() => setPendingCoords(null)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                <Icon name="close" size={14} color={primaryColor} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={newStopStyles.tapHint}>— or tap directly on the map above —</Text>
+          )}
+
+          {/* Manual coordinate entry — collapsible */}
+          <TouchableOpacity
+            style={newStopStyles.manualToggle}
+            onPress={() => setShowManualCoords((v) => !v)}
+          >
+            <Icon name="my-location" size={13} color="#9ca3af" />
+            <Text style={newStopStyles.manualToggleText}>Enter coordinates manually</Text>
+            <Icon name={showManualCoords ? 'expand-less' : 'expand-more'} size={16} color="#9ca3af" />
+          </TouchableOpacity>
+
+          {showManualCoords && (
+            <View style={stopStyles.manualCoordsBox}>
+              <View style={stopStyles.manualCoordsRow}>
+                <TextInput
+                  style={[styles.input, stopStyles.coordInput]}
+                  placeholder="Latitude (e.g. 38.9071)"
+                  value={manualLat}
+                  onChangeText={setManualLat}
+                  keyboardType="numbers-and-punctuation"
+                  placeholderTextColor="#aaa"
+                  returnKeyType="next"
+                />
+                <TextInput
+                  style={[styles.input, stopStyles.coordInput]}
+                  placeholder="Longitude (e.g. −77.0369)"
+                  value={manualLon}
+                  onChangeText={setManualLon}
+                  keyboardType="numbers-and-punctuation"
+                  placeholderTextColor="#aaa"
+                  returnKeyType="done"
+                  onSubmitEditing={handleApplyManualCoords}
+                />
+              </View>
+              <TouchableOpacity
+                style={[stopStyles.applyBtn, { backgroundColor: primaryColor }, (!manualLat || !manualLon) && { opacity: 0.4 }]}
+                onPress={handleApplyManualCoords}
+                disabled={!manualLat || !manualLon}
+              >
+                <Text style={stopStyles.applyBtnText}>Use These Coordinates</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Divider ── */}
+          <View style={newStopStyles.divider} />
+
+          {/* ── Step 2: Name this stop ── */}
+          <View style={[newStopStyles.stepHeader, !pendingCoords && newStopStyles.stepHeaderDisabled]}>
+            <View style={[newStopStyles.stepBadge, pendingName.trim() && pendingCoords ? { backgroundColor: primaryColor } : newStopStyles.stepBadgeInactive]}>
+              {pendingName.trim() && pendingCoords
+                ? <Icon name="check" size={12} color="#fff" />
+                : <Text style={newStopStyles.stepNum}>2</Text>}
+            </View>
+            <Text style={newStopStyles.stepLabel}>Name this stop</Text>
+          </View>
+
           <TextInput
-            style={styles.input}
-            placeholder="Stop name"
+            style={[styles.input, !pendingCoords && newStopStyles.inputDisabled]}
+            placeholder={pendingCoords ? 'e.g. Main Entrance, Library Loop' : 'Pick a location first'}
             value={pendingName}
             onChangeText={setPendingName}
-            placeholderTextColor="#aaa"
+            placeholderTextColor={pendingCoords ? '#aaa' : '#d1d5db'}
+            editable={!!pendingCoords}
           />
-          {pendingCoords && (
-            <Text style={styles.coordPreview}>
-              📍 {pendingCoords.latitude.toFixed(5)}, {pendingCoords.longitude.toFixed(5)}
-            </Text>
-          )}
+
           <TouchableOpacity
-            style={[styles.addStopBtn, { backgroundColor: primaryColor }, (!pendingName.trim() || !pendingCoords) && styles.addStopBtnDisabled]}
+            style={[newStopStyles.addBtn, { backgroundColor: primaryColor }, (!pendingName.trim() || !pendingCoords) && newStopStyles.addBtnDisabled]}
             onPress={handleAddStop}
             disabled={!pendingName.trim() || !pendingCoords}
           >
-            <Icon name="add" size={20} color="#fff" />
-            <Text style={styles.addStopBtnText}>Add Stop</Text>
+            <Icon name="add-location-alt" size={20} color="#fff" />
+            <Text style={newStopStyles.addBtnText}>Add Stop</Text>
           </TouchableOpacity>
         </View>
 

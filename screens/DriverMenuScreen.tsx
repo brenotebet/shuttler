@@ -122,6 +122,15 @@ export default function DriverMenuScreen() {
           />
         )}
 
+        {role === 'admin' && (
+          <MenuItem
+            icon="auto-awesome"
+            title="AI Assistant"
+            description="Ask questions about your data and operations"
+            onPress={() => navigation.navigate('AdminChat')}
+          />
+        )}
+
         <MenuItem
           icon="help-outline"
           title="How to Use"

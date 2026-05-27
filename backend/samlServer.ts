@@ -20,6 +20,7 @@ import {
   orgRejectedTemplate,
   subscriptionConfirmedTemplate,
 } from './mailer';
+import { handleAdminChat, runWeeklyDigest, startWeeklyDigestCron } from './ai';
 
 /**
  * Shuttler multi-tenant backend
@@ -1663,7 +1664,55 @@ app.post('/auth/send-password-reset', async (req: Request, res: Response) => {
   }
 });
 
+// ---------- AI ----------
+
+app.post('/ai/admin-chat', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { orgId, messages } = req.body as {
+      orgId?: string;
+      messages?: { role: 'user' | 'assistant'; content: string }[];
+    };
+
+    if (!orgId || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'orgId and messages are required' });
+    }
+
+    const uid = (req as any).uid as string;
+    const memberDoc = await admin.firestore()
+      .collection('orgs').doc(orgId)
+      .collection('users').doc(uid)
+      .get();
+
+    if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const sanitized: { role: 'user' | 'assistant'; content: string }[] = messages.map((m) => ({
+      role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+      content: String(m.content).slice(0, 4000),
+    }));
+
+    const reply = await handleAdminChat(orgId, sanitized);
+    return res.json({ reply });
+  } catch (e: any) {
+    console.error('[ai/admin-chat]', e?.message ?? e);
+    return res.status(500).json({ error: 'AI request failed' });
+  }
+});
+
+app.post('/ai/weekly-digest', requireInternal, async (_req: Request, res: Response) => {
+  try {
+    await runWeeklyDigest();
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[ai/weekly-digest]', e?.message ?? e);
+    return res.status(500).json({ error: 'Digest failed' });
+  }
+});
+
 // ---------- Start ----------
+
+startWeeklyDigestCron();
 
 const server = app.listen(PORT, () => {
   console.log(`Shuttler backend listening on http://localhost:${PORT}`);

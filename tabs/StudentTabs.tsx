@@ -2,12 +2,16 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import MapScreen from '../screens/MapScreen';
 import StudentMenuScreen from '../screens/StudentMenuScreen';
+import RoutesScreen from '../screens/RoutesScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 
 export type StudentTabParamList = {
   Map: undefined;
+  Routes: undefined;
+  Profile: undefined;
   Menu: undefined;
 };
 
@@ -31,17 +35,19 @@ export default function StudentTabs() {
           paddingBottom: 5,
         },
         tabBarIcon: ({ color, size }) => {
-          let iconName: string = 'map';
-
-          if (route.name === 'Menu') {
-            iconName = 'menu';
-          }
-
-          return <Icon name={iconName} size={size} color={color} />;
+          const icons: Record<string, string> = {
+            Map: 'map',
+            Routes: 'directions-bus',
+            Profile: 'person',
+            Menu: 'menu',
+          };
+          return <Icon name={icons[route.name] ?? 'help-outline'} size={size} color={color} />;
         },
       })}
     >
       <Tab.Screen name="Map" component={MapScreen} />
+      <Tab.Screen name="Routes" component={RoutesScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
       <Tab.Screen name="Menu" component={StudentMenuScreen} />
     </Tab.Navigator>
   );

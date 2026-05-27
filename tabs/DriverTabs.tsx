@@ -4,6 +4,8 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import DriverScreen from '../screens/DriverScreen';
 import DriverMenuScreen from '../screens/DriverMenuScreen';
+import RoutesScreen from '../screens/RoutesScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
@@ -28,20 +30,22 @@ export default function DriverTabs() {
           height: 80,
           paddingBottom: 5,
         },
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName = 'help-outline';
-          if (route.name === 'LiveLocation') {
-            iconName = 'location-on';
-          } else if (route.name === 'Menu') {
-            iconName = 'menu';
-          }
-          return <Icon name={iconName} size={28} color={color} />;
+        tabBarIcon: ({ color, size }) => {
+          const icons: Record<string, string> = {
+            LiveLocation: 'location-on',
+            Routes: 'directions-bus',
+            Profile: 'person',
+            Menu: 'menu',
+          };
+          return <Icon name={icons[route.name] ?? 'help-outline'} size={size} color={color} />;
         },
         tabBarActiveTintColor: primaryColor,
         tabBarInactiveTintColor: TEXT_SECONDARY,
       })}
     >
       <Tab.Screen name="LiveLocation" component={DriverScreen} />
+      <Tab.Screen name="Routes" component={RoutesScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
       <Tab.Screen name="Menu" component={DriverMenuScreen} />
     </Tab.Navigator>
   );

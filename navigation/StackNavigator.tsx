@@ -21,6 +21,7 @@ import AdminOrgSetupScreen from '../screens/AdminOrgSetupScreen';
 import CreateOrgScreen from '../screens/CreateOrgScreen';
 import HowToUseScreen from '../screens/HowToUseScreen';
 import ParentChildLinkScreen from '../screens/ParentChildLinkScreen';
+import AdminChatScreen from '../screens/AdminChatScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -44,6 +45,7 @@ export type RootStackParamList = {
   AdminDriver: undefined;
   AdminDashboard: undefined;
   AdminOrgSetup: undefined;
+  AdminChat: undefined;
   HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent'; isOnboarding?: boolean };
 
   SubscriptionExpired: undefined;
@@ -182,6 +184,7 @@ export default function StackNavigator() {
             <Stack.Screen name="DriverHistory" component={DriverHistoryScreen} />
             <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
             <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+            <Stack.Screen name="AdminChat" component={AdminChatScreen} />
             <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           </Stack.Navigator>
         );
@@ -193,6 +196,7 @@ export default function StackNavigator() {
           <Stack.Screen name="AdminDriver" component={AdminDriverScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
           <Stack.Screen name="AdminOrgSetup" component={AdminOrgSetupScreen} />
+          <Stack.Screen name="AdminChat" component={AdminChatScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         </Stack.Navigator>
       );
