@@ -96,14 +96,7 @@ export default function StudentMenuScreen() {
           onPress={() => navigation.navigate('AdminChat')}
         />
 
-        <MenuItem
-          icon="history"
-          title="History"
-          description={isParent ? 'View past shuttle pickups' : 'Take a look at your past completed rides'}
-          onPress={() => navigation.navigate('StudentHistory')}
-        />
-
-        <MenuItem
+<MenuItem
           icon="help-outline"
           title="How to Use"
           description={isParent ? 'Guide for parents tracking the shuttle' : 'Step-by-step guide to requesting a ride'}

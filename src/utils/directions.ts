@@ -6,27 +6,8 @@ export type LatLng = { latitude: number; longitude: number };
 
 export type DirectionsResult = { coords: LatLng[]; eta: string | null };
 
-const GOOGLE_DIRECTIONS_URL = 'https://maps.googleapis.com/maps/api/directions/json';
+const GOOGLE_ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 const OSRM_DIRECTIONS_URL = 'https://router.project-osrm.org/route/v1/driving';
-
-const toCoordinateArray = (points: [number, number][]): LatLng[] =>
-  points.map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
-
-const decodeGoogleRoute = (route: any): DirectionsResult | null => {
-  const overview = route?.overview_polyline?.points;
-  if (!overview) {
-    console.warn('Google Directions response did not include an overview polyline.');
-    return null;
-  }
-
-  const coords = toCoordinateArray(polyline.decode(overview));
-  if (!coords.length) {
-    console.warn('Google Directions polyline decoded to 0 coordinates.');
-    return null;
-  }
-
-  return { coords, eta: route.legs?.[0]?.duration?.text ?? null };
-};
 
 const formatEtaFromSeconds = (seconds: unknown): string | null => {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
@@ -34,52 +15,60 @@ const formatEtaFromSeconds = (seconds: unknown): string | null => {
   }
 
   const minutes = Math.round(seconds / 60);
-  if (minutes <= 0) {
-    return '< 1 min';
-  }
-  if (minutes < 60) {
-    return `${minutes} min${minutes === 1 ? '' : 's'}`;
-  }
+  if (minutes <= 0) return '< 1 min';
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'}`;
 
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
-  if (remainingMinutes === 0) {
-    return `${hours} hr${hours === 1 ? '' : 's'}`;
-  }
+  if (remainingMinutes === 0) return `${hours} hr${hours === 1 ? '' : 's'}`;
   return `${hours} hr ${remainingMinutes} min${remainingMinutes === 1 ? '' : 's'}`;
 };
 
 const fetchGoogleRoute = async (
   origin: LatLng,
-  destination: LatLng
+  destination: LatLng,
 ): Promise<DirectionsResult | null> => {
-  const url =
-    `${GOOGLE_DIRECTIONS_URL}?origin=${origin.latitude},${origin.longitude}` +
-    `&destination=${destination.latitude},${destination.longitude}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
-
   try {
-    const res = await fetch(url);
+    const res = await fetch(GOOGLE_ROUTES_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': 'routes.duration,routes.polyline.encodedPolyline',
+      },
+      body: JSON.stringify({
+        origin: { location: { latLng: { latitude: origin.latitude, longitude: origin.longitude } } },
+        destination: { location: { latLng: { latitude: destination.latitude, longitude: destination.longitude } } },
+        travelMode: 'DRIVE',
+      }),
+    });
+
     if (!res.ok) {
-      console.warn(`Google Directions request failed with status ${res.status}`);
+      console.warn(`Google Routes API request failed with status ${res.status}`);
       return null;
     }
 
     const json = await res.json();
-    if (json.status !== 'OK') {
-      console.warn(
-        `Google Directions responded with status ${json.status}${json.error_message ? `: ${json.error_message}` : ''}`
-      );
+    const route = json.routes?.[0];
+    if (!route) {
+      console.warn('Google Routes API returned no routes.');
       return null;
     }
 
-    if (!json.routes?.length) {
-      console.warn('Google Directions returned no routes.');
-      return null;
-    }
+    const encoded = route.polyline?.encodedPolyline;
+    if (!encoded) return null;
 
-    return decodeGoogleRoute(json.routes[0]);
+    const coords = (polyline.decode(encoded) as [number, number][]).map(
+      ([lat, lng]) => ({ latitude: lat, longitude: lng }),
+    );
+    if (!coords.length) return null;
+
+    const durationSeconds = route.duration ? parseInt(route.duration, 10) : null;
+    const eta = formatEtaFromSeconds(durationSeconds);
+
+    return { coords, eta };
   } catch (error) {
-    console.error('Google Directions request failed.', error);
+    console.error('Google Routes API request failed.', error);
     return null;
   }
 };

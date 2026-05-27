@@ -98,14 +98,7 @@ export default function DriverMenuScreen() {
           onPress={() => navigation.navigate('AdminChat')}
         />
 
-        <MenuItem
-          icon="history"
-          title="History"
-          description="Take a look at your past completed rides"
-          onPress={() => navigation.navigate('DriverHistory')}
-        />
-
-        <MenuItem
+<MenuItem
           icon="list"
           title="Stop Requests"
           description="See and act on active stop requests"

@@ -188,6 +188,20 @@ service cloud.firestore {
         && orgIsActive(orgId);
     }
 
+    // ---------- AI Insights ----------
+    // Written server-side by the backend; org admins read them in the app.
+    match /orgs/{orgId}/insights/{id} {
+      allow read: if isAdmin(orgId);
+      allow write: if false;
+    }
+
+    // ---------- Rider feedback ----------
+    // Written by members after a confirmed pickup; read only by backend (super-admin).
+    match /orgs/{orgId}/feedback/{id} {
+      allow create: if signedIn() && isMember(orgId) && orgIsActive(orgId);
+      allow read, update, delete: if false;
+    }
+
     // ---------- Default deny ----------
     match /{document=**} {
       allow read, write: if false;

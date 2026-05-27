@@ -51,6 +51,7 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
+import { showToast } from '../src/components/Toast';
 import { notifyDriversNewRequest } from '../src/utils/pushNotifications';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
@@ -404,6 +405,7 @@ export default function MapScreen() {
   const regionRef = useRef<Region | null>(null);
 
   const notifiedRef = useRef(false);
+  const prevRequestStatusRef = useRef<string | null>(null);
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
   const headings = useRef<{ [id: string]: number }>({});
@@ -581,13 +583,6 @@ export default function MapScreen() {
     [insets.top, mapBottomPadding],
   );
 
-  const getEdgePadding = () => ({
-    top: insets.top + 120,
-    right: 95,
-    bottom: mapBottomPadding + 80,
-    left: 95,
-  });
-
   const centerOnUser = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -614,17 +609,41 @@ export default function MapScreen() {
     }
   };
 
-  // Fit campus using fitToCoordinates + edgePadding
-  const fitStops = () => {
+  const fitToPoints = (
+    points: { latitude: number; longitude: number }[],
+    mode: 'followUser' | 'overview' = 'overview',
+    minDelta = 0.01,
+  ) => {
+    if (!points.length) return;
+    const lats = points.map((p) => p.latitude);
+    const lngs = points.map((p) => p.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const latDelta = Math.max((maxLat - minLat) * 1.6, minDelta);
+    const lngDelta = Math.max((maxLng - minLng) * 1.6, minDelta);
     markProgrammaticMove();
-    setCameraMode('followUser');
+    setCameraMode(mode);
+    mapRef.current?.animateToRegion(
+      {
+        latitude: (minLat + maxLat) / 2,
+        longitude: (minLng + maxLng) / 2,
+        latitudeDelta: latDelta,
+        longitudeDelta: lngDelta,
+      },
+      600,
+    );
+  };
 
+  // Fit all campus stops
+  const fitStops = () => {
     const points = stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
-    mapRef.current?.fitToCoordinates(points, { edgePadding: getEdgePadding(), animated: true });
+    fitToPoints(points, 'followUser', 0.01);
   };
 
   const fitActiveRide = () => {
-    if (!request || (request.status !== 'accepted' && request.status !== 'pending') || !request.stop) return;
+    if (!request || !request.stop) return;
 
     const points: { latitude: number; longitude: number }[] = [
       { latitude: request.stop.latitude, longitude: request.stop.longitude },
@@ -638,12 +657,7 @@ export default function MapScreen() {
 
     if (points.length < 2) return;
 
-    markProgrammaticMove();
-    setCameraMode('overview');
-    mapRef.current?.fitToCoordinates(points, {
-      edgePadding: getEdgePadding(),
-      animated: true,
-    });
+    fitToPoints(points, 'overview', 0.012);
   };
 
   useEffect(() => {
@@ -699,7 +713,7 @@ export default function MapScreen() {
 
         setTimeout(() => {
           const points = stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
-          mapRef.current?.fitToCoordinates(points, { edgePadding: getEdgePadding(), animated: true });
+          if (points.length) fitToPoints(points, 'followUser', 0.01);
         }, 10);
       }
 
@@ -916,7 +930,7 @@ export default function MapScreen() {
     const qActive = query(
       orgCol('stopRequests'),
       where('studentUid', '==', watchUid),
-      where('status', 'in', ['pending', 'accepted']),
+      where('status', 'in', ['pending', 'accepted', 'awaiting_confirmation']),
       orderBy('createdAt', 'desc'),
       limit(1),
     );
@@ -924,8 +938,7 @@ export default function MapScreen() {
     const qExpiredCancelled = query(
       orgCol('stopRequests'),
       where('studentUid', '==', watchUid),
-      where('status', '==', 'cancelled'),
-      where('cancelledReason', '==', 'ttl_expired_15m'),
+      where('cancelledReason', 'in', ['ttl_expired_15m', 'driver_offline', 'no_buses_online']),
       orderBy('cancelledAt', 'desc'),
       limit(1),
     );
@@ -969,6 +982,19 @@ export default function MapScreen() {
     if (!ownRequestReady) return;
 
     if (ownRequest) {
+      const prev = prevRequestStatusRef.current;
+      const next = ownRequest.status;
+
+      if (next === 'cancelled' && prev && prev !== 'cancelled') {
+        const reason = ownRequest.cancelledReason;
+        if (reason === 'driver_offline') {
+          showToast('Your driver went offline. Your request was cancelled.', 'error');
+        } else if (reason === 'no_buses_online') {
+          showToast('No buses are online — service has ended for now.', 'error');
+        }
+      }
+
+      prevRequestStatusRef.current = next;
       setRequest(ownRequest);
       setRequestId(ownRequest.id);
       setDriverId(ownRequest.driverUid || ownRequest.driverId || null);
@@ -976,6 +1002,7 @@ export default function MapScreen() {
       return;
     }
 
+    prevRequestStatusRef.current = null;
     setRequest(null);
     setRequestId(null);
     setRouteCoords([]);
@@ -1885,8 +1912,8 @@ const handleRequest = async (entry: RequestableStop) => {
                       : styles.cardBadgeActive,
               ]}>
                 <Text style={styles.cardBadgeText}>
-                  {visibleRequest.status === 'cancelled' && visibleRequest.cancelledReason === 'ttl_expired_15m'
-                    ? 'Expired'
+                  {visibleRequest.status === 'cancelled'
+                    ? (visibleRequest.cancelledReason === 'ttl_expired_15m' ? 'Expired' : 'Cancelled')
                     : visibleRequest.status === 'completed'
                       ? 'Completed'
                       : visibleRequest.status === 'awaiting_confirmation'
@@ -1907,8 +1934,12 @@ const handleRequest = async (entry: RequestableStop) => {
             })()}
 
             <Text style={styles.cardSubtitle}>
-              {visibleRequest.status === 'cancelled' && visibleRequest.cancelledReason === 'ttl_expired_15m'
-                ? 'The request timed out after 15 minutes.'
+              {visibleRequest.status === 'cancelled'
+                ? visibleRequest.cancelledReason === 'driver_offline'
+                  ? 'Your driver went offline. Tap dismiss to start a new request.'
+                  : visibleRequest.cancelledReason === 'no_buses_online'
+                    ? 'No buses are currently online. Service has ended for now.'
+                    : 'The request timed out after 15 minutes.'
                 : visibleRequest.status === 'completed'
                   ? 'The bus has passed this stop.'
                   : visibleRequest.status === 'awaiting_confirmation'
@@ -1946,9 +1977,8 @@ const handleRequest = async (entry: RequestableStop) => {
               </TouchableOpacity>
             )}
 
-            {/* Dismiss button for terminal states — expired or completed */}
-            {(visibleRequest.status === 'completed' ||
-              (visibleRequest.status === 'cancelled' && visibleRequest.cancelledReason === 'ttl_expired_15m')) && (
+            {/* Dismiss button for terminal states */}
+            {(visibleRequest.status === 'completed' || visibleRequest.status === 'cancelled') && (
               <TouchableOpacity
                 style={styles.dismissButton}
                 onPress={() => setDismissedRequestId(visibleRequest.id)}
