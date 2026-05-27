@@ -171,7 +171,9 @@ export default function ProfileScreen() {
               autoCapitalize="words"
               editable={!isSaml && !savingName}
             />
-            {!isSaml && (
+            {isSaml ? (
+              <Icon name="lock" size={18} color="#9ca3af" style={{ marginLeft: 8 }} />
+            ) : (
               <TouchableOpacity
                 style={[styles.saveBtn, { backgroundColor: primaryColor }, savingName && styles.saveBtnDisabled]}
                 onPress={handleSaveName}
@@ -184,7 +186,7 @@ export default function ProfileScreen() {
             )}
           </View>
           {isSaml && (
-            <Text style={styles.fieldNote}>Name is managed by your organization's SSO provider.</Text>
+            <Text style={styles.fieldNote}>Managed by your organization's SSO — contact your IT admin to update.</Text>
           )}
         </View>
 

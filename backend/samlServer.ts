@@ -20,7 +20,14 @@ import {
   orgRejectedTemplate,
   subscriptionConfirmedTemplate,
 } from './mailer';
-import { handleAdminChat, runWeeklyDigest, startWeeklyDigestCron } from './ai';
+import {
+  handleAdminChat,
+  generateOrgInsight,
+  runWeeklyDigest,
+  runMonthlyDigest,
+  startWeeklyDigestCron,
+  startMonthlyDigestCron,
+} from './ai';
 
 /**
  * Shuttler multi-tenant backend
@@ -131,6 +138,8 @@ const PLAN_PRICE_IDS: Record<string, string> = {
   campus: process.env.STRIPE_PRICE_CAMPUS || '',
   enterprise: process.env.STRIPE_PRICE_ENTERPRISE || '',
 };
+
+const STRIPE_PRICE_DATA_ADDON = process.env.STRIPE_PRICE_DATA_ADDON || '';
 
 // ---------- Handoff token store (Firestore-backed) ----------
 // Using Firestore instead of an in-memory Map so tokens survive server restarts.
@@ -1118,6 +1127,48 @@ app.post('/billing/create-portal-session', requireAuth, async (req: Request, res
   }
 });
 
+app.post('/billing/create-addon-checkout-session', requireAuth, async (req: Request, res: Response) => {
+  const { orgId, returnUrl } = req.body;
+  const uid = (req as any).uid as string;
+
+  try {
+    const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
+    const org = orgDoc.data()!;
+
+    const userDoc = await admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid).get();
+    if (!userDoc.exists || userDoc.data()!.role !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    if (!STRIPE_PRICE_DATA_ADDON) {
+      return res.status(500).json({ error: 'Data add-on price not configured. Set STRIPE_PRICE_DATA_ADDON.' });
+    }
+
+    let customerId: string = org.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({ name: org.name, metadata: { orgId } });
+      customerId = customer.id;
+      await admin.firestore().collection('orgs').doc(orgId).update({ stripeCustomerId: customerId });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      mode: 'subscription',
+      line_items: [{ price: STRIPE_PRICE_DATA_ADDON, quantity: 1 }],
+      success_url: `${returnUrl}?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: returnUrl,
+      metadata: { orgId, type: 'data_addon' },
+      subscription_data: { metadata: { orgId, type: 'data_addon' } },
+    });
+
+    return res.json({ url: session.url });
+  } catch (e: any) {
+    console.error('[billing/create-addon-checkout-session] error:', e);
+    return res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
 app.post('/stripe/webhook', async (req: Request, res: Response) => {
   const sig = req.headers['stripe-signature'] as string;
   let event: Stripe.Event;
@@ -1152,11 +1203,23 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session;
       const orgId = session.metadata?.orgId;
-      const plan: string = session.metadata?.plan ?? 'starter';
+      const eventType: string = session.metadata?.type ?? '';
       if (!orgId) {
         console.warn('[webhook] checkout.session.completed missing orgId in metadata');
         return res.json({ received: true });
       }
+
+      // Data add-on purchase
+      if (eventType === 'data_addon') {
+        await admin.firestore().collection('orgs').doc(orgId).update({
+          dataAddonActive: true,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log(`[webhook] data_addon activated for org ${orgId}`);
+        return res.json({ received: true });
+      }
+
+      const plan: string = session.metadata?.plan ?? 'starter';
 
       // Retrieve the subscription so we get the real status
       const subId = typeof session.subscription === 'string'
@@ -1199,17 +1262,26 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     } else if (subscriptionEventTypes.includes(event.type)) {
       const subscription = event.data.object as Stripe.Subscription;
       const orgId = subscription.metadata?.orgId;
+      const subType: string = subscription.metadata?.type ?? '';
       if (!orgId) {
         console.warn(`[webhook] ${event.type} missing orgId in subscription metadata (sub: ${subscription.id})`);
         return res.json({ received: true });
       }
 
       if (event.type === 'customer.subscription.deleted') {
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          subscriptionStatus: 'canceled',
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      } else {
+        if (subType === 'data_addon') {
+          await admin.firestore().collection('orgs').doc(orgId).update({
+            dataAddonActive: false,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          console.log(`[webhook] data_addon deactivated for org ${orgId}`);
+        } else {
+          await admin.firestore().collection('orgs').doc(orgId).update({
+            subscriptionStatus: 'canceled',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      } else if (subType !== 'data_addon') {
         await admin.firestore().collection('orgs').doc(orgId).update({
           subscriptionStatus: subscription.status,
           stripeSubscriptionId: subscription.id,
@@ -1276,6 +1348,40 @@ app.post('/internal/users/:uid/grant-super-admin', requireInternal, async (req: 
   } catch (e) {
     console.error('[super-admin] grant error:', e);
     return res.status(500).json({ error: 'Failed to grant super-admin claim' });
+  }
+});
+
+// ---- Super-admin: list rider feedback ----
+
+app.get('/super-admin/feedback', requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const snap = await admin.firestore()
+      .collectionGroup('feedback')
+      .orderBy('createdAt', 'desc')
+      .limit(500)
+      .get();
+
+    const entries = snap.docs.map((d) => {
+      const data = d.data();
+      const pathParts = d.ref.path.split('/');
+      const orgId = pathParts[1] ?? null;
+      return {
+        id: d.id,
+        orgId,
+        studentUid: data.studentUid ?? null,
+        requestId: data.requestId ?? null,
+        questionKey: data.questionKey ?? null,
+        question: data.question ?? null,
+        rating: data.rating ?? null,
+        answer: data.answer ?? null,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
+      };
+    });
+
+    return res.json({ entries });
+  } catch (e) {
+    console.error('[super-admin/feedback] error:', e);
+    return res.status(500).json({ error: 'Failed to load feedback' });
   }
 });
 
@@ -1710,9 +1816,40 @@ app.post('/ai/weekly-digest', requireInternal, async (_req: Request, res: Respon
   }
 });
 
+app.post('/ai/monthly-digest', requireInternal, async (_req: Request, res: Response) => {
+  try {
+    await runMonthlyDigest();
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[ai/monthly-digest]', e?.message ?? e);
+    return res.status(500).json({ error: 'Digest failed' });
+  }
+});
+
+app.post('/ai/generate-insights', requireAuth, async (req: Request, res: Response) => {
+  const { orgId, period } = req.body as { orgId?: string; period?: 'weekly' | 'monthly' };
+  if (!orgId || !['weekly', 'monthly'].includes(period ?? '')) {
+    return res.status(400).json({ error: 'orgId and period (weekly|monthly) are required' });
+  }
+  const uid = (req as any).uid as string;
+  try {
+    const memberDoc = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').doc(uid).get();
+    if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    await generateOrgInsight(orgId, period as 'weekly' | 'monthly');
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[ai/generate-insights]', e?.message ?? e);
+    return res.status(500).json({ error: 'Failed to generate insight' });
+  }
+});
+
 // ---------- Start ----------
 
 startWeeklyDigestCron();
+startMonthlyDigestCron();
 
 const server = app.listen(PORT, () => {
   console.log(`Shuttler backend listening on http://localhost:${PORT}`);

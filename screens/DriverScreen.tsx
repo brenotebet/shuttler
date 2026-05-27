@@ -825,12 +825,21 @@ export default function DriverScreen() {
       });
 
       requestsAtStop.forEach((req) => {
-        batch.update(doc(db, 'orgs', orgId, 'stopRequests', req.id), {
-          status: 'completed',
-          completedAt: serverTimestamp(),
-          completedReason: 'driver_boarding_save',
-          driverUid: req?.driverUid ?? req?.driverId ?? driverId,
-        });
+        if (req.studentUid) {
+          // Rider has an account — ask them to confirm before marking completed
+          batch.update(doc(db, 'orgs', orgId, 'stopRequests', req.id), {
+            status: 'awaiting_confirmation',
+            confirmationExpiresAtMs: Date.now() + 5 * 60 * 1000,
+            driverUid: req?.driverUid ?? req?.driverId ?? driverId,
+          });
+        } else {
+          batch.update(doc(db, 'orgs', orgId, 'stopRequests', req.id), {
+            status: 'completed',
+            completedAt: serverTimestamp(),
+            completedReason: 'driver_boarding_save',
+            driverUid: req?.driverUid ?? req?.driverId ?? driverId,
+          });
+        }
       });
 
       batch.update(doc(db, 'orgs', orgId, 'buses', driverId), {
@@ -999,7 +1008,7 @@ export default function DriverScreen() {
         {isSharing && !activeBusIds.includes(driverId) && hasLocationPermission && (
           <View style={styles.waitingBanner}>
             <ActivityIndicator size="small" color="#92400e" />
-            <Text style={styles.waitingBannerText}>Location ON — waiting for first GPS ping…</Text>
+            <Text style={styles.waitingBannerText}>Location sharing on — your position will appear on the map in a moment.</Text>
           </View>
         )}
 

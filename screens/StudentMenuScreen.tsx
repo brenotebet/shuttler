@@ -1,7 +1,8 @@
 // src/screens/StudentMenuScreen.tsx
 
-import React from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Alert, Switch } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signOut } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -13,6 +14,7 @@ import { clearSamlSession } from '../src/auth/samlAuth';
 import { useAuth } from '../src/auth/AuthProvider';
 import { spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { FEEDBACK_ENABLED_KEY } from '../src/components/PickupConfirmModal';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
 export default function StudentMenuScreen() {
@@ -21,6 +23,18 @@ export default function StudentMenuScreen() {
   const { primaryColor } = useOrgTheme();
   const isParent = role === 'parent';
   const firstName = displayName?.split(' ')[0] ?? null;
+  const [feedbackEnabled, setFeedbackEnabled] = useState(true);
+
+  useEffect(() => {
+    AsyncStorage.getItem(FEEDBACK_ENABLED_KEY).then((val) => {
+      if (val === 'false') setFeedbackEnabled(false);
+    });
+  }, []);
+
+  const toggleFeedback = (value: boolean) => {
+    setFeedbackEnabled(value);
+    AsyncStorage.setItem(FEEDBACK_ENABLED_KEY, value ? 'true' : 'false');
+  };
 
   const handleLogout = () => {
     Alert.alert(
@@ -78,6 +92,19 @@ export default function StudentMenuScreen() {
           onPress={() => navigation.navigate('HowToUse', { role: isParent ? 'parent' : 'student' })}
         />
 
+        <View style={styles.toggleRow}>
+          <View style={styles.toggleInfo}>
+            <Text style={styles.toggleTitle}>Pickup Feedback</Text>
+            <Text style={styles.toggleDesc}>After a confirmed pickup, show a one-question survey</Text>
+          </View>
+          <Switch
+            value={feedbackEnabled}
+            onValueChange={toggleFeedback}
+            trackColor={{ false: '#e5e7eb', true: `${primaryColor}60` }}
+            thumbColor={feedbackEnabled ? primaryColor : '#9ca3af'}
+          />
+        </View>
+
         <MenuItem
           icon="logout"
           title="Logout"
@@ -116,4 +143,17 @@ const styles = StyleSheet.create({
   menuSection: {
     marginTop: spacing.section,
   },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+    marginBottom: 4,
+  },
+  toggleInfo: { flex: 1, marginRight: 16 },
+  toggleTitle: { fontSize: 15, fontWeight: '600', color: '#111827' },
+  toggleDesc: { fontSize: 13, color: '#6b7280', marginTop: 2 },
 });

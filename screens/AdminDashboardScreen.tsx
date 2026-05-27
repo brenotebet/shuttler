@@ -219,6 +219,7 @@ export default function AdminDashboardScreen() {
   const [activeRequests, setActiveRequests] = useState<any[]>([]);
   const [todayRequests, setTodayRequests] = useState<any[]>([]);
   const [weekBoardings, setWeekBoardings] = useState<any[]>([]);
+  const [todaySessions, setTodaySessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(Date.now());
   const [analyticsQuery, setAnalyticsQuery] = useState('');
@@ -286,6 +287,19 @@ export default function AdminDashboardScreen() {
     );
   }, [orgId]);
 
+  // Today's driver sessions (for time-online stats)
+  useEffect(() => {
+    if (!orgId) return;
+    return onSnapshot(
+      query(
+        collection(db, 'orgs', orgId, 'driverSessions'),
+        where('startedAt', '>=', Timestamp.fromDate(todayStart())),
+      ),
+      (snap) => setTodaySessions(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
+      () => {},
+    );
+  }, [orgId]);
+
   // Last 7 days of boarding counts (pickups)
   useEffect(() => {
     if (!orgId) return;
@@ -348,6 +362,13 @@ export default function AdminDashboardScreen() {
         const responseRate =
           totalClosed > 0 ? Math.round((completedToday / totalClosed) * 100) : null;
 
+        // Sum up completed session durations today + current live session if online
+        const completedSessionsToday = todaySessions.filter(
+          (s) => s.driverUid === uid && s.durationMs != null,
+        );
+        const completedMs = completedSessionsToday.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+        const todayOnlineMs = completedMs + (onlineDurationMs ?? 0);
+
         return {
           uid,
           name: user.displayName ?? user.email ?? uid,
@@ -356,6 +377,7 @@ export default function AdminDashboardScreen() {
           isFresh,
           secondsAgo,
           onlineDurationMs,
+          todayOnlineMs,
           routeName,
           todayPickups,
           activeCount,
@@ -368,7 +390,7 @@ export default function AdminDashboardScreen() {
         if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
-  }, [drivers, buses, activeRequests, todayRequests, weekBoardings, orgRoutes, tick]);
+  }, [drivers, buses, activeRequests, todayRequests, weekBoardings, todaySessions, orgRoutes, tick]);
 
   // --- Derived: fleet summary ---
   const fleetSummary = useMemo(() => {
@@ -609,12 +631,24 @@ export default function AdminDashboardScreen() {
 
             {/* Duration / last seen */}
             <Text style={styles.durationText}>
-              {driver.isOnline && driver.onlineDurationMs !== null
+              {driver.isGpsLost && driver.secondsAgo !== null
+                ? `Signal lost ${formatTimeAgo(driver.secondsAgo)}`
+                : driver.isOnline && driver.onlineDurationMs !== null
                 ? `Online for ${formatDuration(driver.onlineDurationMs)}`
                 : driver.secondsAgo !== null
                 ? `Last seen ${formatTimeAgo(driver.secondsAgo)}`
                 : 'Never connected'}
             </Text>
+
+            {/* Today's total online time */}
+            {driver.todayOnlineMs > 0 && (
+              <View style={styles.onlineTimeRow}>
+                <Icon name="timer" size={13} color="#6b7280" />
+                <Text style={styles.onlineTimeText}>
+                  {formatDuration(driver.todayOnlineMs)} online today
+                </Text>
+              </View>
+            )}
 
             {/* Stats */}
             <View style={styles.statsRow}>
@@ -831,7 +865,9 @@ const styles = StyleSheet.create({
   textOffline: { color: '#64748b' },
   textWarn: { color: '#854d0e' },
 
-  durationText: { fontSize: 12, color: TEXT_SECONDARY, marginBottom: 12 },
+  durationText: { fontSize: 12, color: TEXT_SECONDARY, marginBottom: 4 },
+  onlineTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 },
+  onlineTimeText: { fontSize: 12, color: '#6b7280' },
 
   // Driver stats row
   statsRow: { flexDirection: 'row' },

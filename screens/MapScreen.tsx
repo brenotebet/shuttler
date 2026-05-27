@@ -64,6 +64,7 @@ import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/utils/scheduleUtils';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+import PickupConfirmModal from '../src/components/PickupConfirmModal';
 
 // Bus marker stays visible as long as online:true in Firestore.
 // Opacity reflects freshness (full = recent GPS, dimmed = GPS stale but driver hasn't stopped sharing).
@@ -302,6 +303,7 @@ export default function MapScreen() {
   const [requestId, setRequestId] = useState<string | null>(null);
   const [ownRequest, setOwnRequest] = useState<any>(null);
   const [dismissedRequestId, setDismissedRequestId] = useState<string | null>(null);
+  const [showPickupConfirm, setShowPickupConfirm] = useState(false);
 
   const [ownRequestReady, setOwnRequestReady] = useState(false);
 
@@ -515,7 +517,11 @@ export default function MapScreen() {
 
   // Suppress the bottom card for a dismissed expired/completed request
   const visibleRequest = request && request.id === dismissedRequestId ? null : request;
-  const rideActive = !!visibleRequest && (visibleRequest.status === 'pending' || visibleRequest.status === 'accepted');
+  const rideActive = !!visibleRequest && (
+    visibleRequest.status === 'pending' ||
+    visibleRequest.status === 'accepted' ||
+    visibleRequest.status === 'awaiting_confirmation'
+  );
 
   const resolvedDriverId = useMemo(() => {
     if (!request?.stop) return driverId;
@@ -1254,6 +1260,32 @@ export default function MapScreen() {
     return () => clearInterval(timer);
   }, [request?.id, request?.status]);
 
+  // Show pickup confirmation modal when driver marks boarding
+  useEffect(() => {
+    if (request?.status === 'awaiting_confirmation') {
+      setShowPickupConfirm(true);
+    }
+  }, [request?.status]);
+
+  // Auto-complete confirmation after 5 minutes if rider doesn't respond
+  useEffect(() => {
+    if (request?.status !== 'awaiting_confirmation' || !requestId || !orgId) return;
+    const expiresAt: number = request?.confirmationExpiresAtMs ?? 0;
+    const remaining = expiresAt - Date.now();
+
+    const complete = () => {
+      updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), {
+        status: 'completed',
+        completedAt: serverTimestamp(),
+        completedReason: 'confirmation_auto_expired',
+      }).catch(() => {});
+    };
+
+    if (remaining <= 0) { complete(); return; }
+    const timer = setTimeout(complete, remaining);
+    return () => clearTimeout(timer);
+  }, [request?.status, request?.confirmationExpiresAtMs, requestId, orgId]);
+
   const handleBusPress = async (id: string) => {
     const loc = busLocations[id];
     if (!loc) return;
@@ -1352,8 +1384,7 @@ const handleRequest = async (entry: RequestableStop) => {
     }
     if (nearestDist > STOP_REQUEST_RADIUS_M) {
       showAlert(
-        `You need to be within ${STOP_REQUEST_RADIUS_M} m of a stop to request a pickup. ` +
-        `Your nearest stop is ${Math.round(nearestDist)} m away.`,
+        `You're ${Math.round(nearestDist)} m from the nearest stop. Move within ${STOP_REQUEST_RADIUS_M} m of a stop shown on the map and try again.`,
         'Too far from a stop',
       );
       return;
@@ -1847,16 +1878,20 @@ const handleRequest = async (entry: RequestableStop) => {
                 styles.cardBadge,
                 visibleRequest.status === 'completed'
                   ? styles.cardBadgeDone
-                  : visibleRequest.status === 'cancelled'
-                    ? styles.cardBadgeExpired
-                    : styles.cardBadgeActive,
+                  : visibleRequest.status === 'awaiting_confirmation'
+                    ? styles.cardBadgeConfirming
+                    : visibleRequest.status === 'cancelled'
+                      ? styles.cardBadgeExpired
+                      : styles.cardBadgeActive,
               ]}>
                 <Text style={styles.cardBadgeText}>
                   {visibleRequest.status === 'cancelled' && visibleRequest.cancelledReason === 'ttl_expired_15m'
                     ? 'Expired'
                     : visibleRequest.status === 'completed'
                       ? 'Completed'
-                      : 'Active'}
+                      : visibleRequest.status === 'awaiting_confirmation'
+                        ? 'Confirming…'
+                        : 'Active'}
                 </Text>
               </View>
             </View>
@@ -1876,9 +1911,11 @@ const handleRequest = async (entry: RequestableStop) => {
                 ? 'The request timed out after 15 minutes.'
                 : visibleRequest.status === 'completed'
                   ? 'The bus has passed this stop.'
-                  : role === 'parent'
-                    ? `${visibleRequest.childName ? `${visibleRequest.childName}'s` : "Your child's"} stop is confirmed. The bus will pick them up.`
-                    : 'Your stop is confirmed. The bus will pick you up.'}
+                  : visibleRequest.status === 'awaiting_confirmation'
+                    ? 'The driver recorded a boarding — tap to confirm your pickup.'
+                    : role === 'parent'
+                      ? `${visibleRequest.childName ? `${visibleRequest.childName}'s` : "Your child's"} stop is confirmed. The bus will pick them up.`
+                      : 'Your stop is confirmed. The bus will pick you up.'}
             </Text>
 
             {(eta || stopsBefore !== null) && (
@@ -1896,6 +1933,17 @@ const handleRequest = async (entry: RequestableStop) => {
                 <Icon name="timer" size={13} color="#9CA3AF" />
                 <Text style={[styles.cardInfoMeta, { marginLeft: 4 }]}>{ttlCountdown}</Text>
               </View>
+            )}
+
+            {/* Confirm pickup button */}
+            {visibleRequest.status === 'awaiting_confirmation' && (
+              <TouchableOpacity
+                style={[styles.confirmPickupBtn, { backgroundColor: primaryColor }]}
+                onPress={() => setShowPickupConfirm(true)}
+              >
+                <Icon name="directions-bus" size={16} color="#fff" />
+                <Text style={styles.confirmPickupBtnText}>Confirm pickup</Text>
+              </TouchableOpacity>
             )}
 
             {/* Dismiss button for terminal states — expired or completed */}
@@ -1976,6 +2024,19 @@ const handleRequest = async (entry: RequestableStop) => {
           </View>
         </TouchableWithoutFeedback>
       </Modal>
+
+      {/* Pickup confirmation + feedback modal */}
+      {showPickupConfirm && request && orgId && studentUid && (
+        <PickupConfirmModal
+          visible={showPickupConfirm}
+          requestId={requestId!}
+          orgId={orgId}
+          studentUid={studentUid}
+          stopName={request.stop?.name ?? 'your stop'}
+          primaryColor={primaryColor}
+          onDone={() => setShowPickupConfirm(false)}
+        />
+      )}
 
     </SafeAreaView>
   );
@@ -2198,6 +2259,7 @@ const styles = StyleSheet.create({
   cardBadgeActive: { backgroundColor: '#D1FAE5' },
   cardBadgeDone: { backgroundColor: '#E5E7EB' },
   cardBadgeExpired: { backgroundColor: '#FEE2E2' },
+  cardBadgeConfirming: { backgroundColor: '#FEF3C7' },
   cardBadgeText: { fontSize: 12, fontWeight: '600', color: '#111' },
   cardTitle: { fontSize: 18, fontWeight: '600', marginBottom: 6 },
   cardSubtitle: { fontSize: 14, color: '#555', marginBottom: 4 },
@@ -2215,6 +2277,20 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   cancelButtonText: { color: '#DC2626', fontSize: 15, fontWeight: '600' },
+  confirmPickupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  confirmPickupBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
   dismissButton: {
     borderWidth: 1.5,
     borderColor: '#D1D5DB',

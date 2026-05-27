@@ -4,6 +4,7 @@ import { AppState } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
@@ -11,6 +12,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
   writeBatch,
 } from 'firebase/firestore';
@@ -169,6 +171,9 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const watchSub = useRef<Location.LocationSubscription | null>(null);
   const currentUid = useRef<string | null>(null);
   const currentRouteIdRef = useRef<string | null>(null);
+  const sessionDocId = useRef<string | null>(null);
+  const sessionStartMs = useRef<number>(0);
+  const sessionOrgId = useRef<string>('');
 
   const lastWrittenAt = useRef<number>(0);
   const lastWrittenCoords = useRef<{ latitude: number; longitude: number } | null>(null);
@@ -327,6 +332,22 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       return; // don't start watch if we can't write
     }
 
+    // Record session start
+    try {
+      sessionStartMs.current = Date.now();
+      sessionOrgId.current = orgId;
+      const ref = await addDoc(collection(db, 'orgs', orgId, 'driverSessions'), {
+        driverUid: uid,
+        routeId: routeId ?? null,
+        startedAt: serverTimestamp(),
+        endedAt: null,
+        durationMs: null,
+      });
+      sessionDocId.current = ref.id;
+    } catch {
+      // non-critical — session tracking is best-effort
+    }
+
     lastActivityAt.current = Date.now();
 
     watchSub.current = await Location.watchPositionAsync(
@@ -387,6 +408,21 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     const uid = currentUid.current;
     if (!uid) return;
 
+    // Close session doc before anything else so the timestamp is accurate
+    if (sessionDocId.current && sessionOrgId.current) {
+      try {
+        await updateDoc(
+          doc(db, 'orgs', sessionOrgId.current, 'driverSessions', sessionDocId.current),
+          {
+            endedAt: serverTimestamp(),
+            durationMs: Date.now() - sessionStartMs.current,
+          },
+        );
+      } catch {
+        // non-critical
+      }
+    }
+
     try {
       if (watchSub.current) {
         watchSub.current.remove();
@@ -404,6 +440,9 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       });
     } finally {
       currentUid.current = null;
+      sessionDocId.current = null;
+      sessionStartMs.current = 0;
+      sessionOrgId.current = '';
       lastWrittenAt.current = 0;
       lastWrittenCoords.current = null;
       smoothedCoords.current = null;

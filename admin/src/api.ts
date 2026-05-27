@@ -54,3 +54,24 @@ export async function rejectOrg(orgId: string, reason: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
+
+export type FeedbackEntry = {
+  id: string;
+  orgId: string | null;
+  studentUid: string | null;
+  requestId: string | null;
+  questionKey: string | null;
+  question: string | null;
+  rating: number | null;
+  answer: string | null;
+  createdAt: string | null;
+};
+
+export async function listFeedback(): Promise<FeedbackEntry[]> {
+  const res = await fetch(`${API}/super-admin/feedback`, {
+    headers: { Authorization: `Bearer ${await token()}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.entries ?? [];
+}

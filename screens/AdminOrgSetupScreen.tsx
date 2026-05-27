@@ -46,7 +46,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'analytics';
+type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'insights' | 'analytics';
 
 // ---- Helpers ----
 
@@ -1720,6 +1720,30 @@ function BillingTab() {
     [org, refreshOrg],
   );
 
+  const openAddonCheckout = useCallback(async () => {
+    if (!org) return;
+    setIsLoading(true);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/billing/create-addon-checkout-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: org.orgId, returnUrl: 'shuttler://billing' }),
+      });
+      const { url, error } = await res.json();
+      if (error) throw new Error(error);
+      await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        await refreshOrg();
+      }
+    } catch (e: any) {
+      showToast(e?.message ?? 'Failed to open billing.', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [org, refreshOrg]);
+
   const openPortal = useCallback(async () => {
     if (!org) return;
     setIsLoading(true);
@@ -1848,6 +1872,25 @@ function BillingTab() {
         />
       </View>
 
+      {/* Data Add-on */}
+      <Text style={[styles.sectionLabel, { marginTop: 8 }]}>Add-ons</Text>
+      <View style={[styles.planCard, org?.dataAddonActive && styles.planCardActive, org?.dataAddonActive && { borderColor: primaryColor }]}>
+        <View style={styles.planInfo}>
+          <View style={styles.planNameRow}>
+            <Text style={styles.planName}>Data Analytics</Text>
+            {org?.dataAddonActive && <View style={styles.currentBadge}><Text style={styles.currentBadgeText}>Active</Text></View>}
+          </View>
+          <Text style={[styles.planPrice, { color: primaryColor }]}>$49/mo</Text>
+          <Text style={styles.planDesc}>Full raw data access · All boarding records · Driver & stop breakdowns</Text>
+        </View>
+        <AppButton
+          label={org?.dataAddonActive ? 'Active' : (isLoading ? '…' : 'Add')}
+          onPress={() => !org?.dataAddonActive && isApproved && openAddonCheckout()}
+          disabled={isLoading || !!org?.dataAddonActive || !isApproved}
+          style={styles.planButton}
+        />
+      </View>
+
       {isActive && (
         <AppButton
           label={isLoading ? '…' : 'Manage Billing'}
@@ -1859,6 +1902,245 @@ function BillingTab() {
     </ScrollView>
   );
 }
+
+// ---- Insights Tab ----
+
+interface OrgInsight {
+  narrative: string;
+  totalBoardings: number;
+  activeDrivers: number;
+  topStop: string | null;
+  generatedAt: any;
+}
+
+function InsightsTab() {
+  const { org } = useOrg();
+  const { primaryColor } = useOrgTheme();
+  const [weekly, setWeekly] = useState<OrgInsight | null>(null);
+  const [monthly, setMonthly] = useState<OrgInsight | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isGenerating, setIsGenerating] = useState<'weekly' | 'monthly' | null>(null);
+
+  const load = useCallback(async () => {
+    if (!org) return;
+    setIsLoading(true);
+    try {
+      const [wSnap, mSnap] = await Promise.all([
+        getDoc(doc(db, 'orgs', org.orgId, 'insights', 'weekly')),
+        getDoc(doc(db, 'orgs', org.orgId, 'insights', 'monthly')),
+      ]);
+      setWeekly(wSnap.exists() ? (wSnap.data() as OrgInsight) : null);
+      setMonthly(mSnap.exists() ? (mSnap.data() as OrgInsight) : null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [org?.orgId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const generate = useCallback(async (period: 'weekly' | 'monthly') => {
+    if (!org) return;
+    setIsGenerating(period);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/ai/generate-insights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: org.orgId, period }),
+      });
+      if (!res.ok) {
+        const { error } = await res.json();
+        throw new Error(error ?? 'Failed to generate insight');
+      }
+      await load();
+      showToast('Insight generated.', 'success');
+    } catch (e: any) {
+      showToast(e?.message ?? 'Failed to generate insight.', 'error');
+    } finally {
+      setIsGenerating(null);
+    }
+  }, [org, load]);
+
+  if (isLoading) {
+    return (
+      <View style={insightStyles.center}>
+        <ActivityIndicator size="large" color={primaryColor} />
+      </View>
+    );
+  }
+
+  const renderInsightCard = (period: 'weekly' | 'monthly', insight: OrgInsight | null) => {
+    const label = period === 'weekly' ? 'Weekly' : 'Monthly';
+    const generatedStr = insight?.generatedAt?.toDate?.()?.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    return (
+      <View style={insightStyles.card} key={period}>
+        <View style={insightStyles.cardHeader}>
+          <Text style={insightStyles.cardTitle}>{label} Insight</Text>
+          {generatedStr && <Text style={insightStyles.cardDate}>Updated {generatedStr}</Text>}
+        </View>
+        {insight ? (
+          <>
+            <View style={insightStyles.statsRow}>
+              <View style={insightStyles.statItem}>
+                <Text style={[insightStyles.statValue, { color: primaryColor }]}>{insight.totalBoardings}</Text>
+                <Text style={insightStyles.statLabel}>Boardings</Text>
+              </View>
+              <View style={insightStyles.statItem}>
+                <Text style={[insightStyles.statValue, { color: primaryColor }]}>{insight.activeDrivers}</Text>
+                <Text style={insightStyles.statLabel}>Active Drivers</Text>
+              </View>
+              {insight.topStop && (
+                <View style={[insightStyles.statItem, { flex: 2 }]}>
+                  <Text style={[insightStyles.statValue, { color: primaryColor, fontSize: 13 }]} numberOfLines={1}>{insight.topStop.split(' (')[0]}</Text>
+                  <Text style={insightStyles.statLabel}>Top Stop</Text>
+                </View>
+              )}
+            </View>
+            <Text style={insightStyles.narrative}>{insight.narrative}</Text>
+          </>
+        ) : (
+          <Text style={insightStyles.emptyText}>No {label.toLowerCase()} insight yet. Generate one below.</Text>
+        )}
+        <TouchableOpacity
+          style={[insightStyles.generateBtn, { borderColor: primaryColor }]}
+          onPress={() => generate(period)}
+          disabled={isGenerating === period}
+        >
+          {isGenerating === period ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : (
+            <>
+              <Icon name="auto-awesome" size={16} color={primaryColor} />
+              <Text style={[insightStyles.generateBtnText, { color: primaryColor }]}>Generate now</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  return (
+    <ScrollView contentContainerStyle={insightStyles.container}>
+      <Text style={insightStyles.intro}>
+        AI-generated summaries of your operation, updated automatically each week and month.
+      </Text>
+      {renderInsightCard('weekly', weekly)}
+      {renderInsightCard('monthly', monthly)}
+    </ScrollView>
+  );
+}
+
+const insightStyles = StyleSheet.create({
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  container: { padding: 16, gap: 16, paddingBottom: 40 },
+  intro: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
+    ...cardShadow,
+  },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: '#111' },
+  cardDate: { fontSize: 11, color: '#9ca3af' },
+  statsRow: { flexDirection: 'row', gap: 12 },
+  statItem: { flex: 1, alignItems: 'center', backgroundColor: '#f9fafb', borderRadius: 10, padding: 10 },
+  statValue: { fontSize: 20, fontWeight: '700' },
+  statLabel: { fontSize: 11, color: '#6b7280', marginTop: 2 },
+  narrative: { fontSize: 14, color: '#374151', lineHeight: 21 },
+  emptyText: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
+  generateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  generateBtnText: { fontSize: 14, fontWeight: '600' },
+});
+
+// ---- Analytics Upsell ----
+
+function AnalyticsUpsell() {
+  const { org, refreshOrg } = useOrg();
+  const { primaryColor } = useOrgTheme();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const openAddonCheckout = useCallback(async () => {
+    if (!org) return;
+    setIsLoading(true);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/billing/create-addon-checkout-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: org.orgId, returnUrl: 'shuttler://billing' }),
+      });
+      const { url, error } = await res.json();
+      if (error) throw new Error(error);
+      await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        await refreshOrg();
+      }
+    } catch (e: any) {
+      showToast(e?.message ?? 'Failed to open billing.', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [org, refreshOrg]);
+
+  return (
+    <View style={upsellStyles.container}>
+      <Icon name="lock" size={40} color="#d1d5db" />
+      <Text style={upsellStyles.title}>Raw Data Analytics</Text>
+      <Text style={upsellStyles.body}>
+        Access full boarding records, stop activity logs, driver stats, and more — everything we collect, all in one place.
+      </Text>
+      <View style={upsellStyles.featureList}>
+        {['All boarding records', 'Per-driver performance', 'Stop-by-stop breakdown', 'Recent activity log'].map((f) => (
+          <View key={f} style={upsellStyles.featureRow}>
+            <Icon name="check-circle" size={16} color={primaryColor} />
+            <Text style={upsellStyles.featureText}>{f}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={upsellStyles.priceBox}>
+        <Text style={[upsellStyles.price, { color: primaryColor }]}>$49<Text style={upsellStyles.priceSub}>/mo</Text></Text>
+        <Text style={upsellStyles.priceNote}>Add-on to any plan</Text>
+      </View>
+      <AppButton
+        label={isLoading ? '…' : 'Add Data Analytics — $49/mo'}
+        onPress={openAddonCheckout}
+        disabled={isLoading}
+        style={[styles.actionButton, { backgroundColor: primaryColor }]}
+      />
+    </View>
+  );
+}
+
+const upsellStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 16,
+  },
+  title: { fontSize: 20, fontWeight: '700', color: '#111', textAlign: 'center' },
+  body: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 20 },
+  featureList: { alignSelf: 'stretch', gap: 8 },
+  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  featureText: { fontSize: 14, color: '#374151' },
+  priceBox: { alignItems: 'center' },
+  price: { fontSize: 36, fontWeight: '700' },
+  priceSub: { fontSize: 18, fontWeight: '400' },
+  priceNote: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
+});
 
 // ---- Analytics Tab ----
 
@@ -2120,6 +2402,7 @@ export default function AdminOrgSetupScreen() {
     { key: 'stops', icon: 'place', label: 'Stops' },
     { key: 'users', icon: 'people', label: 'Users' },
     { key: 'billing', icon: 'credit-card', label: 'Billing' },
+    { key: 'insights', icon: 'auto-awesome', label: 'Insights' },
     { key: 'analytics', icon: 'bar-chart', label: 'Analytics' },
   ];
 
@@ -2184,7 +2467,12 @@ export default function AdminOrgSetupScreen() {
         {activeTab === 'stops' && <StopsTab />}
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'billing' && <BillingTab />}
-        {activeTab === 'analytics' && <AnalyticsTab />}
+        {activeTab === 'insights' && <InsightsTab />}
+        {activeTab === 'analytics' && (
+          setupOrg?.dataAddonActive
+            ? <AnalyticsTab />
+            : <AnalyticsUpsell />
+        )}
       </KeyboardAvoidingView>
     </ScreenContainer>
   );

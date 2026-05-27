@@ -77,6 +77,7 @@ export type OrgConfig = {
   };
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
+  dataAddonActive?: boolean;
   approved?: boolean;
   reviewStatus?: 'pending' | 'approved' | 'rejected';
   rejectionReason?: string | null;
