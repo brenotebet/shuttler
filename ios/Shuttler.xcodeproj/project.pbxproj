@@ -14,6 +14,7 @@
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 		FEE0A6DEAAEED43753DEE42F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9D534F93B1B2C88E2FDAB624 /* PrivacyInfo.xcprivacy */; };
+		D1156F7A8E3944DBB4E6400E /* noop-file.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0404A07AD1FB4697B64FCF36 /* noop-file.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Shuttler/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* Shuttler-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Shuttler-Bridging-Header.h"; path = "Shuttler/Shuttler-Bridging-Header.h"; sourceTree = "<group>"; };
+		0404A07AD1FB4697B64FCF36 /* noop-file.swift */ = {isa = PBXFileReference; name = "noop-file.swift"; path = "Shuttler/noop-file.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +56,7 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
 				9D534F93B1B2C88E2FDAB624 /* PrivacyInfo.xcprivacy */,
+				0404A07AD1FB4697B64FCF36 /* noop-file.swift */,
 			);
 			name = Shuttler;
 			sourceTree = "<group>";
@@ -377,6 +380,7 @@
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
 				13457B4CF8D4093EF32C5AFD /* ExpoModulesProvider.swift in Sources */,
+				D1156F7A8E3944DBB4E6400E /* noop-file.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -410,7 +414,7 @@
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.shuttler.app;
-				PRODUCT_NAME = Shuttler;
+				PRODUCT_NAME = "Shuttler";
 				SWIFT_OBJC_BRIDGING_HEADER = "Shuttler/Shuttler-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -441,7 +445,7 @@
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.shuttler.app;
-				PRODUCT_NAME = Shuttler;
+				PRODUCT_NAME = "Shuttler";
 				SWIFT_OBJC_BRIDGING_HEADER = "Shuttler/Shuttler-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

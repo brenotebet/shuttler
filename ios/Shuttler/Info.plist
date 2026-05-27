@@ -4,6 +4,8 @@
   <dict>
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
@@ -49,19 +51,22 @@
     </dict>
     <key>NSCameraUsageDescription</key>
     <string>Some features may require camera access.</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>Allow Shuttler to access your photo library to upload an organization logo.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>Allow Shuttler to access your location even when the app is in the background.</string>
     <key>NSLocationAlwaysUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your location</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Allow Shuttler to access your location while using the app.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Allow Shuttler to access your photo library to upload an organization logo.</string>
     <key>RCTNewArchEnabled</key>
     <true/>
     <key>UIBackgroundModes</key>
     <array>
       <string>location</string>
+      <string>remote-notification</string>
       <string>fetch</string>
     </array>
     <key>UILaunchStoryboardName</key>

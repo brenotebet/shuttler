@@ -23,6 +23,7 @@ import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firest
 import * as Google from 'expo-auth-session/providers/google';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
+import Constants from 'expo-constants';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { app } from '../firebase/firebaseconfig';
 import * as Linking from 'expo-linking';
@@ -698,7 +699,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
             <Text style={styles.socialButtonText}>Continue with Google</Text>
           </TouchableOpacity>
 
-          {Platform.OS === 'ios' && (
+          {Platform.OS === 'ios' && Constants.appOwnership !== 'expo' && (
             <TouchableOpacity
               style={[styles.socialButton, styles.appleButton, isSocialLoading && styles.socialButtonDisabled]}
               onPress={handleAppleSignIn}
@@ -711,7 +712,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           )}
 
           <Text style={styles.socialDisclaimer}>
-            By continuing with Google{Platform.OS === 'ios' ? ' or Apple' : ''}, you agree to our{' '}
+            By continuing with Google{Platform.OS === 'ios' && Constants.appOwnership !== 'expo' ? ' or Apple' : ''}, you agree to our{' '}
             <Text style={{ color: primaryColor }} onPress={() => Linking.openURL('https://shuttler.net/terms')}>
               Terms
             </Text>
