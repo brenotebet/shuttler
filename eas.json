@@ -16,6 +16,10 @@
       "distribution": "store",
       "ios": {
         "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "340587406760-ppvftj3up5auim8f0nrh5bkr8jg6aft9.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "340587406760-ovhs9hh78nls4dill6gq8137nn905cf6.apps.googleusercontent.com"
       }
     }
   },

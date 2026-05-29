@@ -4,6 +4,12 @@ import { load } from '@expo/env';
 load(process.cwd());
 
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
+const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+// Reversed form of the iOS client ID — must be registered as a URL scheme so
+// Google's OAuth flow can redirect back to the app on iOS.
+const reversedIosClientId = googleIosClientId
+  ? googleIosClientId.split('.').reverse().join('.')
+  : '';
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -34,6 +40,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       NSCameraUsageDescription: 'Some features may require camera access.',
       NSPhotoLibraryUsageDescription: 'Allow Shuttler to access your photo library to upload an organization logo.',
       UIBackgroundModes: ['location', 'remote-notification'],
+      ...(reversedIosClientId
+        ? { CFBundleURLTypes: [{ CFBundleURLSchemes: [reversedIosClientId] }] }
+        : {}),
     },
   },
   android: {
