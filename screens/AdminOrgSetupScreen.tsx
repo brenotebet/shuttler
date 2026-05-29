@@ -33,7 +33,7 @@ import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseconfig';
-import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE } from '../src/org/OrgContext';
+import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE, BreakSettings } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { showToast } from '../src/components/Toast';
@@ -46,7 +46,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing';
+type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
 // ---- Helpers ----
 
@@ -1903,6 +1903,160 @@ function BillingTab() {
   );
 }
 
+// ---- Operations Tab ----
+
+const BREAK_DURATION_OPTIONS = [5, 10, 15, 20, 25, 30];
+const BREAKS_PER_SHIFT_OPTIONS = [1, 2, 3, 4, 5];
+
+function OperationsTab() {
+  const { org, refreshOrg } = useOrg();
+  const { primaryColor } = useOrgTheme();
+
+  const existing = org?.breakSettings;
+  const [enabled, setEnabled] = useState(existing?.enabled ?? false);
+  const [maxMinutes, setMaxMinutes] = useState(existing?.maxMinutes ?? 15);
+  const [breaksPerShift, setBreaksPerShift] = useState(existing?.breaksPerShift ?? 1);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSave = useCallback(async () => {
+    if (!org) return;
+    setIsSaving(true);
+    try {
+      const token = await getBearerToken();
+      const breakSettings: BreakSettings = { enabled, maxMinutes, breaksPerShift };
+      const res = await fetch(`${SHUTTLER_API_URL}/orgs/${org.orgId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ breakSettings }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      await refreshOrg();
+      showToast('Break settings saved.', 'success');
+    } catch (e: any) {
+      showToast(e?.message ?? 'Failed to save settings.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [org, enabled, maxMinutes, breaksPerShift, refreshOrg]);
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.tabContent}
+      keyboardShouldPersistTaps="handled"
+    >
+      <Text style={styles.sectionLabel}>Driver Breaks</Text>
+      <Text style={styles.hint}>
+        Allow drivers to take scheduled breaks during their shift. Pending stop requests are cancelled when a break starts.
+      </Text>
+
+      <View style={opsStyles.settingRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={opsStyles.settingLabel}>Enable breaks</Text>
+          <Text style={opsStyles.settingHint}>Drivers will see a "Take a Break" button while online</Text>
+        </View>
+        <Switch
+          value={enabled}
+          onValueChange={setEnabled}
+          trackColor={{ true: primaryColor }}
+          thumbColor="#fff"
+        />
+      </View>
+
+      {enabled && (
+        <>
+          <Text style={[styles.sectionLabel, { marginTop: 8 }]}>Max break duration</Text>
+          <Text style={styles.hint}>The longest break a driver can take at once.</Text>
+          <View style={opsStyles.chipRow}>
+            {BREAK_DURATION_OPTIONS.map((mins) => (
+              <TouchableOpacity
+                key={mins}
+                style={[opsStyles.chip, maxMinutes === mins && { backgroundColor: primaryColor, borderColor: primaryColor }]}
+                onPress={() => setMaxMinutes(mins)}
+              >
+                <Text style={[opsStyles.chipText, maxMinutes === mins && opsStyles.chipTextActive]}>
+                  {mins} min
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Breaks per shift</Text>
+          <Text style={styles.hint}>Maximum number of breaks a driver can take per shift.</Text>
+          <View style={opsStyles.chipRow}>
+            {BREAKS_PER_SHIFT_OPTIONS.map((n) => (
+              <TouchableOpacity
+                key={n}
+                style={[opsStyles.chip, breaksPerShift === n && { backgroundColor: primaryColor, borderColor: primaryColor }]}
+                onPress={() => setBreaksPerShift(n)}
+              >
+                <Text style={[opsStyles.chipText, breaksPerShift === n && opsStyles.chipTextActive]}>
+                  {n}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      )}
+
+      <AppButton
+        label={isSaving ? 'Saving…' : 'Save Operations'}
+        onPress={handleSave}
+        disabled={isSaving}
+        style={styles.actionButton}
+        color={primaryColor}
+      />
+    </ScrollView>
+  );
+}
+
+const opsStyles = StyleSheet.create({
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 14,
+    marginBottom: 12,
+    gap: 12,
+  },
+  settingLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111',
+    marginBottom: 2,
+  },
+  settingHint: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 16,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  chip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#d1d5db',
+    backgroundColor: '#f9fafb',
+  },
+  chipText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  chipTextActive: {
+    color: '#fff',
+  },
+});
+
 // ---- Main Screen ----
 
 export default function AdminOrgSetupScreen() {
@@ -1919,6 +2073,7 @@ export default function AdminOrgSetupScreen() {
     { key: 'auth', icon: 'lock', label: 'Auth' },
     { key: 'stops', icon: 'place', label: 'Stops' },
     { key: 'users', icon: 'people', label: 'Users' },
+    { key: 'ops', icon: 'tune', label: 'Ops' },
     { key: 'billing', icon: 'credit-card', label: 'Billing' },
   ];
 
@@ -1982,6 +2137,7 @@ export default function AdminOrgSetupScreen() {
         {activeTab === 'auth' && <AuthTab />}
         {activeTab === 'stops' && <StopsTab />}
         {activeTab === 'users' && <UsersTab />}
+        {activeTab === 'ops' && <OperationsTab />}
         {activeTab === 'billing' && <BillingTab />}
       </KeyboardAvoidingView>
     </ScreenContainer>

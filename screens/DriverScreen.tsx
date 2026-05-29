@@ -1,7 +1,7 @@
 // DriverScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Alert, View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native';
+import { Alert, Modal, View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -126,7 +126,7 @@ function nextStopFromNearest(nearestStopId: string | null, stops: Stop[]) {
 export default function DriverScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { isSharing, startSharing, stopSharing } = useLocationSharing();
+  const { isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak } = useLocationSharing();
   const { driverId, loading } = useDriver();
   const { org } = useOrg();
   const { role: authRole } = useAuth();
@@ -137,6 +137,8 @@ export default function DriverScreen() {
   const orgId = org?.orgId ?? '';
 
   const [isToggling, setIsToggling] = useState(false);
+  const [showBreakSheet, setShowBreakSheet] = useState(false);
+  const [breakCountdown, setBreakCountdown] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const manuallySelectedRoute = useRef(false);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
@@ -190,6 +192,23 @@ export default function DriverScreen() {
   const seenRequestIdsRef = useRef<Set<string>>(new Set());
 
   const driverCoords = driverId ? (busLocationsRef.current[driverId] ?? null) : null;
+
+  // Break countdown tick
+  useEffect(() => {
+    if (!isOnBreak || !breakEndsAt) {
+      setBreakCountdown(null);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, breakEndsAt.getTime() - Date.now());
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      setBreakCountdown(`${mins}:${secs.toString().padStart(2, '0')}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [isOnBreak, breakEndsAt]);
 
   // Resolve the active route. Auto-selects the first route when routes are available.
   const activeRoute = useMemo(() => {
@@ -869,22 +888,62 @@ export default function DriverScreen() {
 
   if (loading || !driverId) return null;
 
-  const headerHeight = 74 + insets.top;
   const nearestStats = nearestStop ? oldestLatestByStopId[nearestStop.id] : undefined;
   const nextStats = nextStop ? oldestLatestByStopId[nextStop.id] : undefined;
 
+  const breakSettings = org?.breakSettings;
+  const canTakeBreak = isSharing && !isOnBreak && breakSettings?.enabled === true && breaksTakenThisShift < (breakSettings?.breaksPerShift ?? 0);
+  const breakDurationOptions: number[] = [];
+  if (breakSettings?.maxMinutes) {
+    for (let m = 5; m <= breakSettings.maxMinutes; m += 5) breakDurationOptions.push(m);
+  }
+  const breakRowVisible = isSharing && (isOnBreak || canTakeBreak);
+  const headerHeight = (breakRowVisible ? 112 : 74) + insets.top;
+
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <View>
-          <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
-          {activeRoute && (
-            <Text style={styles.headerSubtitle}>
-              <Icon name="route" size={12} color="#6b7280" /> {activeRoute.name}
+      {/* Break duration picker modal */}
+      <Modal visible={showBreakSheet} transparent animationType="slide" onRequestClose={() => setShowBreakSheet(false)}>
+        <TouchableOpacity style={styles.breakSheetOverlay} activeOpacity={1} onPress={() => setShowBreakSheet(false)}>
+          <View style={styles.breakSheet}>
+            <Text style={styles.breakSheetTitle}>How long is your break?</Text>
+            <Text style={styles.breakSheetHint}>
+              {breaksTakenThisShift > 0
+                ? `${breaksTakenThisShift} of ${breakSettings?.breaksPerShift ?? 1} break${(breakSettings?.breaksPerShift ?? 1) > 1 ? 's' : ''} used this shift`
+                : 'Pending stop requests will be cancelled.'}
             </Text>
-          )}
-        </View>
-        <TouchableOpacity
+            <View style={styles.breakDurationRow}>
+              {breakDurationOptions.map((mins) => (
+                <TouchableOpacity
+                  key={mins}
+                  style={[styles.breakDurationChip, { borderColor: primaryColor }]}
+                  onPress={async () => {
+                    setShowBreakSheet(false);
+                    await startBreak(mins);
+                  }}
+                >
+                  <Text style={[styles.breakDurationChipText, { color: primaryColor }]}>{mins} min</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity style={styles.breakSheetCancel} onPress={() => setShowBreakSheet(false)}>
+              <Text style={styles.breakSheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerTopRow}>
+          <View>
+            <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
+            {activeRoute && (
+              <Text style={styles.headerSubtitle}>
+                <Icon name="route" size={12} color="#6b7280" /> {activeRoute.name}
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity
           style={[styles.shareButton, { backgroundColor: primaryColor }, isToggling && styles.shareButtonDisabled]}
           disabled={isToggling}
           onPress={async () => {
@@ -958,7 +1017,30 @@ export default function DriverScreen() {
           <Text style={styles.shareButtonText}>
             {isToggling ? (isSharing ? 'Stopping...' : 'Starting...') : isSharing ? 'Stop Sharing' : 'Start Sharing'}
           </Text>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </View>
+
+        {/* Break row — shown only when sharing */}
+        {isSharing && (
+          <View style={styles.breakRow}>
+            {isOnBreak ? (
+              <>
+                <View style={styles.breakBadge}>
+                  <Icon name="free-breakfast" size={14} color="#b45309" />
+                  <Text style={styles.breakBadgeText}>On Break {breakCountdown ? `· ${breakCountdown}` : ''}</Text>
+                </View>
+                <TouchableOpacity style={[styles.endBreakButton, { borderColor: primaryColor }]} onPress={endBreak}>
+                  <Text style={[styles.endBreakButtonText, { color: primaryColor }]}>End Break</Text>
+                </TouchableOpacity>
+              </>
+            ) : canTakeBreak ? (
+              <TouchableOpacity style={[styles.breakButton, { backgroundColor: primaryColor + '18', borderColor: primaryColor + '60' }]} onPress={() => setShowBreakSheet(true)}>
+                <Icon name="free-breakfast" size={15} color={primaryColor} />
+                <Text style={[styles.breakButtonText, { color: primaryColor }]}>Take a Break</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
       </View>
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + 12, paddingBottom: 140 }]}>
@@ -1305,6 +1387,9 @@ const styles = StyleSheet.create({
     backgroundColor: BACKGROUND_COLOR,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#ddd',
+    flexDirection: 'column',
+  },
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1563,6 +1648,103 @@ const styles = StyleSheet.create({
   otherBusStopLabel: {
     fontSize: 13,
     color: '#4b5563',
+    fontWeight: '500',
+  },
+
+  // Break UI
+  breakRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 8,
+  },
+  breakButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  breakButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  breakBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  breakBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#b45309',
+  },
+  endBreakButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  endBreakButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // Break sheet modal
+  breakSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  breakSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingBottom: 40,
+  },
+  breakSheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111',
+    marginBottom: 6,
+  },
+  breakSheetHint: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginBottom: 20,
+  },
+  breakDurationRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  breakDurationChip: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 24,
+    borderWidth: 1.5,
+  },
+  breakDurationChipText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  breakSheetCancel: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  breakSheetCancelText: {
+    fontSize: 16,
+    color: '#6b7280',
     fontWeight: '500',
   },
 });

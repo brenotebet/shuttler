@@ -390,6 +390,7 @@ export default function MapScreen() {
       lastUpdated: Date;
       isFresh: boolean;
       secondsAgo: number;
+      onBreak: boolean;
     };
   }>({});
 
@@ -803,6 +804,7 @@ export default function MapScreen() {
               timestamp,
               online,
               routeId: typeof data.routeId === 'string' ? data.routeId : null,
+              onBreak: data?.onBreak === true,
             };
           })
           .filter(Boolean)
@@ -824,6 +826,7 @@ export default function MapScreen() {
             lastUpdated: Date;
             isFresh: boolean;
             secondsAgo: number;
+            onBreak: boolean;
           };
         } = {};
 
@@ -845,6 +848,7 @@ export default function MapScreen() {
             lastUpdated: timestamp,
             isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
             secondsAgo,
+            onBreak: (bus as any).onBreak === true,
           };
 
           if (!busRegions.current[id]) {
@@ -938,7 +942,7 @@ export default function MapScreen() {
     const qExpiredCancelled = query(
       orgCol('stopRequests'),
       where('studentUid', '==', watchUid),
-      where('cancelledReason', 'in', ['ttl_expired_15m', 'driver_offline', 'no_buses_online']),
+      where('cancelledReason', 'in', ['ttl_expired_15m', 'driver_offline', 'driver_on_break', 'no_buses_online']),
       orderBy('cancelledAt', 'desc'),
       limit(1),
     );
@@ -989,6 +993,8 @@ export default function MapScreen() {
         const reason = ownRequest.cancelledReason;
         if (reason === 'driver_offline') {
           showToast('Your driver went offline. Your request was cancelled.', 'error');
+        } else if (reason === 'driver_on_break') {
+          showToast('Your driver is on a break. Your request was cancelled.', 'error');
         } else if (reason === 'no_buses_online') {
           showToast('No buses are online — service has ended for now.', 'error');
         }
@@ -1764,7 +1770,7 @@ const handleRequest = async (entry: RequestableStop) => {
                 rotation={loc.heading}
                 anchor={{ x: 0.5, y: 0.5 }}
                 onPress={() => handleBusPress(id)}
-                tracksViewChanges={isSelected || forceBusTracks}
+                tracksViewChanges={isSelected || forceBusTracks || (loc as any).onBreak}
                 zIndex={50}
               >
                 <Image
@@ -1773,6 +1779,20 @@ const handleRequest = async (entry: RequestableStop) => {
                   resizeMode="contain"
                 />
               </MarkerAnimated>
+
+              {(loc as any).onBreak && (
+                <MarkerAnimated
+                  coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
+                  anchor={{ x: 0.5, y: 2.4 }}
+                  tappable={false}
+                  tracksViewChanges
+                  zIndex={60}
+                >
+                  <View style={styles.onBreakBadge}>
+                    <Text style={styles.onBreakBadgeText}>On Break</Text>
+                  </View>
+                </MarkerAnimated>
+              )}
 
               {isSelected && (
                 <MarkerAnimated
@@ -1942,9 +1962,11 @@ const handleRequest = async (entry: RequestableStop) => {
               {visibleRequest.status === 'cancelled'
                 ? visibleRequest.cancelledReason === 'driver_offline'
                   ? 'Your driver went offline. Tap dismiss to start a new request.'
-                  : visibleRequest.cancelledReason === 'no_buses_online'
-                    ? 'No buses are currently online. Service has ended for now.'
-                    : 'The request timed out after 15 minutes.'
+                  : visibleRequest.cancelledReason === 'driver_on_break'
+                    ? 'Your driver is on a break. Tap dismiss to start a new request.'
+                    : visibleRequest.cancelledReason === 'no_buses_online'
+                      ? 'No buses are currently online. Service has ended for now.'
+                      : 'The request timed out after 15 minutes.'
                 : visibleRequest.status === 'completed'
                   ? 'The bus has passed this stop.'
                   : visibleRequest.status === 'awaiting_confirmation'
@@ -2466,5 +2488,18 @@ const styles = StyleSheet.create({
   activeChildText: {
     fontSize: 13,
     fontWeight: '700',
+  },
+  onBreakBadge: {
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  onBreakBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400e',
   },
 });

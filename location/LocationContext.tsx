@@ -9,6 +9,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  increment,
   query,
   serverTimestamp,
   setDoc,
@@ -24,12 +25,22 @@ type LocationContextType = {
   isSharing: boolean;
   startSharing: (routeId?: string) => Promise<void>;
   stopSharing: () => Promise<void>;
+  isOnBreak: boolean;
+  breakEndsAt: Date | null;
+  breaksTakenThisShift: number;
+  startBreak: (minutes: number) => Promise<void>;
+  endBreak: () => Promise<void>;
 };
 
 const LocationContext = createContext<LocationContextType>({
   isSharing: false,
   startSharing: async () => {},
   stopSharing: async () => {},
+  isOnBreak: false,
+  breakEndsAt: null,
+  breaksTakenThisShift: 0,
+  startBreak: async () => {},
+  endBreak: async () => {},
 });
 
 const WRITE_MIN_INTERVAL_MS = 4000;
@@ -78,6 +89,11 @@ function distanceMeters(
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function todayDateString(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function requireUid(): string {
@@ -180,6 +196,12 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const smoothedCoords = useRef<{ latitude: number; longitude: number } | null>(null);
   const lastActivityAt = useRef<number>(Date.now());
 
+  const [isOnBreak, setIsOnBreak] = useState(false);
+  const [breakEndsAt, setBreakEndsAt] = useState<Date | null>(null);
+  const [breaksTakenThisShift, setBreaksTakenThisShift] = useState(0);
+  const breakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPausedRef = useRef(false);
+
   const notifyStillOn = () => {
     Notifications.scheduleNotificationAsync({
       content: {
@@ -196,6 +218,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     isSessionStart = false,
   ) => {
     if (!orgId) return;
+    if (isPausedRef.current) return;
     const busRef = doc(db, 'orgs', orgId, 'buses', uid);
     await setDoc(
       busRef,
@@ -204,6 +227,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         latitude: coords.latitude,
         longitude: coords.longitude,
         online: true,
+        onBreak: false,
         lastSeen: serverTimestamp(),
         updatedAt: serverTimestamp(),
         ...(isSessionStart && { sessionStartAt: serverTimestamp() }),
@@ -332,6 +356,24 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       return; // don't start watch if we can't write
     }
 
+    // Restore persisted break count for today (survives stop/start within the same day)
+    try {
+      const busSnap = await getDoc(doc(db, 'orgs', orgId, 'buses', uid));
+      if (busSnap.exists()) {
+        const d = busSnap.data() as any;
+        const today = todayDateString();
+        if (d?.breakShiftDate === today) {
+          setBreaksTakenThisShift(d?.breaksTakenThisShift ?? 0);
+        } else {
+          setBreaksTakenThisShift(0);
+          // Reset stale count in Firestore so it's clean for today
+          await setDoc(doc(db, 'orgs', orgId, 'buses', uid), { breaksTakenThisShift: 0, breakShiftDate: today }, { merge: true });
+        }
+      }
+    } catch {
+      // non-critical
+    }
+
     // Record session start
     try {
       sessionStartMs.current = Date.now();
@@ -446,7 +488,83 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       lastWrittenAt.current = 0;
       lastWrittenCoords.current = null;
       smoothedCoords.current = null;
+      // Clear any active break (keep breaksTakenThisShift — reloaded from Firestore on next startSharing)
+      if (breakTimerRef.current) { clearTimeout(breakTimerRef.current); breakTimerRef.current = null; }
+      isPausedRef.current = false;
+      setIsOnBreak(false);
+      setBreakEndsAt(null);
       setIsSharing(false);
+    }
+  };
+
+  const startBreak = async (minutes: number) => {
+    const uid = currentUid.current;
+    if (!uid || !orgId || !isSharing) return;
+
+    isPausedRef.current = true;
+    const endsAt = new Date(Date.now() + minutes * 60 * 1000);
+    setBreakEndsAt(endsAt);
+    setIsOnBreak(true);
+    setBreaksTakenThisShift((prev) => prev + 1);
+
+    // Mark bus doc as on-break and persist the incremented count keyed to today
+    try {
+      const busRef = doc(db, 'orgs', orgId, 'buses', uid);
+      await setDoc(busRef, {
+        onBreak: true,
+        breakEndsAt: endsAt,
+        updatedAt: serverTimestamp(),
+        breaksTakenThisShift: increment(1),
+        breakShiftDate: todayDateString(),
+      }, { merge: true });
+    } catch (err) {
+      console.error('startBreak: failed to update bus doc', err);
+    }
+
+    // Cancel pending requests with driver_on_break reason
+    try {
+      const reqCol = collection(db, 'orgs', orgId, 'stopRequests');
+      const byDriverUid = await getDocs(query(reqCol, where('driverUid', '==', uid)));
+      const byDriverId = await getDocs(query(reqCol, where('driverId', '==', uid)));
+      const merged = [...byDriverUid.docs, ...byDriverId.docs];
+      const seen = new Set<string>();
+      const active = merged.filter((snap) => {
+        if (seen.has(snap.id)) return false;
+        seen.add(snap.id);
+        const status = (snap.data() as any)?.status;
+        return status === 'pending' || status === 'accepted';
+      });
+      if (active.length > 0) {
+        const batch = writeBatch(db);
+        active.forEach((snap) => {
+          batch.set(snap.ref, { status: 'cancelled', cancelledAt: serverTimestamp(), cancelledReason: 'driver_on_break' }, { merge: true });
+        });
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error('startBreak: failed to cancel requests', err);
+    }
+
+    // Auto-end after the timer
+    if (breakTimerRef.current) clearTimeout(breakTimerRef.current);
+    breakTimerRef.current = setTimeout(() => {
+      endBreak();
+    }, minutes * 60 * 1000);
+  };
+
+  const endBreak = async () => {
+    const uid = currentUid.current;
+    if (breakTimerRef.current) { clearTimeout(breakTimerRef.current); breakTimerRef.current = null; }
+    isPausedRef.current = false;
+    setIsOnBreak(false);
+    setBreakEndsAt(null);
+
+    if (!uid || !orgId) return;
+    try {
+      const busRef = doc(db, 'orgs', orgId, 'buses', uid);
+      await setDoc(busRef, { onBreak: false, breakEndsAt: null, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (err) {
+      console.error('endBreak: failed to update bus doc', err);
     }
   };
 
@@ -490,7 +608,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }, [isSharing, org?.routes]);
 
   return (
-    <LocationContext.Provider value={{ isSharing, startSharing, stopSharing }}>
+    <LocationContext.Provider value={{ isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak }}>
       {children}
     </LocationContext.Provider>
   );

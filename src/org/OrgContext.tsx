@@ -60,6 +60,12 @@ export type Route = {
 
 export type AuthMethod = 'saml' | 'email' | 'phone' | 'google' | 'email+google';
 
+export type BreakSettings = {
+  enabled: boolean;
+  maxMinutes: number;
+  breaksPerShift: number;
+};
+
 export type OrgConfig = {
   orgId: string;
   name: string;
@@ -81,6 +87,7 @@ export type OrgConfig = {
   approved?: boolean;
   reviewStatus?: 'pending' | 'approved' | 'rejected';
   rejectionReason?: string | null;
+  breakSettings?: BreakSettings;
 };
 
 type OrgContextType = {
@@ -244,6 +251,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               approved: data.approved ?? prev.approved,
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
               rejectionReason: data.rejectionReason ?? prev.rejectionReason ?? null,
+              breakSettings: data.breakSettings ?? prev.breakSettings,
             };
             writeCachedOrg(updated);
             return updated;

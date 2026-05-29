@@ -1067,6 +1067,32 @@ app.post(
   },
 );
 
+// ---- Org Settings (general) ----
+
+app.patch(
+  '/orgs/:orgId',
+  requireAuth,
+  requireOrgAdmin,
+  async (req: Request, res: Response) => {
+    const orgId = req.params.orgId as string;
+    const { breakSettings } = req.body as { breakSettings?: Record<string, any> };
+
+    const update: Record<string, any> = {
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (breakSettings !== undefined) {
+      const enabled = typeof breakSettings.enabled === 'boolean' ? breakSettings.enabled : false;
+      const maxMinutes = typeof breakSettings.maxMinutes === 'number' && breakSettings.maxMinutes > 0 ? breakSettings.maxMinutes : 15;
+      const breaksPerShift = typeof breakSettings.breaksPerShift === 'number' && breakSettings.breaksPerShift > 0 ? breakSettings.breaksPerShift : 1;
+      update.breakSettings = { enabled, maxMinutes, breaksPerShift };
+    }
+
+    await admin.firestore().collection('orgs').doc(orgId).update(update);
+    return res.json({ ok: true });
+  },
+);
+
 // ---- Billing ----
 
 app.post('/billing/create-checkout-session', requireAuth, async (req: Request, res: Response) => {
