@@ -44,7 +44,8 @@ import {
   orderBy,
   limit,
   getDoc,
-  setDoc, // ✅ ADDED
+  setDoc,
+  runTransaction,
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase/firebaseconfig';
@@ -407,6 +408,11 @@ export default function MapScreen() {
 
   const notifiedRef = useRef(false);
   const prevRequestStatusRef = useRef<string | null>(null);
+  const toastedRequestIds = useRef(new Set<string>());
+  // Sticky doc selection: once we pick a doc, keep it until it disappears from results
+  const lastActiveDocIdRef = useRef<string | null>(null);
+  // Reference stability: skip setOwnRequest if id+status haven't changed
+  const lastResolvedKeyRef = useRef<string | null>(null);
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
   const headings = useRef<{ [id: string]: number }>({});
@@ -910,6 +916,8 @@ export default function MapScreen() {
 
   useEffect(() => {
     setOwnRequestReady(false);
+    lastActiveDocIdRef.current = null;
+    lastResolvedKeyRef.current = null;
 
     // Parents request under their own uid (childName is metadata on the doc)
     const watchUid = studentUid;
@@ -925,9 +933,19 @@ export default function MapScreen() {
     let activeReady = false;
     let expiredReady = false;
 
+    let isReady = false; // tracks whether we've fired setOwnRequestReady(true) yet this mount
+
     const reconcileOwnRequest = () => {
       if (!activeReady || !expiredReady) return;
-      setOwnRequest(activeRequest || expiredRequest || null);
+      const resolved = activeRequest || expiredRequest || null;
+      // Reference stability: only update state when the doc ID or status actually changes.
+      // Firestore fires snapshots on metadata changes (hasPendingWrites, etc.) with identical
+      // data, which would otherwise cause a render cascade every write cycle.
+      const newKey = resolved ? `${resolved.id}:${resolved.status}:${resolved.driverUid ?? resolved.driverId ?? ''}` : null;
+      if (newKey === lastResolvedKeyRef.current && isReady) return;
+      lastResolvedKeyRef.current = newKey;
+      isReady = true;
+      setOwnRequest(resolved);
       setOwnRequestReady(true);
     };
 
@@ -936,7 +954,7 @@ export default function MapScreen() {
       where('studentUid', '==', watchUid),
       where('status', 'in', ['pending', 'accepted', 'awaiting_confirmation']),
       orderBy('createdAt', 'desc'),
-      limit(1),
+      limit(5),
     );
 
     const qExpiredCancelled = query(
@@ -947,11 +965,30 @@ export default function MapScreen() {
       limit(1),
     );
 
+    // Priority: awaiting_confirmation > accepted > pending (most actionable first)
+    const STATUS_PRIORITY: Record<string, number> = { awaiting_confirmation: 0, accepted: 1, pending: 2 };
+
     const unsubActive = onSnapshot(
       qActive,
       (snap) => {
         activeReady = true;
-        activeRequest = snap.empty ? null : { id: snap.docs[0].id, ...(snap.docs[0].data() as any) };
+        if (snap.empty) {
+          activeRequest = null;
+          lastActiveDocIdRef.current = null;
+        } else {
+          const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+          docs.sort((a, b) => {
+            const statusDiff = (STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9);
+            if (statusDiff !== 0) return statusDiff;
+            return a.id < b.id ? -1 : 1;
+          });
+          // Sticky selection: keep showing the same doc as long as it's still in results.
+          // This prevents flickering when Firestore transiently returns different subsets
+          // (e.g., only one of two awaiting_confirmation docs on a given snapshot).
+          const stickyDoc = docs.find(d => d.id === lastActiveDocIdRef.current);
+          activeRequest = stickyDoc ?? docs[0];
+          lastActiveDocIdRef.current = activeRequest.id;
+        }
         reconcileOwnRequest();
       },
       (err) => {
@@ -989,21 +1026,32 @@ export default function MapScreen() {
       const prev = prevRequestStatusRef.current;
       const next = ownRequest.status;
 
-      if (next === 'cancelled' && prev && prev !== 'cancelled') {
-        const reason = ownRequest.cancelledReason;
-        if (reason === 'driver_offline') {
-          showToast('Your driver went offline. Your request was cancelled.', 'error');
-        } else if (reason === 'driver_on_break') {
-          showToast('Your driver is on a break. Your request was cancelled.', 'error');
-        } else if (reason === 'no_buses_online') {
-          showToast('No buses are online — service has ended for now.', 'error');
+      if (next === 'cancelled' && ownRequest.id && !toastedRequestIds.current.has(ownRequest.id)) {
+        const cancelledAtMs = ownRequest.cancelledAt?.toMillis?.() ?? 0;
+        const isRecent = Date.now() - cancelledAtMs < 60_000;
+        if (isRecent) {
+          const reason = ownRequest.cancelledReason;
+          if (reason === 'driver_offline') {
+            showToast('Your driver went offline. Your request was cancelled.', 'error');
+          } else if (reason === 'driver_on_break') {
+            showToast('Your driver is on a break. Your request was cancelled.', 'error');
+          } else if (reason === 'no_buses_online') {
+            showToast('No buses are online — service has ended for now.', 'error');
+          }
         }
+        toastedRequestIds.current.add(ownRequest.id);
       }
 
       prevRequestStatusRef.current = next;
       setRequest(ownRequest);
       setRequestId(ownRequest.id);
       setDriverId(ownRequest.driverUid || ownRequest.driverId || null);
+      if (next !== 'accepted' && next !== 'pending') {
+        setRouteCoords([]);
+        fullRouteRef.current = [];
+        setEta(null);
+        setStopsBefore(null);
+      }
       closeSelectedBus();
       return;
     }
@@ -1252,15 +1300,24 @@ export default function MapScreen() {
     const expiresAtMs = typeof request?.expiresAtMs === 'number' ? request.expiresAtMs : createdAtMs + STUDENT_REQUEST_TTL_MS;
     const remainingMs = expiresAtMs - Date.now();
 
-    const expireRequest = () => {
-      if (!orgId) return;
-      updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), {
-        status: 'cancelled',
-        cancelledAt: serverTimestamp(),
-        cancelledReason: 'ttl_expired_15m',
-      }).catch((err) => {
+    const expireRequest = async () => {
+      if (!orgId || !requestId) return;
+      try {
+        await runTransaction(db, async (tx) => {
+          const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          const current = snap.data() as any;
+          if (current?.status !== 'pending' && current?.status !== 'accepted') return;
+          tx.update(ref, {
+            status: 'cancelled',
+            cancelledAt: serverTimestamp(),
+            cancelledReason: 'ttl_expired_15m',
+          });
+        });
+      } catch (err) {
         console.error('Failed to expire timed student request', err);
-      });
+      }
     };
 
     if (remainingMs <= 0) {
@@ -1438,7 +1495,7 @@ const handleRequest = async (entry: RequestableStop) => {
         query(
           orgCol('stopRequests'),
           where('studentUid', '==', studentUid),
-          where('status', 'in', ['pending', 'accepted']),
+          where('status', 'in', ['pending', 'accepted', 'awaiting_confirmation']),
           limit(1),
         ),
       );
