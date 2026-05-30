@@ -39,7 +39,7 @@ import { showAlert } from '../src/utils/alerts';
 import { showToast } from '../src/components/Toast';
 import ErrorBanner from '../src/components/ErrorBanner';
 import { auth, db } from '../firebase/firebaseconfig';
-import { SHUTTLER_API_URL, GOOGLE_WEB_CLIENT_ID } from '../config';
+import { SHUTTLER_API_URL, GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -231,11 +231,10 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const [mode, setMode] = useState<'signin' | 'signup'>(initialEmail ? 'signup' : 'signin');
 
   // ---- Google Sign-In ----
-  // Only pass clientId (web). Platform-specific client IDs (iosClientId / androidClientId)
-  // produce tokens whose `aud` is the platform client ID, which Firebase rejects.
-  // The web client ID works on all platforms via the browser redirect flow.
   const [, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
     clientId: GOOGLE_WEB_CLIENT_ID || undefined,
+    iosClientId: GOOGLE_IOS_CLIENT_ID || undefined,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID || undefined,
   });
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');

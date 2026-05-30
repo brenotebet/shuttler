@@ -34,6 +34,29 @@ const AUTH_METHOD_LABEL: Record<string, string> = {
   'email+google': 'Email',
 };
 
+function OrgLogo({ uri, primaryColor }: { uri: string; primaryColor?: string }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  return (
+    <View style={[styles.orgLogo, styles.orgLogoPlaceholder, { backgroundColor: `${primaryColor ?? PRIMARY_COLOR}22` }]}>
+      {loading && !error && (
+        <ActivityIndicator size="small" color={primaryColor ?? PRIMARY_COLOR} />
+      )}
+      {error ? (
+        <Icon name="directions-bus" size={26} color={primaryColor ?? PRIMARY_COLOR} />
+      ) : (
+        <Image
+          source={{ uri }}
+          style={[styles.orgLogo, styles.orgLogoAbsolute]}
+          resizeMode="contain"
+          onLoad={() => setLoading(false)}
+          onError={() => { setLoading(false); setError(true); }}
+        />
+      )}
+    </View>
+  );
+}
+
 export default function OrgSelectorScreen() {
   const navigation = useNavigation<Nav>();
   const { selectOrg } = useOrg();
@@ -138,7 +161,7 @@ export default function OrgSelectorScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.orgCard} onPress={() => handleSelect(item)} activeOpacity={0.75}>
               {item.logoUrl ? (
-                <Image source={{ uri: item.logoUrl }} style={styles.orgLogo} resizeMode="contain" />
+                <OrgLogo uri={item.logoUrl} primaryColor={item.primaryColor} />
               ) : (
                 <View style={[styles.orgLogo, styles.orgLogoPlaceholder, { backgroundColor: `${item.primaryColor ?? PRIMARY_COLOR}22` }]}>
                   <Icon name="directions-bus" size={26} color={item.primaryColor ?? PRIMARY_COLOR} />
@@ -252,6 +275,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f4ff',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  orgLogoAbsolute: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   orgInfo: {
     flex: 1,

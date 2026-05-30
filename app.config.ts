@@ -25,7 +25,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   splash: {
     image: './assets/splash-icon.png',
     resizeMode: 'contain',
-    backgroundColor: '#000000',
+    backgroundColor: '#111214',
   },
   ios: {
     bundleIdentifier: 'com.shuttler.app',
