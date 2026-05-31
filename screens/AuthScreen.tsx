@@ -249,18 +249,40 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Shared post-auth handler for Google and Apple sign-in.
-  // Creates the user doc if new, enforces domain restrictions, then sets org claim.
   const completeSocialSignIn = useCallback(async (
     firebaseUser: import('firebase/auth').User,
     email: string | null,
     displayName: string | null,
   ) => {
-    const userRef = doc(db, 'orgs', orgId, 'users', firebaseUser.uid);
-    const snap = await getDoc(userRef);
+    // Check if user already has an org claim (signed into a different org)
+    let claimedOrgId: string | undefined;
+    try {
+      const tokenResult = await firebaseUser.getIdTokenResult();
+      claimedOrgId = tokenResult.claims.orgId as string | undefined;
+    } catch {}
 
-    if (snap.exists()) {
-      await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
+    const userRef = doc(db, 'orgs', orgId, 'users', firebaseUser.uid);
+    let snap;
+    try {
+      snap = await getDoc(userRef);
+    } catch {
+      snap = null;
+    }
+
+    if (snap?.exists()) {
+      await updateDoc(userRef, { lastLoginAt: serverTimestamp() }).catch(() => {});
       return;
+    }
+
+    // User not in this org — check if they belong to a different one
+    if (claimedOrgId && claimedOrgId !== orgId) {
+      await signOut(auth);
+      let orgName = 'another organization';
+      try {
+        const orgRes = await fetch(`${SHUTTLER_API_URL}/orgs/by-id/${claimedOrgId}`);
+        if (orgRes.ok) orgName = `"${(await orgRes.json()).name}"`;
+      } catch {}
+      throw new Error(`Your account is registered with ${orgName}. Go back and select that organization instead.`);
     }
 
     // Domain restriction check for new users
@@ -286,21 +308,31 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
 
     // Set orgId custom claim on the backend
     const token = await firebaseUser.getIdToken();
-    await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
+    const claimRes = await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ orgId }),
     });
+    if (!claimRes.ok) throw new Error('Failed to complete sign-in. Please try again.');
 
-    // Force-refresh token so AuthProvider picks up the new orgId claim
+    // Force-refresh so AuthProvider picks up the new orgId claim
     await firebaseUser.getIdToken(true);
+    showToast('Account created! Welcome to Shuttler.', 'success');
   }, [orgId, org?.allowedEmailDomains]);
 
   // React to Google OAuth response
   useEffect(() => {
-    if (googleResponse?.type !== 'success') return;
+    if (googleResponse?.type !== 'success') {
+      if (googleResponse?.type === 'error') {
+        setFormError('Google sign-in was cancelled or failed. Please try again.');
+      }
+      return;
+    }
     const idToken = (googleResponse as any).params?.id_token;
-    if (!idToken) return;
+    if (!idToken) {
+      setFormError('Google did not return a token. Please try again.');
+      return;
+    }
 
     setIsSocialLoading(true);
     const credential = GoogleAuthProvider.credential(idToken);
@@ -308,7 +340,15 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       .then((result) =>
         completeSocialSignIn(result.user, result.user.email, result.user.displayName),
       )
-      .catch((e: any) => setFormError(e?.message ?? 'Google sign-in failed.'))
+      .catch((e: any) => {
+        const msg =
+          e?.code === 'auth/account-exists-with-different-credential'
+            ? 'An account already exists with this email using a different sign-in method.'
+            : e?.code === 'auth/invalid-credential'
+            ? 'Google sign-in failed — please try again. If the problem persists, contact support.'
+            : e?.message ?? 'Google sign-in failed.';
+        setFormError(msg);
+      })
       .finally(() => setIsSocialLoading(false));
   }, [googleResponse, completeSocialSignIn]);
 
@@ -328,9 +368,12 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
         ],
         nonce: hashedNonce,
       });
+      if (!appleCredential.identityToken) {
+        throw new Error('Apple did not return a sign-in token. Please try again.');
+      }
       const provider = new OAuthProvider('apple.com');
       const firebaseCredential = provider.credential({
-        idToken: appleCredential.identityToken!,
+        idToken: appleCredential.identityToken,
         rawNonce: nonce,
       });
       const result = await signInWithCredential(auth, firebaseCredential);
@@ -340,9 +383,16 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
         : result.user.displayName;
       await completeSocialSignIn(result.user, result.user.email, displayName);
     } catch (e: any) {
-      if (e?.code !== 'ERR_REQUEST_CANCELED') {
-        setFormError(e?.message ?? 'Apple sign-in failed.');
-      }
+      if (e?.code === 'ERR_REQUEST_CANCELED') return;
+      const msg =
+        e?.code === 'auth/account-exists-with-different-credential'
+          ? 'An account already exists with this email using a different sign-in method.'
+          : e?.code === 'auth/invalid-credential'
+          ? 'Apple sign-in failed — invalid credential. Please try again.'
+          : e?.code === 'auth/user-disabled'
+          ? 'This account has been disabled. Contact support for help.'
+          : e?.message ?? 'Apple sign-in failed. Please try again.';
+      setFormError(msg);
     } finally {
       setIsSocialLoading(false);
     }
@@ -439,7 +489,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           } catch {}
         }
         await signOut(auth);
-        setFormError(message);
+        showAlert(message, title);
         return;
       }
 
@@ -491,9 +541,14 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
         }).catch(() => {}); // fire-and-forget; user can resend from EmailVerificationScreen
+        showToast('Account created! Check your email to verify your address.', 'success');
       }
     } catch (e: any) {
-      setFormError(e?.message ?? 'Registration failed.');
+      const msg =
+        e?.message?.includes('already') || e?.message?.includes('email-already-in-use')
+          ? 'An account with that email already exists. Try signing in instead.'
+          : e?.message ?? 'Registration failed. Please try again.';
+      setFormError(msg);
     } finally {
       setIsSubmitting(false);
     }

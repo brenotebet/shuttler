@@ -22,6 +22,7 @@ import {
 } from './mailer';
 import {
   handleAdminChat,
+  checkAndIncrementAiUsage,
   generateOrgInsight,
   runWeeklyDigest,
   runMonthlyDigest,
@@ -347,6 +348,44 @@ function requireInternal(req: Request, res: Response, next: Function) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   next();
+}
+
+// ---------- Entitlements ----------
+
+// Derives the entitlements object from plan + addons. Single source of truth —
+// called whenever subscription state changes so the org doc stays in sync.
+function computeEntitlements(plan: string, dataAddonActive: boolean) {
+  // Enterprise always includes data access; other plans need the add-on
+  const dataUnlocked = dataAddonActive || plan === 'enterprise';
+  return {
+    aiAssistant: true,        // available on all plans including Starter
+    basicExport: true,        // always included — orgs always own their data
+    dataApi: dataUnlocked,
+    extendedRetention: dataUnlocked,
+    scheduledExports: dataUnlocked,
+  };
+}
+
+function requireEntitlement(flag: string) {
+  return async (req: Request, res: Response, next: Function) => {
+    const orgId: string | undefined = (req as any).claims?.orgId;
+    if (!orgId) return res.status(403).json({ error: 'No org in token' });
+    try {
+      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+      if (!orgDoc.exists) return res.status(403).json({ error: 'Org not found' });
+      const entitlements = orgDoc.data()?.entitlements ?? {};
+      if (!entitlements[flag]) {
+        return res.status(402).json({
+          error: 'upgrade_required',
+          feature: flag,
+          message: `This feature requires a plan upgrade. Visit the Billing tab or contact support@shuttler.net.`,
+        });
+      }
+      next();
+    } catch {
+      return res.status(500).json({ error: 'Entitlement check failed' });
+    }
+  };
 }
 
 // ---------- Express app ----------
@@ -1277,8 +1316,11 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
 
       // Data add-on purchase
       if (eventType === 'data_addon') {
+        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+        const currentPlan = orgSnap.data()?.subscriptionPlan ?? 'starter';
         await admin.firestore().collection('orgs').doc(orgId).update({
           dataAddonActive: true,
+          entitlements: computeEntitlements(currentPlan, true),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         console.log(`[webhook] data_addon activated for org ${orgId}`);
@@ -1294,10 +1336,13 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
 
       if (subId) {
         const sub = await stripe.subscriptions.retrieve(subId);
+        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+        const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
         await admin.firestore().collection('orgs').doc(orgId).update({
           subscriptionStatus: sub.status,
           stripeSubscriptionId: sub.id,
           subscriptionPlan: plan,
+          entitlements: computeEntitlements(plan, dataAddonActive),
           currentPeriodEnd: (sub as any).current_period_end
             ? new Date((sub as any).current_period_end * 1000)
             : null,
@@ -1336,22 +1381,30 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
 
       if (event.type === 'customer.subscription.deleted') {
         if (subType === 'data_addon') {
+          const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+          const currentPlan = orgSnap.data()?.subscriptionPlan ?? 'starter';
           await admin.firestore().collection('orgs').doc(orgId).update({
             dataAddonActive: false,
+            entitlements: computeEntitlements(currentPlan, false),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           console.log(`[webhook] data_addon deactivated for org ${orgId}`);
         } else {
           await admin.firestore().collection('orgs').doc(orgId).update({
             subscriptionStatus: 'canceled',
+            entitlements: computeEntitlements('starter', false),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
         }
       } else if (subType !== 'data_addon') {
+        const updatedPlan = subscription.metadata?.plan ?? 'starter';
+        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+        const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
         await admin.firestore().collection('orgs').doc(orgId).update({
           subscriptionStatus: subscription.status,
           stripeSubscriptionId: subscription.id,
-          subscriptionPlan: subscription.metadata?.plan ?? 'starter',
+          subscriptionPlan: updatedPlan,
+          entitlements: computeEntitlements(updatedPlan, dataAddonActive),
           currentPeriodEnd: (subscription as any).current_period_end
             ? new Date((subscription as any).current_period_end * 1000)
             : null,
@@ -1859,6 +1912,90 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
   }
 });
 
+// ---------- Export ----------
+
+// Basic export (last 90 days) — included on every plan.
+// Extended export (>90 days) — requires dataApi entitlement.
+app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  if (!orgId) return res.status(403).json({ error: 'No org associated with this account' });
+
+  const type = (req.query.type as string) || 'boardings'; // boardings | requests
+  const requestedDays = Math.max(1, parseInt((req.query.days as string) || '90', 10));
+  const BASIC_LIMIT = 90;
+
+  // Extended retention requires the dataApi entitlement
+  if (requestedDays > BASIC_LIMIT) {
+    const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (!orgDoc.exists || !orgDoc.data()?.entitlements?.dataApi) {
+      return res.status(402).json({
+        error: 'upgrade_required',
+        feature: 'extendedRetention',
+        message: `Exports beyond ${BASIC_LIMIT} days require the Data Export & API add-on. Visit the Billing tab or contact support@shuttler.net.`,
+      });
+    }
+  }
+
+  const days = Math.min(requestedDays, 365); // hard cap even for paid tier
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  // Verify membership
+  const memberDoc = await admin.firestore()
+    .collection('orgs').doc(orgId).collection('users').doc(uid).get();
+  if (!memberDoc.exists) return res.status(403).json({ error: 'Not a member of this org' });
+
+  try {
+    const db = admin.firestore();
+    const sinceTs = admin.firestore.Timestamp.fromDate(since);
+
+    let rows: string[] = [];
+
+    if (type === 'boardings') {
+      const snap = await db.collection('orgs').doc(orgId).collection('boardingCounts')
+        .where('createdAt', '>=', sinceTs)
+        .orderBy('createdAt', 'desc')
+        .get();
+      rows = ['date,stop_name,count,driver_uid'];
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const date = data.createdAt?.toDate?.()?.toISOString().slice(0, 10) ?? '';
+        const stop = (data.stopName ?? data.stop?.name ?? '').replace(/,/g, ' ');
+        const count = data.count ?? 0;
+        const driver = data.driverUid ?? '';
+        rows.push(`${date},${stop},${count},${driver}`);
+      });
+    } else if (type === 'requests') {
+      const snap = await db.collection('orgs').doc(orgId).collection('stopRequests')
+        .where('createdAt', '>=', sinceTs)
+        .orderBy('createdAt', 'desc')
+        .get();
+      rows = ['date,status,stop_name,cancelled_reason,student_uid'];
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const date = data.createdAt?.toDate?.()?.toISOString().slice(0, 10) ?? '';
+        const status = data.status ?? '';
+        const stop = (data.stop?.name ?? '').replace(/,/g, ' ');
+        const reason = data.cancelledReason ?? '';
+        // Use uid only — no student names in export
+        const uid = data.studentUid ?? '';
+        rows.push(`${date},${status},${stop},${reason},${uid}`);
+      });
+    } else {
+      return res.status(400).json({ error: 'type must be boardings or requests' });
+    }
+
+    const filename = `shuttler_${orgId}_${type}_${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(rows.join('\n'));
+  } catch (e: any) {
+    console.error('[export/csv]', e?.message ?? e);
+    return res.status(500).json({ error: 'Export failed' });
+  }
+});
+
 // ---------- AI ----------
 
 app.post('/ai/admin-chat', requireAuth, async (req: Request, res: Response) => {
@@ -1866,17 +2003,24 @@ app.post('/ai/admin-chat', requireAuth, async (req: Request, res: Response) => {
     return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
   }
 
+  const uid = (req as any).uid as string;
+  // orgId comes from the verified token claim — never from the request body
+  const orgId: string | undefined = (req as any).claims?.orgId;
+
+  if (!orgId) {
+    return res.status(403).json({ error: 'No org associated with this account' });
+  }
+
   try {
-    const { orgId, messages } = req.body as {
-      orgId?: string;
+    const { messages } = req.body as {
       messages?: { role: 'user' | 'assistant'; content: string }[];
     };
 
-    if (!orgId || !Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: 'orgId and messages are required' });
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'messages array is required' });
     }
 
-    const uid = (req as any).uid as string;
+    // Verify membership and resolve role from Firestore (not from client)
     const memberDoc = await admin.firestore()
       .collection('orgs').doc(orgId)
       .collection('users').doc(uid)
@@ -1888,12 +2032,35 @@ app.post('/ai/admin-chat', requireAuth, async (req: Request, res: Response) => {
 
     const memberRole: string = memberDoc.data()?.role ?? 'student';
 
+    // Per-user daily cap by role
+    const { allowed, count, cap } = await checkAndIncrementAiUsage(uid, memberRole);
+    if (!allowed) {
+      return res.status(429).json({
+        error: 'daily_limit_reached',
+        message: `You've reached your daily assistant limit (${cap} messages). It resets at midnight.`,
+        count,
+        cap,
+      });
+    }
+
     const sanitized: { role: 'user' | 'assistant'; content: string }[] = messages.map((m) => ({
       role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
       content: String(m.content).slice(0, 4000),
     }));
 
-    const reply = await handleAdminChat(orgId, sanitized, memberRole);
+    const { reply, inputTokens, outputTokens } = await handleAdminChat(orgId, uid, memberRole, sanitized);
+
+    // Fire-and-forget usage log — metadata only, no message bodies
+    admin.firestore().collection('aiUsageLogs').add({
+      uid,
+      orgId,
+      role: memberRole,
+      inputTokens,
+      outputTokens,
+      dailyCount: count,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }).catch((err) => console.error('[ai/admin-chat] log write failed:', err));
+
     return res.json({ reply });
   } catch (e: any) {
     console.error('[ai/admin-chat]', e?.message ?? e);
