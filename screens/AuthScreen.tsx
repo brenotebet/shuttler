@@ -250,78 +250,42 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Shared post-auth handler for Google and Apple sign-in.
+  // User doc creation is fully delegated to the backend so Admin SDK handles
+  // the Firestore write — the client-side Firestore security rule for user doc
+  // creation calls orgIsActive(), which requires existing membership to read
+  // the org doc, creating a deadlock for brand-new users.
   const completeSocialSignIn = useCallback(async (
     firebaseUser: import('firebase/auth').User,
-    email: string | null,
-    displayName: string | null,
   ) => {
-    // Check if user already has an org claim (signed into a different org)
+    // Detect multi-org: user already has a claim for a different org.
     let claimedOrgId: string | undefined;
     try {
       const tokenResult = await firebaseUser.getIdTokenResult();
       claimedOrgId = tokenResult.claims.orgId as string | undefined;
     } catch {}
-
-    const userRef = doc(db, 'orgs', orgId, 'users', firebaseUser.uid);
-    let snap;
-    try {
-      snap = await getDoc(userRef);
-    } catch {
-      snap = null;
-    }
-
-    if (snap?.exists()) {
-      await updateDoc(userRef, { lastLoginAt: serverTimestamp() }).catch(() => {});
-      return;
-    }
-
-    // Domain restriction check for new users
-    const allowedDomains: string[] = org?.allowedEmailDomains ?? [];
-    if (allowedDomains.length > 0 && email) {
-      const domain = email.split('@')[1]?.toLowerCase() ?? '';
-      if (!allowedDomains.includes(domain)) {
-        await signOut(auth);
-        throw new Error(`Registration is restricted to ${allowedDomains.join(', ')} email addresses.`);
-      }
-    }
-
-    // Multi-org: user exists in a different org — create membership here too.
-    // We do NOT block or sign them out; we just add them to this org.
     const isAddingToExistingAccount = !!(claimedOrgId && claimedOrgId !== orgId);
 
-    await setDoc(userRef, {
-      uid: firebaseUser.uid,
-      orgId,
-      email: email ?? null,
-      displayName: displayName ?? null,
-      role: 'student',
-      agreedToTermsAt: serverTimestamp(),
-      lastLoginAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
+    const token = await firebaseUser.getIdToken();
+    const res = await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ orgId }),
     });
-
-    // Set orgId custom claim on the backend — best-effort, non-fatal.
-    // AuthProvider uses org?.orgId (OrgContext/AsyncStorage) as the primary orgId source,
-    // so the claim is only needed for cold starts. It will be picked up on the next
-    // natural token refresh. getIdToken(true) is intentionally NOT called here because
-    // on Firebase SDK v11 it can re-fire onAuthStateChanged, wiping role mid-login.
-    try {
-      const token = await firebaseUser.getIdToken();
-      await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId }),
-      });
-    } catch {
-      // Non-critical — user is already in org (user doc exists), claim will refresh later.
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body?.error ?? 'Failed to complete sign-in. Please try again.');
     }
+    const { isNew } = await res.json();
 
-    if (isAddingToExistingAccount) {
-      showToast(org?.name ? `Added to ${org.name}!` : 'Added to organization!', 'success');
-    } else {
-      showToast('Account created! Welcome to Shuttler.', 'success');
+    if (isNew) {
+      showToast(
+        isAddingToExistingAccount
+          ? (org?.name ? `Added to ${org.name}!` : 'Added to organization!')
+          : 'Account created! Welcome to Shuttler.',
+        'success',
+      );
     }
-  }, [orgId, org?.allowedEmailDomains, org?.name]);
+  }, [orgId, org?.name]);
 
   // React to Google OAuth response
   useEffect(() => {
@@ -345,7 +309,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
     (async () => {
       try {
         const result = await signInWithCredential(auth, credential);
-        await completeSocialSignIn(result.user, result.user.email, result.user.displayName);
+        await completeSocialSignIn(result.user);
       } catch (e: any) {
         // Ensure clean auth state — no half-authenticated user stuck in memory.
         await signOut(auth).catch(() => {});
@@ -393,11 +357,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       // doesn't evict the user while the user doc is being created.
       markSocialSignInPending();
       const result = await signInWithCredential(auth, firebaseCredential);
-      const displayName = appleCredential.fullName
-        ? [appleCredential.fullName.givenName, appleCredential.fullName.familyName]
-            .filter(Boolean).join(' ') || null
-        : result.user.displayName;
-      await completeSocialSignIn(result.user, result.user.email, displayName);
+      await completeSocialSignIn(result.user);
     } catch (e: any) {
       // Ensure clean auth state — no half-authenticated user stuck in memory.
       await signOut(auth).catch(() => {});

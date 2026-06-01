@@ -1918,12 +1918,31 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
   if (!orgId) return res.status(400).json({ error: 'orgId is required' });
 
   try {
-    const authUser = await admin.auth().getUser(uid);
+    const [authUser, orgDoc] = await Promise.all([
+      admin.auth().getUser(uid),
+      admin.firestore().collection('orgs').doc(orgId).get(),
+    ]);
+
+    if (!orgDoc.exists) {
+      return res.status(404).json({ error: 'Organization not found.' });
+    }
+
     const email = authUser.email ?? null;
+    const displayName = authUser.displayName ?? null;
+    const orgData = orgDoc.data()!;
+
+    // Domain restriction check — must happen before user doc creation.
+    const allowedDomains: string[] = orgData.allowedEmailDomains ?? [];
+    if (allowedDomains.length > 0 && email) {
+      const domain = email.split('@')[1]?.toLowerCase() ?? '';
+      if (!allowedDomains.includes(domain)) {
+        return res.status(403).json({
+          error: `Registration is restricted to ${allowedDomains.join(', ')} email addresses.`,
+        });
+      }
+    }
 
     // Detect Google + Apple same-email duplicate accounts.
-    // If another user doc in this org already has this email (different UID),
-    // refuse rather than silently creating a second orphaned account.
     if (email) {
       const emailSnap = await admin.firestore()
         .collection('orgs').doc(orgId)
@@ -1941,24 +1960,37 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
       }
     }
 
-    // Verify the user has an actual membership doc before issuing the claim.
-    // This prevents a valid token from being used to claim membership in an
-    // org the user was never added to.
-    const memberDoc = await admin.firestore()
-      .collection('orgs').doc(orgId)
-      .collection('users').doc(uid)
-      .get();
-    if (!memberDoc.exists) {
-      return res.status(403).json({ error: 'No membership found for this organization. Please register first.' });
+    const userRef = admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid);
+    const memberDoc = await userRef.get();
+    let isNew = false;
+
+    if (memberDoc.exists) {
+      // Existing member: just refresh lastLoginAt.
+      await userRef.update({ lastLoginAt: admin.firestore.FieldValue.serverTimestamp() });
+    } else {
+      // New member: create the user doc via Admin SDK (bypasses Firestore security
+      // rules, which would otherwise block new users from creating their own doc
+      // because orgIsActive() requires existing membership to read the org doc).
+      isNew = true;
+      await userRef.set({
+        uid,
+        orgId,
+        email,
+        displayName,
+        role: 'student',
+        agreedToTermsAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     }
 
     // Spread existing claims so we never clobber superAdmin or other flags.
     const existing = (authUser.customClaims ?? {}) as Record<string, unknown>;
     await admin.auth().setCustomUserClaims(uid, { ...existing, orgId });
-    return res.json({ ok: true });
+    return res.json({ ok: true, isNew });
   } catch (e) {
     console.error('[auth/social/complete]', e);
-    return res.status(500).json({ error: 'Failed to set org claims' });
+    return res.status(500).json({ error: 'Failed to complete sign-in.' });
   }
 });
 
