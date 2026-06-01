@@ -1,5 +1,5 @@
 // screens/AdminDashboardScreen.tsx
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -141,7 +141,7 @@ async function fetchDriverStats(uid: string, orgId: string): Promise<DriverStats
   }
 }
 
-function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string }; orgId: string }) {
+const DriverStatCard = memo(function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string }; orgId: string }) {
   const { primaryColor } = useOrgTheme();
   const [open, setOpen] = useState(false);
   const [stats, setStats] = useState<DriverStatsData | null>(null);
@@ -205,7 +205,7 @@ function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string
       )}
     </TouchableOpacity>
   );
-}
+});
 
 export default function AdminDashboardScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -226,7 +226,7 @@ export default function AdminDashboardScreen() {
   const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
-    const t = setInterval(() => setTick(Date.now()), 15000);
+    const t = setInterval(() => setTick(Date.now()), 60000);
     return () => clearInterval(t);
   }, []);
 
@@ -459,33 +459,35 @@ export default function AdminDashboardScreen() {
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const todayMs = today.getTime();
 
-      const boardingRows = boardingSnap.docs.map((d) => {
+      // Single pass over boarding docs to build all three derived structures at once.
+      const boardingRows: string[] = [];
+      const driverTotals: Record<string, { all: number; today: number }> = {};
+      const stopSummary: Record<string, { name: string; count: number }> = {};
+
+      boardingSnap.docs.forEach((d) => {
         const data = d.data() as any;
-        return [
-          d.id,
-          data.driverUid ?? '',
-          data.stopName ?? data.stop?.name ?? '',
-          data.count ?? 0,
-          data.createdAt?.toDate?.()?.toISOString() ?? '',
-        ].join(',');
+        const count: number = data.count ?? 0;
+        const driverUid: string = data.driverUid ?? '';
+        const stopId: string = data.stopId ?? data.stop?.id ?? 'unknown';
+        const stopName: string = data.stopName ?? data.stop?.name ?? 'Unknown';
+        const createdAtMs: number = data.createdAt?.toMillis?.() ?? 0;
+        const createdAtIso: string = data.createdAt?.toDate?.()?.toISOString() ?? '';
+
+        boardingRows.push([d.id, driverUid, stopName, count, createdAtIso].join(','));
+
+        if (driverUid) {
+          if (!driverTotals[driverUid]) driverTotals[driverUid] = { all: 0, today: 0 };
+          driverTotals[driverUid].all += count;
+          if (createdAtMs >= todayMs) driverTotals[driverUid].today += count;
+        }
+
+        if (!stopSummary[stopId]) stopSummary[stopId] = { name: stopName, count: 0 };
+        stopSummary[stopId].count += count;
       });
 
       const driverSummary = drivers.map((driver) => {
-        const boards = boardingSnap.docs.filter((d) => (d.data() as any).driverUid === driver.uid);
-        const total = boards.reduce((s, d) => s + ((d.data() as any).count ?? 0), 0);
-        const todayTotal = boards
-          .filter((d) => ((d.data() as any).createdAt?.toMillis?.() ?? 0) >= todayMs)
-          .reduce((s, d) => s + ((d.data() as any).count ?? 0), 0);
-        return [driver.uid, driver.displayName ?? driver.email ?? '', total, todayTotal].join(',');
-      });
-
-      const stopSummary: Record<string, { name: string; count: number }> = {};
-      boardingSnap.docs.forEach((d) => {
-        const data = d.data() as any;
-        const sid = data.stopId ?? data.stop?.id ?? 'unknown';
-        const sname = data.stopName ?? data.stop?.name ?? 'Unknown';
-        if (!stopSummary[sid]) stopSummary[sid] = { name: sname, count: 0 };
-        stopSummary[sid].count += data.count ?? 0;
+        const totals = driverTotals[driver.uid] ?? { all: 0, today: 0 };
+        return [driver.uid, (driver as any).displayName ?? (driver as any).email ?? '', totals.all, totals.today].join(',');
       });
       const stopRows = Object.entries(stopSummary)
         .sort((a, b) => b[1].count - a[1].count)

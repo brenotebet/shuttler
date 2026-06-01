@@ -141,9 +141,9 @@ export default function StackNavigator() {
   // Decide which content to render beneath the overlay.
   // Hard-block screens (rejected, expired) are only surfaced once loading clears.
   const renderContent = () => {
-    if (isLoading || !user) {
+    if (isLoading || !user || !org) {
       // While loading: show login stack as placeholder — it's fully hidden by the overlay.
-      // When not loading and no user: login stack is the correct destination.
+      // When not loading and no user (or no org selected): login stack is the correct destination.
       return (
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="OrgSelector" component={OrgSelectorScreen} />

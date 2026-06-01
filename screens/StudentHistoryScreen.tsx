@@ -11,7 +11,6 @@ import { useOrgTheme } from '../src/org/useOrgTheme';
 import ScreenContainer from '../components/ScreenContainer';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { useAuth } from '../src/auth/AuthProvider';
-import { doc, getDoc } from 'firebase/firestore';
 
 function formatRelativeTime(date: Date): string {
   const diffMs = Date.now() - date.getTime();
@@ -30,25 +29,13 @@ export default function StudentHistoryScreen() {
   const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
   const [watchUid, setWatchUid] = useState<string | null>(null);
-  const [childName, setChildName] = useState<string | null>(null);
 
   useEffect(() => {
     const myUid = auth.currentUser?.uid;
     if (!myUid || !orgId) return;
-
-    if (role !== 'parent') {
-      setWatchUid(myUid);
-      return;
-    }
-
-    // For parents, resolve the first linked child's UID
-    getDoc(doc(db, 'orgs', orgId, 'users', myUid)).then(async (snap) => {
-      const linked: string[] = snap.data()?.linkedChildUids ?? [];
-      if (linked.length === 0) { setWatchUid(null); return; }
-      const childSnap = await getDoc(doc(db, 'orgs', orgId, 'users', linked[0]));
-      setChildName(childSnap.data()?.displayName ?? null);
-      setWatchUid(linked[0]);
-    }).catch(() => setWatchUid(null));
+    // Parents request stops under their own UID (childName is stored as metadata on the doc).
+    // No separate linked-child UID lookup is needed.
+    setWatchUid(myUid);
   }, [orgId, role]);
 
   useEffect(() => {
@@ -72,7 +59,7 @@ export default function StudentHistoryScreen() {
     return () => unsub();
   }, [watchUid, orgId]);
 
-  const historyTitle = role === 'parent' && childName ? `${childName}'s Rides` : 'History';
+  const historyTitle = 'History';
 
   return (
     <ScreenContainer padded={false}>

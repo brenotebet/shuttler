@@ -75,9 +75,16 @@ function InsightsSection() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ orgId: org.orgId, period }),
       });
+      const body = await res.json();
       if (!res.ok) {
-        const { error } = await res.json();
-        throw new Error(error ?? 'Failed to generate insight');
+        throw new Error(body?.error ?? 'Failed to generate insight');
+      }
+      if (!body?.generated) {
+        showToast(
+          `No ${period === 'weekly' ? 'weekly' : 'monthly'} data yet — insights will generate automatically once rides are logged.`,
+          'error',
+        );
+        return;
       }
       await load();
       showToast('Insight generated.', 'success');

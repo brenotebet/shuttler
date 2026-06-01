@@ -40,6 +40,7 @@ import { showToast } from '../src/components/Toast';
 import ErrorBanner from '../src/components/ErrorBanner';
 import { auth, db } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL, GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '../config';
+import { markSocialSignInPending, clearSocialSignInPending } from '../src/auth/socialSignInPending';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -274,17 +275,6 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       return;
     }
 
-    // User not in this org — check if they belong to a different one
-    if (claimedOrgId && claimedOrgId !== orgId) {
-      await signOut(auth);
-      let orgName = 'another organization';
-      try {
-        const orgRes = await fetch(`${SHUTTLER_API_URL}/orgs/by-id/${claimedOrgId}`);
-        if (orgRes.ok) orgName = `"${(await orgRes.json()).name}"`;
-      } catch {}
-      throw new Error(`Your account is registered with ${orgName}. Go back and select that organization instead.`);
-    }
-
     // Domain restriction check for new users
     const allowedDomains: string[] = org?.allowedEmailDomains ?? [];
     if (allowedDomains.length > 0 && email) {
@@ -294,6 +284,10 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
         throw new Error(`Registration is restricted to ${allowedDomains.join(', ')} email addresses.`);
       }
     }
+
+    // Multi-org: user exists in a different org — create membership here too.
+    // We do NOT block or sign them out; we just add them to this org.
+    const isAddingToExistingAccount = !!(claimedOrgId && claimedOrgId !== orgId);
 
     await setDoc(userRef, {
       uid: firebaseUser.uid,
@@ -313,12 +307,20 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ orgId }),
     });
-    if (!claimRes.ok) throw new Error('Failed to complete sign-in. Please try again.');
+    if (!claimRes.ok) {
+      const claimBody = await claimRes.json().catch(() => ({}));
+      throw new Error(claimBody?.error ?? 'Failed to complete sign-in. Please try again.');
+    }
 
     // Force-refresh so AuthProvider picks up the new orgId claim
     await firebaseUser.getIdToken(true);
-    showToast('Account created! Welcome to Shuttler.', 'success');
-  }, [orgId, org?.allowedEmailDomains]);
+
+    if (isAddingToExistingAccount) {
+      showToast(org?.name ? `Added to ${org.name}!` : 'Added to organization!', 'success');
+    } else {
+      showToast('Account created! Welcome to Shuttler.', 'success');
+    }
+  }, [orgId, org?.allowedEmailDomains, org?.name]);
 
   // React to Google OAuth response
   useEffect(() => {
@@ -336,20 +338,30 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
 
     setIsSocialLoading(true);
     const credential = GoogleAuthProvider.credential(idToken);
-    signInWithCredential(auth, credential)
-      .then((result) =>
-        completeSocialSignIn(result.user, result.user.email, result.user.displayName),
-      )
-      .catch((e: any) => {
+    // Mark pending BEFORE signInWithCredential so AuthProvider's snapshot
+    // doesn't evict the user while the user doc is being created.
+    markSocialSignInPending();
+    (async () => {
+      try {
+        const result = await signInWithCredential(auth, credential);
+        await completeSocialSignIn(result.user, result.user.email, result.user.displayName);
+      } catch (e: any) {
+        // Ensure clean auth state — no half-authenticated user stuck in memory.
+        await signOut(auth).catch(() => {});
         const msg =
           e?.code === 'auth/account-exists-with-different-credential'
             ? 'An account already exists with this email using a different sign-in method.'
             : e?.code === 'auth/invalid-credential'
             ? 'Google sign-in failed — please try again. If the problem persists, contact support.'
             : e?.message ?? 'Google sign-in failed.';
-        setFormError(msg);
-      })
-      .finally(() => setIsSocialLoading(false));
+        // showAlert persists across navigation (rendered at root), so the user
+        // sees it even if they're sent back to OrgSelector.
+        showAlert(msg, 'Sign In Failed');
+      } finally {
+        clearSocialSignInPending();
+        setIsSocialLoading(false);
+      }
+    })();
   }, [googleResponse, completeSocialSignIn]);
 
   const handleAppleSignIn = useCallback(async () => {
@@ -376,6 +388,9 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
         idToken: appleCredential.identityToken,
         rawNonce: nonce,
       });
+      // Mark pending BEFORE signInWithCredential so AuthProvider's snapshot
+      // doesn't evict the user while the user doc is being created.
+      markSocialSignInPending();
       const result = await signInWithCredential(auth, firebaseCredential);
       const displayName = appleCredential.fullName
         ? [appleCredential.fullName.givenName, appleCredential.fullName.familyName]
@@ -383,6 +398,8 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
         : result.user.displayName;
       await completeSocialSignIn(result.user, result.user.email, displayName);
     } catch (e: any) {
+      // Ensure clean auth state — no half-authenticated user stuck in memory.
+      await signOut(auth).catch(() => {});
       if (e?.code === 'ERR_REQUEST_CANCELED') return;
       const msg =
         e?.code === 'auth/account-exists-with-different-credential'
@@ -392,8 +409,11 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
           : e?.code === 'auth/user-disabled'
           ? 'This account has been disabled. Contact support for help.'
           : e?.message ?? 'Apple sign-in failed. Please try again.';
-      setFormError(msg);
+      // showAlert persists across navigation (rendered at root), so the user
+      // sees it even if they're sent back to OrgSelector.
+      showAlert(msg, 'Sign In Failed');
     } finally {
+      clearSocialSignInPending();
       setIsSocialLoading(false);
     }
   }, [completeSocialSignIn]);
@@ -744,6 +764,10 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
             <View style={styles.dividerLine} />
           </View>
 
+          <Text style={styles.socialHint}>
+            Google{Platform.OS === 'ios' && Constants.appOwnership !== 'expo' ? ' and Apple' : ''} sign-in creates your account automatically — no separate sign-up needed.
+          </Text>
+
           <TouchableOpacity
             style={[styles.socialButton, isSocialLoading && styles.socialButtonDisabled]}
             onPress={() => { setFormError(null); promptGoogleAsync(); }}
@@ -822,6 +846,7 @@ function PhonePanel({ orgId }: { orgId: string }) {
       if (!snap.exists()) {
         await setDoc(userRef, {
           uid: result.user.uid,
+          orgId,
           phone: result.user.phoneNumber ?? null,
           displayName: result.user.displayName ?? result.user.phoneNumber ?? 'Parent',
           role: 'parent',
@@ -831,6 +856,15 @@ function PhonePanel({ orgId }: { orgId: string }) {
       } else {
         await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
       }
+      // Set orgId custom claim so AuthProvider can resolve the org on cold start
+      // even if OrgContext fails to restore from AsyncStorage.
+      result.user.getIdToken().then((token) =>
+        fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ orgId }),
+        }).catch(() => {}),
+      ).catch(() => {});
     } catch (e: any) {
       const msg =
         e?.code === 'auth/invalid-verification-code'
@@ -929,6 +963,8 @@ export default function AuthScreen() {
       case 'saml':
         return <SamlPanel orgSlug={org.slug} />;
       case 'email':
+      case 'google':
+      case 'email+google':
         return <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} />;
       case 'phone':
         return <PhonePanel orgId={org.orgId} />;
@@ -1262,6 +1298,14 @@ const styles = StyleSheet.create({
   },
   appleButtonText: {
     color: '#fff',
+  },
+  socialHint: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'center',
+    lineHeight: 17,
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
   socialDisclaimer: {
     fontSize: 11,

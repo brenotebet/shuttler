@@ -217,6 +217,7 @@ const aiChatLimit = createRateLimiter(60_000, 20);
 const registerLimit = createRateLimiter(60_000, 5);
 const passwordResetLimit = createRateLimiter(60_000, 5);
 const orgCreateLimit = createRateLimiter(60_000, 3);
+const waitlistLimit = createRateLimiter(60_000, 3);
 
 // ---------- Org helpers ----------
 
@@ -366,27 +367,6 @@ function computeEntitlements(plan: string, dataAddonActive: boolean) {
   };
 }
 
-function requireEntitlement(flag: string) {
-  return async (req: Request, res: Response, next: Function) => {
-    const orgId: string | undefined = (req as any).claims?.orgId;
-    if (!orgId) return res.status(403).json({ error: 'No org in token' });
-    try {
-      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
-      if (!orgDoc.exists) return res.status(403).json({ error: 'Org not found' });
-      const entitlements = orgDoc.data()?.entitlements ?? {};
-      if (!entitlements[flag]) {
-        return res.status(402).json({
-          error: 'upgrade_required',
-          feature: flag,
-          message: `This feature requires a plan upgrade. Visit the Billing tab or contact support@shuttler.net.`,
-        });
-      }
-      next();
-    } catch {
-      return res.status(500).json({ error: 'Entitlement check failed' });
-    }
-  };
-}
 
 // ---------- Express app ----------
 
@@ -415,7 +395,7 @@ app.use(cors({
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     cb(new Error(`CORS: ${origin} not allowed`));
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
@@ -427,6 +407,10 @@ app.use(express.json());
 // ---- Waitlist ----
 
 app.post('/api/waitlist', async (req: Request, res: Response) => {
+  if (waitlistLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
   const email = String(req.body?.email ?? '').toLowerCase().trim();
   const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -1780,6 +1764,36 @@ app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: R
   }
 });
 
+/** POST /notifications/stop-request-cancelled
+ *  Called when a student's stop request is cancelled (e.g. driver went offline).
+ *  Sends a push notification to the student who made the request.
+ */
+app.post('/notifications/stop-request-cancelled', requireAuth, async (req: Request, res: Response) => {
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  const { studentUid, reason } = req.body as { studentUid?: string; reason?: string };
+  if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
+  if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+
+  try {
+    const userDoc = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').doc(studentUid)
+      .get();
+    const token = userDoc.data()?.expoPushToken as string | undefined;
+
+    if (token) {
+      const body = reason === 'no_buses_online'
+        ? 'There are no buses currently online. Your request was cancelled.'
+        : 'The driver has gone offline. Your request was cancelled.';
+      await sendExpoPushNotifications([token], 'Request Cancelled', body);
+    }
+
+    return res.json({ sent: token ? 1 : 0 });
+  } catch (e) {
+    console.error('[notifications] stop-request-cancelled error:', e);
+    return res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
 /** POST /notifications/stop-completed
  *  Called when a stop request is marked completed.
  *  Sends a push notification to the student who made the request.
@@ -1904,7 +1918,43 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
   if (!orgId) return res.status(400).json({ error: 'orgId is required' });
 
   try {
-    await admin.auth().setCustomUserClaims(uid, { orgId });
+    const authUser = await admin.auth().getUser(uid);
+    const email = authUser.email ?? null;
+
+    // Detect Google + Apple same-email duplicate accounts.
+    // If another user doc in this org already has this email (different UID),
+    // refuse rather than silently creating a second orphaned account.
+    if (email) {
+      const emailSnap = await admin.firestore()
+        .collection('orgs').doc(orgId)
+        .collection('users')
+        .where('email', '==', email)
+        .limit(2)
+        .get();
+      const conflict = emailSnap.docs.find((d) => d.id !== uid);
+      if (conflict) {
+        return res.status(409).json({
+          error:
+            'An account with this email is already registered in this organization. ' +
+            'Please sign in with the same method you used originally (Google or Apple).',
+        });
+      }
+    }
+
+    // Verify the user has an actual membership doc before issuing the claim.
+    // This prevents a valid token from being used to claim membership in an
+    // org the user was never added to.
+    const memberDoc = await admin.firestore()
+      .collection('orgs').doc(orgId)
+      .collection('users').doc(uid)
+      .get();
+    if (!memberDoc.exists) {
+      return res.status(403).json({ error: 'No membership found for this organization. Please register first.' });
+    }
+
+    // Spread existing claims so we never clobber superAdmin or other flags.
+    const existing = (authUser.customClaims ?? {}) as Record<string, unknown>;
+    await admin.auth().setCustomUserClaims(uid, { ...existing, orgId });
     return res.json({ ok: true });
   } catch (e) {
     console.error('[auth/social/complete]', e);
@@ -2100,8 +2150,8 @@ app.post('/ai/generate-insights', requireAuth, async (req: Request, res: Respons
     if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
       return res.status(403).json({ error: 'Admin access required' });
     }
-    await generateOrgInsight(orgId, period as 'weekly' | 'monthly');
-    return res.json({ ok: true });
+    const generated = await generateOrgInsight(orgId, period as 'weekly' | 'monthly');
+    return res.json({ ok: true, generated });
   } catch (e: any) {
     console.error('[ai/generate-insights]', e?.message ?? e);
     return res.status(500).json({ error: 'Failed to generate insight' });

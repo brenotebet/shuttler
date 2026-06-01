@@ -422,6 +422,8 @@ export default function MapScreen() {
   const lastUserInteractionRef = useRef(0);
   const userInteractingRef = useRef(false);
   const lastProgrammaticMoveRef = useRef<number>(0);
+  const expiryInFlightRef = useRef(false);
+  const confirmInFlightRef = useRef(false);
 
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [bottomCardHeight, setBottomCardHeight] = useState(0);
@@ -694,12 +696,24 @@ export default function MapScreen() {
   }, []);
 
   useEffect(() => {
-    if (role !== 'parent' || !studentUid || !orgId) { setChildProfiles([]); return; }
-    loadChildProfiles(orgId, studentUid).then((profiles) => {
-      setChildProfiles(profiles);
-      if (profiles.length === 1) setSelectedChild(profiles[0]);
-    }).catch(() => setChildProfiles([]));
-  }, [role, studentUid, orgId]);
+    if (role !== 'parent' || !studentUid || !orgId) {
+      setChildProfiles([]);
+      return;
+    }
+    const load = () => {
+      loadChildProfiles(orgId, studentUid)
+        .then((profiles) => {
+          setChildProfiles(profiles);
+          if (profiles.length === 1) setSelectedChild(profiles[0]);
+        })
+        .catch(() => setChildProfiles([]));
+    };
+    load();
+    // Re-load whenever the screen regains focus (e.g. navigating back from ParentChildLink).
+    // MapScreen stays mounted in the tab while stack screens are pushed on top, so the
+    // initial load doesn't re-run — the focus listener fills that gap.
+    return navigation.addListener('focus', load);
+  }, [role, studentUid, orgId, navigation]);
 
   useEffect(() => {
     let mounted = true;
@@ -876,11 +890,32 @@ export default function MapScreen() {
           }
         });
 
-        setBusLocations(newLocations);
+        // Only call setBusLocations when something actually changed — avoids
+        // re-rendering all bus markers on every snapshot even for unchanged buses.
+        setBusLocations((prev) => {
+          const prevKeys = Object.keys(prev);
+          const nextKeys = Object.keys(newLocations);
+          if (prevKeys.length !== nextKeys.length) return newLocations;
+          for (const id of nextKeys) {
+            const p = prev[id];
+            const n = newLocations[id];
+            if (!p || p.latitude !== n.latitude || p.longitude !== n.longitude ||
+                p.isFresh !== n.isFresh || p.onBreak !== n.onBreak) return newLocations;
+          }
+          return prev; // nothing changed — keep same reference
+        });
 
         const newRouteIds: Record<string, string | null> = {};
         visibleBuses.forEach((bus: any) => { newRouteIds[bus.id] = bus.routeId ?? null; });
-        setBusRouteIds(newRouteIds);
+        setBusRouteIds((prev) => {
+          const prevKeys = Object.keys(prev);
+          const nextKeys = Object.keys(newRouteIds);
+          if (prevKeys.length !== nextKeys.length) return newRouteIds;
+          for (const id of nextKeys) {
+            if (prev[id] !== newRouteIds[id]) return newRouteIds;
+          }
+          return prev;
+        });
 
         const recentIds = visibleBuses.map((b: any) => b.id);
         setActiveBusIds(recentIds);
@@ -1139,7 +1174,10 @@ export default function MapScreen() {
   };
 
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
-  const driverOnline = activeBusIds.includes(resolvedDriverId || '');
+  const driverOnline = useMemo(
+    () => activeBusIds.includes(resolvedDriverId || ''),
+    [activeBusIds, resolvedDriverId],
+  );
 
   useEffect(() => {
     if (!resolvedDriverId) return;
@@ -1253,6 +1291,8 @@ export default function MapScreen() {
   }, [selectedBusId, busLocations[selectedBusId ?? '']]);
 
   const selectedEtaTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastEtaFetchCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+
   useEffect(() => {
     if (selectedEtaTimerRef.current) clearInterval(selectedEtaTimerRef.current as any);
     selectedEtaTimerRef.current = null;
@@ -1264,6 +1304,13 @@ export default function MapScreen() {
         const busLoc = busLocations[selectedBusId] || lastCoords.current[selectedBusId];
         const userLoc = userLocRef.current;
         if (!busLoc || !userLoc) return;
+
+        // Skip if bus hasn't moved >30m since last fetch — avoids hammering directions API
+        // while the bus is stopped at a stop or in traffic.
+        const prev = lastEtaFetchCoordsRef.current;
+        if (prev && getDistanceInMeters(prev.latitude, prev.longitude, busLoc.latitude, busLoc.longitude) < 30) return;
+
+        lastEtaFetchCoordsRef.current = { latitude: busLoc.latitude, longitude: busLoc.longitude };
 
         const { eta: e } = await fetchDirections(
           { latitude: busLoc.latitude, longitude: busLoc.longitude },
@@ -1280,7 +1327,7 @@ export default function MapScreen() {
     };
 
     tick();
-    selectedEtaTimerRef.current = setInterval(tick, 2500) as any;
+    selectedEtaTimerRef.current = setInterval(tick, 15000) as any;
 
     return () => {
       if (selectedEtaTimerRef.current) clearInterval(selectedEtaTimerRef.current as any);
@@ -1301,7 +1348,8 @@ export default function MapScreen() {
     const remainingMs = expiresAtMs - Date.now();
 
     const expireRequest = async () => {
-      if (!orgId || !requestId) return;
+      if (!orgId || !requestId || expiryInFlightRef.current) return;
+      expiryInFlightRef.current = true;
       try {
         await runTransaction(db, async (tx) => {
           const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
@@ -1317,6 +1365,8 @@ export default function MapScreen() {
         });
       } catch (err) {
         console.error('Failed to expire timed student request', err);
+      } finally {
+        expiryInFlightRef.current = false;
       }
     };
 
@@ -1363,16 +1413,30 @@ export default function MapScreen() {
     const expiresAt: number = request?.confirmationExpiresAtMs ?? 0;
     const remaining = expiresAt - Date.now();
 
-    const complete = () => {
-      updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), {
-        status: 'completed',
-        completedAt: serverTimestamp(),
-        completedReason: 'confirmation_auto_expired',
-      }).catch(() => {});
+    const complete = async () => {
+      if (confirmInFlightRef.current) return;
+      confirmInFlightRef.current = true;
+      try {
+        await runTransaction(db, async (tx) => {
+          const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          if ((snap.data() as any)?.status !== 'awaiting_confirmation') return;
+          tx.update(ref, {
+            status: 'completed',
+            completedAt: serverTimestamp(),
+            completedReason: 'confirmation_auto_expired',
+          });
+        });
+      } catch {
+        // Non-critical
+      } finally {
+        confirmInFlightRef.current = false;
+      }
     };
 
-    if (remaining <= 0) { complete(); return; }
-    const timer = setTimeout(complete, remaining);
+    if (remaining <= 0) { void complete(); return; }
+    const timer = setTimeout(() => { void complete(); }, remaining);
     return () => clearTimeout(timer);
   }, [request?.status, request?.confirmationExpiresAtMs, requestId, orgId]);
 

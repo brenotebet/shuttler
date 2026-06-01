@@ -4,6 +4,7 @@ import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebaseconfig';
 import { useOrg } from '../org/OrgContext';
+import { isSocialSignInPending } from './socialSignInPending';
 
 type Role = 'student' | 'driver' | 'admin' | 'parent';
 
@@ -112,6 +113,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setRole(normalizeRole(snap.data()?.role));
           setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
         } else {
+          if (isSocialSignInPending()) {
+            // A social sign-in is in progress — the user doc is being created
+            // right now. Don't evict; the snapshot will re-fire once it's written.
+            setInitializing(false);
+            return;
+          }
           // Server confirmed: no membership doc → not a member of this org.
           setSigningOut(true);
           setRole(null);

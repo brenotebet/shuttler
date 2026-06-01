@@ -369,10 +369,11 @@ async function buildPeriodStats(orgId: string, daysBack: number): Promise<{
   };
 }
 
-export async function generateOrgInsight(orgId: string, period: 'weekly' | 'monthly'): Promise<void> {
+// Returns true if an insight was generated, false if there was no data.
+export async function generateOrgInsight(orgId: string, period: 'weekly' | 'monthly'): Promise<boolean> {
   const daysBack = period === 'monthly' ? 30 : 7;
   const stats = await buildPeriodStats(orgId, daysBack);
-  if (stats.totalBoardings === 0 && stats.activeDrivers === 0) return;
+  if (stats.totalBoardings === 0 && stats.activeDrivers === 0) return false;
 
   const periodLabel = period === 'monthly' ? 'monthly' : 'weekly';
   const response = await anthropic.messages.create({
@@ -395,6 +396,8 @@ export async function generateOrgInsight(orgId: string, period: 'weekly' | 'mont
       periodDays: daysBack,
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+  return true;
 }
 
 export async function runWeeklyDigest(): Promise<void> {

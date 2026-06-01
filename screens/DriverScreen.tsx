@@ -357,7 +357,7 @@ export default function DriverScreen() {
 
 
   useEffect(() => {
-    const timer = setInterval(() => setClockTick(Date.now()), 10000);
+    const timer = setInterval(() => setClockTick(Date.now()), 30000);
     return () => clearInterval(timer);
   }, []);
 
@@ -491,6 +491,7 @@ export default function DriverScreen() {
           limit(200),
         ),
         (snapshot) => {
+          if (snapshot.metadata.fromCache) return;
           const rows = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
           rows.forEach((row) => {
             if (isExpiredRequest(row)) void expireRequestIfNeeded(row);

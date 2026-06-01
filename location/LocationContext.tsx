@@ -20,6 +20,7 @@ import {
 import { db, auth } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
 import { isRouteActive } from '../src/utils/scheduleUtils';
+import { notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 
 type LocationContextType = {
   isSharing: boolean;
@@ -147,6 +148,14 @@ async function cancelActiveStopRequestsForDriver(uid: string, orgId: string) {
   });
 
   await batch.commit();
+
+  // Fire-and-forget: notify each affected student
+  active.forEach((snap) => {
+    const studentUid = (snap.data() as any)?.studentUid as string | undefined;
+    if (studentUid) {
+      void notifyStudentRequestCancelled(orgId, studentUid, 'driver_offline');
+    }
+  });
 }
 
 
@@ -177,6 +186,14 @@ async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string, org
   });
 
   await batch.commit();
+
+  // Fire-and-forget: notify each affected student
+  pendingSnap.docs.forEach((snap) => {
+    const studentUid = (snap.data() as any)?.studentUid as string | undefined;
+    if (studentUid) {
+      void notifyStudentRequestCancelled(orgId, studentUid, 'no_buses_online');
+    }
+  });
 }
 
 export const LocationProvider = ({ children }: { children: React.ReactNode }) => {
@@ -201,6 +218,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const [breaksTakenThisShift, setBreaksTakenThisShift] = useState(0);
   const breakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPausedRef = useRef(false);
+  // Keep a stable ref to org.routes so the inactivity-check effect doesn't restart
+  // its interval on every org snapshot (org?.routes is a new array reference each time).
+  const orgRoutesRef = useRef(org?.routes ?? []);
+  orgRoutesRef.current = org?.routes ?? [];
 
   const notifyStillOn = () => {
     Notifications.scheduleNotificationAsync({
@@ -589,7 +610,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       // Schedule enforcement — only applies when a route is assigned
       const routeId = currentRouteIdRef.current;
       if (routeId) {
-        const route = org?.routes?.find((r) => r.id === routeId) ?? null;
+        const route = orgRoutesRef.current.find((r) => r.id === routeId) ?? null;
         if (route?.schedule && !isRouteActive(route)) {
           Notifications.scheduleNotificationAsync({
             content: {
@@ -604,8 +625,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     }, INACTIVITY_CHECK_MS);
 
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSharing, org?.routes]);
+  }, [isSharing]);
 
   return (
     <LocationContext.Provider value={{ isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak }}>
