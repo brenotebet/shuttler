@@ -300,20 +300,21 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
       createdAt: serverTimestamp(),
     });
 
-    // Set orgId custom claim on the backend
-    const token = await firebaseUser.getIdToken();
-    const claimRes = await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ orgId }),
-    });
-    if (!claimRes.ok) {
-      const claimBody = await claimRes.json().catch(() => ({}));
-      throw new Error(claimBody?.error ?? 'Failed to complete sign-in. Please try again.');
+    // Set orgId custom claim on the backend — best-effort, non-fatal.
+    // AuthProvider uses org?.orgId (OrgContext/AsyncStorage) as the primary orgId source,
+    // so the claim is only needed for cold starts. It will be picked up on the next
+    // natural token refresh. getIdToken(true) is intentionally NOT called here because
+    // on Firebase SDK v11 it can re-fire onAuthStateChanged, wiping role mid-login.
+    try {
+      const token = await firebaseUser.getIdToken();
+      await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId }),
+      });
+    } catch {
+      // Non-critical — user is already in org (user doc exists), claim will refresh later.
     }
-
-    // Force-refresh so AuthProvider picks up the new orgId claim
-    await firebaseUser.getIdToken(true);
 
     if (isAddingToExistingAccount) {
       showToast(org?.name ? `Added to ${org.name}!` : 'Added to organization!', 'success');
