@@ -156,6 +156,20 @@ service cloud.firestore {
         )
         ||
         (
+          // Student confirms pickup ("Yes, I'm on the bus!").
+          resource.data.studentUid == request.auth.uid
+          && resource.data.status == 'awaiting_confirmation'
+          && request.resource.data.status == 'completed'
+        )
+        ||
+        (
+          // Student denies pickup ("No, not yet") — reverts to pending.
+          resource.data.studentUid == request.auth.uid
+          && resource.data.status == 'awaiting_confirmation'
+          && request.resource.data.status == 'pending'
+        )
+        ||
+        (
           // Driver updates an active request (arrivedAt, completion, cancellation, driverUid).
           isDriver(orgId)
           && resource.data.status in ['pending', 'accepted']

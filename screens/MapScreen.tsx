@@ -14,6 +14,7 @@ import {
   Dimensions,
   Alert,
   Modal,
+  Linking,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -398,6 +399,7 @@ export default function MapScreen() {
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedStopKey, setSelectedStopKey] = useState<string | null>(null);
   const [ttlCountdown, setTtlCountdown] = useState<string | null>(null);
+  const [locationPermDenied, setLocationPermDenied] = useState(false);
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [selectedBusPopup, setSelectedBusPopup] = useState<BusPopup | null>(null);
@@ -596,9 +598,10 @@ export default function MapScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        showAlert('Permission denied');
+        setLocationPermDenied(true);
         return;
       }
+      setLocationPermDenied(false);
       const loc = await Location.getCurrentPositionAsync({});
       userLocRef.current = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
 
@@ -722,10 +725,12 @@ export default function MapScreen() {
 
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (!mounted || status !== 'granted') {
-        if (status !== 'granted') showAlert('Permission denied');
+      if (!mounted) return;
+      if (status !== 'granted') {
+        setLocationPermDenied(true);
         return;
       }
+      setLocationPermDenied(false);
 
       if (!didInitialFitRef.current) {
         didInitialFitRef.current = true;
@@ -1997,6 +2002,20 @@ const handleRequest = async (entry: RequestableStop) => {
         )}
       </MapView>
 
+      {locationPermDenied && (
+        <View style={styles.locationDeniedBanner}>
+          <Icon name="location-off" size={20} color="#fff" />
+          <Text style={styles.locationDeniedText}>Location access is off</Text>
+          <TouchableOpacity
+            onPress={() => Linking.openSettings()}
+            style={styles.locationDeniedBtn}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.locationDeniedBtnText}>Enable</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <Animated.View
         pointerEvents="box-none"
         style={[
@@ -2363,6 +2382,36 @@ const styles = StyleSheet.create({
   locationText: { fontSize: 16, color: '#333' },
   locationRouteMeta: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
 
+  locationDeniedBanner: {
+    position: 'absolute',
+    top: 12,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(17,18,20,0.88)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    zIndex: 200,
+  },
+  locationDeniedText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  locationDeniedBtn: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  locationDeniedBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111',
+  },
   fabWrapBottomLeft: {
     position: 'absolute',
     left: 14,
