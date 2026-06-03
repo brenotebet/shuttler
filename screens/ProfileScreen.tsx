@@ -22,6 +22,7 @@ import { useOrg } from '../src/org/OrgContext';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
 import { spacing } from '../src/styles/common';
+import PhoneInput from '../src/components/PhoneInput';
 
 function getInitials(name: string | null, email: string | null): string {
   if (name) {
@@ -218,14 +219,11 @@ export default function ProfileScreen() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Phone Number</Text>
           <View style={styles.fieldRow}>
-            <TextInput
-              style={styles.input}
+            <PhoneInput
               value={phone}
-              onChangeText={setPhone}
-              placeholder="+1 (555) 000-0000"
-              placeholderTextColor="#9ca3af"
-              keyboardType="phone-pad"
+              onChange={setPhone}
               editable={!savingPhone}
+              style={styles.phoneInput}
             />
             <TouchableOpacity
               style={[styles.saveBtn, { backgroundColor: primaryColor }, savingPhone && styles.saveBtnDisabled]}
@@ -353,6 +351,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  phoneInput: {
+    flex: 1,
   },
   input: {
     flex: 1,

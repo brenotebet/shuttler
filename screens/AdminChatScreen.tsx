@@ -17,6 +17,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { auth } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../config';
 import { useOrg } from '../src/org/OrgContext';
+import { useAuth } from '../src/auth/AuthProvider';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import ScreenContainer from '../components/ScreenContainer';
 
@@ -26,21 +27,43 @@ interface Message {
   content: string;
 }
 
-const SUGGESTED = [
+const SUGGESTED_ADMIN = [
   'Which stop has the most pickups?',
   'How do I add a new driver?',
   'How do I create a new route?',
   'What does my boarding data show?',
 ];
 
+const SUGGESTED_DRIVER = [
+  'How do I start my shift?',
+  'How do I record a boarding?',
+  'What stops are on my route?',
+  'How do I end my shift?',
+];
+
+const SUGGESTED_RIDER = [
+  'How do I request a pickup?',
+  'How do I track the shuttle?',
+  'What stops are available?',
+  'How do I cancel a request?',
+];
+
+function getSuggested(role: string | null): string[] {
+  if (role === 'admin') return SUGGESTED_ADMIN;
+  if (role === 'driver') return SUGGESTED_DRIVER;
+  return SUGGESTED_RIDER;
+}
+
 export default function AdminChatScreen() {
   const navigation = useNavigation();
   const { org } = useOrg();
+  const { role } = useAuth();
   const { primaryColor } = useOrgTheme();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const suggested = getSuggested(role);
 
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -71,7 +94,10 @@ export default function AdminChatScreen() {
       });
 
       const data = await res.json();
-      const reply = data.reply ?? 'Sorry, I couldn\'t get a response. Please try again.';
+      if (!res.ok) {
+        throw new Error(data?.message ?? data?.error ?? 'Failed to get a response.');
+      }
+      const reply = data.reply?.trim() || 'Sorry, I couldn\'t get a response. Please try again.';
 
       setMessages((prev) => [
         ...prev,
@@ -142,10 +168,12 @@ export default function AdminChatScreen() {
             </View>
             <Text style={styles.emptyTitle}>Ask me anything</Text>
             <Text style={styles.emptySubtitle}>
-              I know your stops, routes, and boarding data. Ask about your operations or how to use the app.
+              {role === 'admin'
+                ? 'I know your stops, routes, and boarding data. Ask about your operations or how to use the app.'
+                : 'I can help you navigate the app, find your stops, and understand how the shuttle works.'}
             </Text>
             <View style={styles.suggestions}>
-              {SUGGESTED.map((q) => (
+              {suggested.map((q) => (
                 <TouchableOpacity
                   key={q}
                   style={[styles.suggestion, { borderColor: `${primaryColor}40` }]}
@@ -215,7 +243,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 56,
+    paddingTop: 12,
     paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
@@ -280,7 +308,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 12,
     paddingVertical: 10,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 12,
+    paddingBottom: 10,
     borderTopWidth: 1,
     borderTopColor: '#f3f4f6',
     backgroundColor: '#fff',

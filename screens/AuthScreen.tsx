@@ -19,7 +19,7 @@ import {
 import { type RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { signInWithEmailAndPassword, signOut, PhoneAuthProvider, signInWithCredential, signInWithPhoneNumber, GoogleAuthProvider, OAuthProvider } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import * as Google from 'expo-auth-session/providers/google';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
@@ -44,6 +44,7 @@ import { markSocialSignInPending, clearSocialSignInPending } from '../src/auth/s
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import PhoneInput, { isValidE164 } from '../src/components/PhoneInput';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Auth'>;
 type RouteT = RouteProp<RootStackParamList, 'Auth'>;
@@ -618,17 +619,14 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
 
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Phone number</Text>
-            <TextInput
-              style={[styles.input, errors.phone ? styles.inputError : null]}
-              placeholder="+1 555 000 1234"
+            <PhoneInput
               value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              placeholderTextColor="#bbb"
+              onChange={setPhone}
+              error={!!errors.phone}
             />
             {errors.phone
               ? <Text style={styles.errorText}>{errors.phone}</Text>
-              : <Text style={styles.fieldHint}>Used for account recovery and ride notifications. Format: +1 555 000 1234</Text>}
+              : <Text style={styles.fieldHint}>Used for account recovery and ride notifications.</Text>}
           </View>
         </>
       )}
@@ -781,8 +779,8 @@ function PhonePanel({ orgId }: { orgId: string }) {
 
   const handleSendCode = useCallback(async () => {
     const cleaned = phoneNumber.trim();
-    if (!cleaned.startsWith('+')) {
-      showAlert('Enter your phone number in international format, e.g. +1 555 000 1234.', 'Format required');
+    if (!isValidE164(cleaned)) {
+      showAlert('Enter a valid phone number with a country code.', 'Invalid number');
       return;
     }
     setIsSubmitting(true);
@@ -799,34 +797,28 @@ function PhonePanel({ orgId }: { orgId: string }) {
   const handleVerifyCode = useCallback(async () => {
     if (!verificationId || !code.trim()) return;
     setIsSubmitting(true);
+    // Mark pending before signInWithCredential so AuthProvider's snapshot doesn't
+    // evict the user while the user doc is being created on the backend.
+    markSocialSignInPending();
     try {
       const credential = PhoneAuthProvider.credential(verificationId, code.trim());
       const result = await signInWithCredential(auth, credential);
-      const userRef = doc(db, 'orgs', orgId, 'users', result.user.uid);
-      const snap = await getDoc(userRef);
-      if (!snap.exists()) {
-        await setDoc(userRef, {
-          uid: result.user.uid,
-          orgId,
-          phone: result.user.phoneNumber ?? null,
-          displayName: result.user.displayName ?? result.user.phoneNumber ?? 'Parent',
-          role: 'parent',
-          lastLoginAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
-        });
-      } else {
-        await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
+
+      // Delegate user doc creation + orgId claim to the backend (Admin SDK bypasses
+      // Firestore security rules — new users can't create their own doc client-side
+      // because orgIsActive() requires existing membership to read the org doc).
+      const token = await result.user.getIdToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId, role: 'parent' }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? 'Failed to complete sign-in. Please try again.');
       }
-      // Set orgId custom claim so AuthProvider can resolve the org on cold start
-      // even if OrgContext fails to restore from AsyncStorage.
-      result.user.getIdToken().then((token) =>
-        fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ orgId }),
-        }).catch(() => {}),
-      ).catch(() => {});
     } catch (e: any) {
+      await signOut(auth).catch(() => {});
       const msg =
         e?.code === 'auth/invalid-verification-code'
           ? 'That code is incorrect. Please try again.'
@@ -835,6 +827,7 @@ function PhonePanel({ orgId }: { orgId: string }) {
           : e?.message ?? 'Verification failed.';
       showAlert(msg, 'Error');
     } finally {
+      clearSocialSignInPending();
       setIsSubmitting(false);
     }
   }, [verificationId, code, orgId]);
@@ -856,20 +849,16 @@ function PhonePanel({ orgId }: { orgId: string }) {
 
       {!verificationId ? (
         <>
-          <TextInput
-            style={styles.input}
-            placeholder="+1 555 000 1234"
+          <PhoneInput
             value={phoneNumber}
-            onChangeText={setPhoneNumber}
-            keyboardType="phone-pad"
-            autoCorrect={false}
-            placeholderTextColor="#aaa"
+            onChange={setPhoneNumber}
+            style={styles.phoneInputRow}
           />
           <AppButton
             label={isSubmitting ? 'Sending…' : 'Send Code'}
             onPress={handleSendCode}
             style={styles.primaryButton}
-            disabled={isSubmitting || !phoneNumber.trim()}
+            disabled={isSubmitting || !isValidE164(phoneNumber)}
           />
         </>
       ) : (
@@ -912,14 +901,28 @@ export default function AuthScreen() {
   const { org } = useOrg();
   const { primaryColor } = useOrgTheme();
   const { initialEmail } = route.params;
+  const [adminOverride, setAdminOverride] = React.useState(false);
 
   if (!org) {
-    // Org not loaded yet — go back to selector
     navigation.replace('OrgSelector');
     return null;
   }
 
   const renderContent = () => {
+    // Admin escape hatch: when org uses phone auth, admins still need to sign in
+    // with email (phone creates a new Firebase UID that wouldn't match their
+    // existing admin user doc).
+    if (org.authMethod === 'phone' && adminOverride) {
+      return (
+        <>
+          <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} />
+          <TouchableOpacity onPress={() => setAdminOverride(false)} style={styles.adminOverrideLink}>
+            <Text style={[styles.adminOverrideLinkText, { color: primaryColor }]}>← Back to phone sign-in</Text>
+          </TouchableOpacity>
+        </>
+      );
+    }
+
     switch (org.authMethod) {
       case 'saml':
         return <SamlPanel orgSlug={org.slug} />;
@@ -928,7 +931,14 @@ export default function AuthScreen() {
       case 'email+google':
         return <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} />;
       case 'phone':
-        return <PhonePanel orgId={org.orgId} />;
+        return (
+          <>
+            <PhonePanel orgId={org.orgId} />
+            <TouchableOpacity onPress={() => setAdminOverride(true)} style={styles.adminOverrideLink}>
+              <Text style={[styles.adminOverrideLinkText, { color: primaryColor }]}>Admin? Sign in with email →</Text>
+            </TouchableOpacity>
+          </>
+        );
       default:
         return (
           <View style={styles.card}>
@@ -1267,6 +1277,17 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginBottom: 12,
     paddingHorizontal: 4,
+  },
+  phoneInputRow: {
+    marginBottom: spacing.item,
+  },
+  adminOverrideLink: {
+    alignSelf: 'center',
+    paddingVertical: 12,
+  },
+  adminOverrideLinkText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   socialDisclaimer: {
     fontSize: 11,

@@ -1532,6 +1532,10 @@ function UsersTab() {
         showToast('Ask another admin to change your role.', 'error');
         return;
       }
+      if (org.ownerUid && member.uid === org.ownerUid) {
+        showToast('The org owner\'s role cannot be changed.', 'error');
+        return;
+      }
       Alert.alert(
         `Change role for ${member.displayName ?? member.email}`,
         `Current role: ${ROLE_LABELS[member.role]}`,
@@ -1572,6 +1576,10 @@ function UsersTab() {
       if (!org) return;
       if (member.uid === currentUser?.uid) {
         showToast('Ask another admin to remove your account.', 'error');
+        return;
+      }
+      if (org.ownerUid && member.uid === org.ownerUid) {
+        showToast('The org owner cannot be removed.', 'error');
         return;
       }
       Alert.alert(
@@ -1656,6 +1664,7 @@ function UsersTab() {
         const assignedRouteId = driverDefaults[member.uid] ?? null;
         const assignedRoute = assignedRouteId ? orgRoutes.find((r) => r.id === assignedRouteId) : null;
         const isSelf = member.uid === currentUser?.uid;
+        const isOwner = !!(org?.ownerUid && member.uid === org.ownerUid);
         return (
           <View key={member.uid} style={styles.memberRow}>
             <View style={[styles.memberAvatar, isSelf && usersStyles.selfAvatar, isSelf && { backgroundColor: `${primaryColor}25` }]}>
@@ -1668,7 +1677,12 @@ function UsersTab() {
                 <Text style={styles.memberName} numberOfLines={1}>
                   {member.displayName ?? '—'}
                 </Text>
-                {isSelf && (
+                {isOwner && (
+                  <View style={usersStyles.ownerBadge}>
+                    <Text style={usersStyles.ownerBadgeText}>Owner</Text>
+                  </View>
+                )}
+                {isSelf && !isOwner && (
                   <View style={usersStyles.youBadge}>
                     <Text style={usersStyles.youBadgeText}>You</Text>
                   </View>
@@ -1692,8 +1706,9 @@ function UsersTab() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              style={[styles.roleBadge, { backgroundColor: `${member.role === 'admin' ? primaryColor : ROLE_COLORS[member.role]}20` }, isSelf && usersStyles.roleBadgeSelf]}
+              style={[styles.roleBadge, { backgroundColor: `${member.role === 'admin' ? primaryColor : ROLE_COLORS[member.role]}20` }, (isSelf || isOwner) && usersStyles.roleBadgeSelf]}
               onPress={() => handleChangeRole(member)}
+              disabled={isOwner}
             >
               <Text style={[styles.roleBadgeText, { color: member.role === 'admin' ? primaryColor : ROLE_COLORS[member.role] }]}>
                 {ROLE_LABELS[member.role]}
@@ -1701,9 +1716,10 @@ function UsersTab() {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => handleRemoveUser(member)}
-              style={[styles.removeUserBtn, isSelf && usersStyles.removeDisabled]}
+              style={[styles.removeUserBtn, (isSelf || isOwner) && usersStyles.removeDisabled]}
+              disabled={isOwner}
             >
-              <Icon name="person-remove" size={18} color={isSelf ? '#d1d5db' : '#e53935'} />
+              <Icon name="person-remove" size={18} color={(isSelf || isOwner) ? '#d1d5db' : '#e53935'} />
             </TouchableOpacity>
           </View>
         );
@@ -1754,6 +1770,17 @@ const usersStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  ownerBadge: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  ownerBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#92400e',
+  },
   youBadge: {
     backgroundColor: '#e0f2fe',
     borderRadius: 8,
@@ -1793,8 +1820,18 @@ function BillingTab() {
         });
         const { url, error } = await res.json();
         if (error) throw new Error(error);
-        await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
-        // Poll for webhook to process — retry up to 5× at 2s intervals (~10s total)
+
+        const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+
+        // Browser closed (no redirect) — user dismissed without touching Stripe.
+        if (result.type !== 'success') return;
+
+        // Stripe cancel button redirects to cancel_url (shuttler://billing, no session_id).
+        // Stripe success redirects to success_url (shuttler://billing?session_id=...).
+        const redirectedUrl = (result as any).url as string | undefined;
+        if (!redirectedUrl?.includes('session_id=')) return;
+
+        // Payment completed — poll for the webhook to process.
         for (let i = 0; i < 5; i++) {
           await new Promise((r) => setTimeout(r, 2000));
           await refreshOrg();
@@ -1820,7 +1857,13 @@ function BillingTab() {
       });
       const { url, error } = await res.json();
       if (error) throw new Error(error);
-      await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+
+      const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+
+      if (result.type !== 'success') return;
+      const redirectedUrl = (result as any).url as string | undefined;
+      if (!redirectedUrl?.includes('session_id=')) return;
+
       for (let i = 0; i < 5; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         await refreshOrg();
@@ -1844,8 +1887,13 @@ function BillingTab() {
       });
       const { url, error } = await res.json();
       if (error) throw new Error(error);
-      await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
-      // Poll for portal changes (e.g. plan upgrade/cancel) to reflect in app
+
+      const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+
+      // Browser closed without redirect — user opened portal and dismissed immediately.
+      if (result.type !== 'success') return;
+
+      // Portal returned — user may have made changes. Poll briefly for webhook.
       for (let i = 0; i < 3; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         await refreshOrg();

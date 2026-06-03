@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
+import { useAuth } from '../src/auth/AuthProvider';
 import { isRouteActive } from '../src/utils/scheduleUtils';
 import { notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 
@@ -198,6 +199,7 @@ async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string, org
 
 export const LocationProvider = ({ children }: { children: React.ReactNode }) => {
   const { org } = useOrg();
+  const { role } = useAuth();
   const orgId = org?.orgId ?? '';
   const [isSharing, setIsSharing] = useState(false);
 
@@ -315,6 +317,17 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     };
     // run once per mount
   }, []);
+
+  // Stop sharing immediately if an admin demotes the driver to a non-driver role
+  // while they are actively broadcasting. Without this, the bus doc stays online
+  // and the location continues to be broadcast indefinitely after the role change.
+  useEffect(() => {
+    if (!isSharing) return;
+    if (role === 'driver' || role === 'admin') return;
+    // Role dropped below driver level while sharing — stop immediately.
+    stopSharing().catch((err) => console.error('Role-change auto-stop failed:', err));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, isSharing]);
 
   // ✅ AppState reminder only: do NOT force driver offline when app backgrounds.
   // Drivers should only go offline when they explicitly stop sharing, or after stale startup reconciliation.

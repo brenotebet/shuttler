@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
-import { collection, doc, getDoc, getDocs, orderBy, query } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, orderBy, query } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
@@ -47,17 +47,20 @@ function InsightsSection() {
   const [monthly, setMonthly] = useState<OrgInsight | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState<'weekly' | 'monthly' | null>(null);
+  const [hasBoardingData, setHasBoardingData] = useState(false);
 
   const load = useCallback(async () => {
     if (!org) return;
     setIsLoading(true);
     try {
-      const [wSnap, mSnap] = await Promise.all([
+      const [wSnap, mSnap, boardingSnap] = await Promise.all([
         getDoc(doc(db, 'orgs', org.orgId, 'insights', 'weekly')),
         getDoc(doc(db, 'orgs', org.orgId, 'insights', 'monthly')),
+        getDocs(query(collection(db, 'orgs', org.orgId, 'boardingCounts'), limit(1))),
       ]);
       setWeekly(wSnap.exists() ? (wSnap.data() as OrgInsight) : null);
       setMonthly(mSnap.exists() ? (mSnap.data() as OrgInsight) : null);
+      setHasBoardingData(!boardingSnap.empty);
     } finally {
       setIsLoading(false);
     }
@@ -136,23 +139,34 @@ function InsightsSection() {
             </View>
             <Text style={s.narrative}>{insight.narrative}</Text>
           </>
-        ) : (
+        ) : hasBoardingData ? (
           <Text style={s.emptyText}>No {label.toLowerCase()} insight yet — generate one below.</Text>
+        ) : (
+          <Text style={s.emptyText}>
+            No rides logged yet. Insights generate automatically once drivers start recording pickups.
+          </Text>
         )}
-        <TouchableOpacity
-          style={[s.generateBtn, { borderColor: primaryColor }]}
-          onPress={() => generate(period)}
-          disabled={isGenerating === period}
-        >
-          {isGenerating === period ? (
-            <ActivityIndicator size="small" color={primaryColor} />
-          ) : (
-            <>
-              <Icon name="auto-awesome" size={16} color={primaryColor} />
-              <Text style={[s.generateBtnText, { color: primaryColor }]}>Generate now</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        {hasBoardingData ? (
+          <TouchableOpacity
+            style={[s.generateBtn, { borderColor: primaryColor }]}
+            onPress={() => generate(period)}
+            disabled={isGenerating === period}
+          >
+            {isGenerating === period ? (
+              <ActivityIndicator size="small" color={primaryColor} />
+            ) : (
+              <>
+                <Icon name="auto-awesome" size={16} color={primaryColor} />
+                <Text style={[s.generateBtnText, { color: primaryColor }]}>Generate now</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <View style={[s.generateBtn, s.generateBtnDisabled]}>
+            <Icon name="auto-awesome" size={16} color="#d1d5db" />
+            <Text style={[s.generateBtnText, { color: '#d1d5db' }]}>Available once rides are logged</Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -440,6 +454,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16,
   },
   generateBtnText: { fontSize: 14, fontWeight: '600' },
+  generateBtnDisabled: { borderColor: '#e5e7eb' },
   // Analytics
   summaryRow: { flexDirection: 'row', gap: 10 },
   summaryCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center', gap: 4, ...cardShadow },

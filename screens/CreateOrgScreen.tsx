@@ -30,6 +30,7 @@ import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { SHUTTLER_API_URL } from '../config';
 import { useOrg } from '../src/org/OrgContext';
 import type { OrgConfig } from '../src/org/OrgContext';
+import PhoneInput from '../src/components/PhoneInput';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CreateOrg'>;
 
@@ -353,13 +354,10 @@ export default function CreateOrgScreen() {
           </Text>
 
           <Text style={styles.label}>Phone (optional)</Text>
-          <TextInput
-            style={styles.input}
+          <PhoneInput
             value={phone}
-            onChangeText={setPhone}
-            placeholder="+1 (555) 000-0000"
-            placeholderTextColor="#aaa"
-            keyboardType="phone-pad"
+            onChange={setPhone}
+            style={styles.phoneInput}
           />
           <FieldInfo text="Used for urgent account communications only. We will never share your number." />
 
@@ -560,6 +558,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#111',
     backgroundColor: '#fff',
+    marginBottom: spacing.item,
+  },
+  phoneInput: {
     marginBottom: spacing.item,
   },
   passwordRow: {

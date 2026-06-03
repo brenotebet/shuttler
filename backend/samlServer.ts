@@ -928,6 +928,7 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       if (isFounder) {
         await admin.firestore().collection('orgs').doc(orgId).update({
           adminUids: admin.firestore.FieldValue.arrayUnion(authUser.uid),
+          ownerUid: authUser.uid, // locked — never reassigned
           founderEmail: admin.firestore.FieldValue.delete(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
@@ -998,12 +999,37 @@ app.post(
     }
 
     try {
+      // Prevent changing the caller's own role (must ask another admin).
+      const callerUid = (req as any).uid as string;
+      if (uid === callerUid) {
+        return res.status(403).json({ error: 'You cannot change your own role. Ask another admin.' });
+      }
+
+      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+      const ownerUid: string | undefined = orgDoc.data()?.ownerUid;
+
+      // The org owner's role is permanent — no admin can demote them.
+      if (ownerUid && uid === ownerUid) {
+        return res.status(403).json({ error: 'The org owner\'s role cannot be changed.' });
+      }
+
       const userRef = admin.firestore()
         .collection('orgs').doc(orgId)
         .collection('users').doc(uid);
 
       const snap = await userRef.get();
       if (!snap.exists) return res.status(404).json({ error: 'User not found in this org' });
+
+      // Prevent demoting the last admin (would lock everyone out).
+      if (role !== 'admin' && snap.data()?.role === 'admin') {
+        const adminSnap = await admin.firestore()
+          .collection('orgs').doc(orgId).collection('users')
+          .where('role', '==', 'admin')
+          .get();
+        if (adminSnap.size <= 1) {
+          return res.status(403).json({ error: 'Cannot demote the last admin. Promote someone else first.' });
+        }
+      }
 
       await userRef.update({ role, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
       return res.json({ uid, role });
@@ -1023,6 +1049,17 @@ app.delete(
   async (req: Request, res: Response) => {
     const { orgId, uid } = req.params as { orgId: string; uid: string };
     try {
+      const callerUid = (req as any).uid as string;
+      if (uid === callerUid) {
+        return res.status(403).json({ error: 'You cannot remove yourself. Ask another admin.' });
+      }
+
+      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+      const ownerUid: string | undefined = orgDoc.data()?.ownerUid;
+      if (ownerUid && uid === ownerUid) {
+        return res.status(403).json({ error: 'The org owner cannot be removed.' });
+      }
+
       const batch = admin.firestore().batch();
       const userRef = admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid);
       const pubRef = admin.firestore().collection('orgs').doc(orgId).collection('publicUsers').doc(uid);
@@ -1971,13 +2008,17 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
       // New member: create the user doc via Admin SDK (bypasses Firestore security
       // rules, which would otherwise block new users from creating their own doc
       // because orgIsActive() requires existing membership to read the org doc).
+      // Callers may request 'parent' role (phone auth); anything else defaults to 'student'.
+      // 'admin' is never accepted from the client.
+      const { role: requestedRole } = req.body as { role?: string };
+      const role = requestedRole === 'parent' ? 'parent' : 'student';
       isNew = true;
       await userRef.set({
         uid,
         orgId,
         email,
         displayName,
-        role: 'student',
+        role,
         agreedToTermsAt: admin.firestore.FieldValue.serverTimestamp(),
         lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),

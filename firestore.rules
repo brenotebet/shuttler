@@ -39,6 +39,10 @@ service cloud.firestore {
         in ['trialing', 'active', 'past_due'];
     }
 
+    function isOrgOwner(orgId, uid) {
+      return get(/databases/$(database)/documents/orgs/$(orgId)).data.ownerUid == uid;
+    }
+
     // ---------- Public org slug lookup (org selector screen) ----------
     // Anyone (unauthenticated) can list orgs to find their school/venue.
     // Server-side admin SDK writes these — clients cannot.

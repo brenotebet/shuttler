@@ -89,6 +89,7 @@ export type OrgConfig = {
     ne: { latitude: number; longitude: number };
     sw: { latitude: number; longitude: number };
   };
+  ownerUid?: string; // UID of the org creator — role and membership are permanent
   timezone?: string; // IANA timezone name, e.g. "America/Chicago"
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
@@ -250,6 +251,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               primaryColor: data.primaryColor ?? prev.primaryColor,
               authMethod: data.authMethod ?? prev.authMethod,
               allowedEmailDomains: Array.isArray(data.allowedEmailDomains) ? data.allowedEmailDomains : prev.allowedEmailDomains,
+              ownerUid: data.ownerUid ?? prev.ownerUid,
               timezone: data.timezone ?? prev.timezone,
               // Stops & routes
               stops: Array.isArray(data.stops) ? data.stops : prev.stops,
