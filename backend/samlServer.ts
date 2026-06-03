@@ -2171,9 +2171,12 @@ app.post('/ai/monthly-digest', requireInternal, async (_req: Request, res: Respo
 });
 
 app.post('/ai/generate-insights', requireAuth, async (req: Request, res: Response) => {
-  const { orgId, period } = req.body as { orgId?: string; period?: 'weekly' | 'monthly' };
-  if (!orgId || !['weekly', 'monthly'].includes(period ?? '')) {
-    return res.status(400).json({ error: 'orgId and period (weekly|monthly) are required' });
+  // orgId from token claim — never from request body (prevents cross-org access).
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  const { period } = req.body as { period?: 'weekly' | 'monthly' };
+  if (!orgId) return res.status(403).json({ error: 'No org associated with this account' });
+  if (!['weekly', 'monthly'].includes(period ?? '')) {
+    return res.status(400).json({ error: 'period (weekly|monthly) is required' });
   }
   const uid = (req as any).uid as string;
   try {

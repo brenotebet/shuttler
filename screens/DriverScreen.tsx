@@ -250,6 +250,15 @@ export default function DriverScreen() {
     );
   }, [driverId, orgId]);
 
+  // If the selected route was deleted by an admin, clear the stale ID so the
+  // route picker highlights the correct fallback (orgRoutes[0]).
+  useEffect(() => {
+    if (!selectedRouteId) return;
+    if (!orgRoutes.find((r) => r.id === selectedRouteId)) {
+      setSelectedRouteId(null);
+    }
+  }, [orgRoutes, selectedRouteId]);
+
   // Keep the bus doc's routeId field in sync so MapScreen can do route-aware bus matching.
   useEffect(() => {
     if (!driverId || !orgId) return;
@@ -984,9 +993,9 @@ export default function DriverScreen() {
                 }
                 // Check route operating hours before going online
                 const routeToCheck = orgRoutes.find((r) => r.id === (selectedRouteId ?? orgRoutes[0]?.id)) ?? orgRoutes[0] ?? null;
-                if (routeToCheck?.schedule && !isRouteActive(routeToCheck)) {
-                  const todayText = getTodayScheduleText(routeToCheck);
-                  const nextOpen = getNextOpenText(routeToCheck);
+                if (routeToCheck?.schedule && !isRouteActive(routeToCheck, new Date(), org?.timezone)) {
+                  const todayText = getTodayScheduleText(routeToCheck, new Date(), org?.timezone);
+                  const nextOpen = getNextOpenText(routeToCheck, new Date(), org?.timezone);
                   await new Promise<void>((resolve, reject) => {
                     Alert.alert(
                       'Outside Service Hours',

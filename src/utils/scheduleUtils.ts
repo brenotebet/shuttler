@@ -4,8 +4,42 @@ const DAY_KEYS: (keyof WeekSchedule)[] = [
   'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday',
 ];
 
-function getTodayKey(now: Date = new Date()): keyof WeekSchedule {
-  return DAY_KEYS[now.getDay()];
+// Returns the current time expressed in a specific IANA timezone.
+// Falls back to device-local time when timezone is undefined or invalid.
+function getTimeInZone(date: Date, timezone: string): { day: keyof WeekSchedule; minutes: number } {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'long',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    }).formatToParts(date);
+
+    const weekday = (parts.find((p) => p.type === 'weekday')?.value ?? '').toLowerCase() as keyof WeekSchedule;
+    let hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+    if (hour === 24) hour = 0; // midnight edge case in some Intl implementations
+    const minute = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10);
+
+    return { day: weekday, minutes: hour * 60 + minute };
+  } catch {
+    // Invalid timezone string — fall back to device local time
+    return {
+      day: DAY_KEYS[date.getDay()],
+      minutes: date.getHours() * 60 + date.getMinutes(),
+    };
+  }
+}
+
+function getDayAndMinutes(now: Date, timezone?: string): { key: keyof WeekSchedule; cur: number } {
+  if (timezone) {
+    const { day, minutes } = getTimeInZone(now, timezone);
+    return { key: day, cur: minutes };
+  }
+  return {
+    key: DAY_KEYS[now.getDay()],
+    cur: now.getHours() * 60 + now.getMinutes(),
+  };
 }
 
 function toMinutes(hhmm: string): number {
@@ -13,12 +47,15 @@ function toMinutes(hhmm: string): number {
   return h * 60 + m;
 }
 
-export function isRouteActive(route: Route | null | undefined, now: Date = new Date()): boolean {
+export function isRouteActive(
+  route: Route | null | undefined,
+  now: Date = new Date(),
+  timezone?: string,
+): boolean {
   if (!route?.schedule) return true; // no schedule = always active
-  const key = getTodayKey(now);
+  const { key, cur } = getDayAndMinutes(now, timezone);
   const day: DaySchedule = route.schedule[key];
   if (!day.isOpen) return false;
-  const cur = now.getHours() * 60 + now.getMinutes();
   return cur >= toMinutes(day.open) && cur < toMinutes(day.close);
 }
 
@@ -32,22 +69,26 @@ export function formatTime12h(hhmm: string): string {
   return `${h}:${m} ${ampm}`;
 }
 
-export function getNextOpenText(route: Route | null | undefined, now: Date = new Date()): string {
+export function getNextOpenText(
+  route: Route | null | undefined,
+  now: Date = new Date(),
+  timezone?: string,
+): string {
   if (!route?.schedule) return '';
-  const todayIdx = now.getDay(); // 0=Sun
-  // Check rest of today first, then next 7 days
+
+  const { key: todayKey, cur } = getDayAndMinutes(now, timezone);
+  const todayIdx = DAY_KEYS.indexOf(todayKey);
+
   for (let offset = 0; offset < 8; offset++) {
     const dayIdx = (todayIdx + offset) % 7;
     const key = DAY_KEYS[dayIdx];
     const day = route.schedule[key];
     if (!day.isOpen) continue;
     if (offset === 0) {
-      // still today — check if open window is ahead
-      const cur = now.getHours() * 60 + now.getMinutes();
       if (cur < toMinutes(day.open)) {
         return `Opens today at ${formatTime12h(day.open)}`;
       }
-      // already past close — continue to next day
+      // past close for today — continue to next day
       continue;
     }
     const dayName = key.charAt(0).toUpperCase() + key.slice(1);
@@ -56,9 +97,13 @@ export function getNextOpenText(route: Route | null | undefined, now: Date = new
   return 'No upcoming hours found';
 }
 
-export function getTodayScheduleText(route: Route | null | undefined, now: Date = new Date()): string {
+export function getTodayScheduleText(
+  route: Route | null | undefined,
+  now: Date = new Date(),
+  timezone?: string,
+): string {
   if (!route?.schedule) return '';
-  const key = getTodayKey(now);
+  const { key } = getDayAndMinutes(now, timezone);
   const day = route.schedule[key];
   if (!day.isOpen) return 'Closed today';
   return `Today: ${formatTime12h(day.open)} – ${formatTime12h(day.close)}`;

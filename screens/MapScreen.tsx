@@ -265,7 +265,7 @@ export default function MapScreen() {
   const serviceIsOpen = useMemo(() => {
     const scheduled = orgRoutes.filter((r) => r.schedule);
     if (scheduled.length === 0) return true;
-    return scheduled.some((r) => isRouteActive(r));
+    return scheduled.some((r) => isRouteActive(r, new Date(), org?.timezone));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgRoutes, clockTick]);
 
@@ -855,13 +855,23 @@ export default function MapScreen() {
           };
         } = {};
 
+        // Track whether any bus actually moved so we only bump marker tracks
+        // when native view updates are needed (heading/position change).
+        // With multiple buses updating at ~5s intervals, an unconditional bump
+        // would keep forceBusTracks=true almost continuously.
+        let anyBusMoved = visibleBuses.length !== Object.keys(lastCoords.current).length;
+
         visibleBuses.forEach((bus: any) => {
           const { id, latitude, longitude, secondsAgo, timestamp } = bus;
 
           const prev = lastCoords.current[id];
           if (prev) {
+            if (!anyBusMoved && (prev.latitude !== latitude || prev.longitude !== longitude)) {
+              anyBusMoved = true;
+            }
             headings.current[id] = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
           } else {
+            anyBusMoved = true;
             headings.current[id] = 0;
           }
 
@@ -923,9 +933,13 @@ export default function MapScreen() {
         });
 
         const recentIds = visibleBuses.map((b: any) => b.id);
-        setActiveBusIds(recentIds);
+        // Apply same reference-stability pattern as setBusLocations/setBusRouteIds.
+        setActiveBusIds((prev) => {
+          if (prev.length === recentIds.length && prev.every((id, i) => id === recentIds[i])) return prev;
+          return recentIds;
+        });
 
-        bumpBusTracks();
+        if (anyBusMoved) bumpBusTracks();
 
         Object.keys(busRegions.current).forEach((key) => {
           if (!recentIds.includes(key)) delete busRegions.current[key];
@@ -1743,8 +1757,8 @@ const handleRequest = async (entry: RequestableStop) => {
                 <Text style={styles.hoursCardTitle}>Service Closed</Text>
               </View>
               {orgRoutes.filter((r) => r.schedule).map((r) => {
-                const nextOpen = getNextOpenText(r);
-                const todayText = getTodayScheduleText(r);
+                const nextOpen = getNextOpenText(r, new Date(), org?.timezone);
+                const todayText = getTodayScheduleText(r, new Date(), org?.timezone);
                 return (
                   <View key={r.id} style={styles.hoursRouteBlock}>
                     <Text style={[styles.hoursRouteName, { color: primaryColor }]}>{r.name}</Text>
@@ -1911,7 +1925,7 @@ const handleRequest = async (entry: RequestableStop) => {
                   coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
                   anchor={{ x: 0.5, y: 2.4 }}
                   tappable={false}
-                  tracksViewChanges
+                  tracksViewChanges={isSelected || forceBusTracks}
                   zIndex={60}
                 >
                   <View style={styles.onBreakBadge}>
@@ -2013,6 +2027,15 @@ const handleRequest = async (entry: RequestableStop) => {
           >
             <Text style={styles.locationDeniedBtnText}>Enable</Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {org?.subscriptionStatus === 'past_due' && (
+        <View style={styles.pastDueBanner}>
+          <Icon name="warning" size={15} color="#7c2d12" />
+          <Text style={styles.pastDueBannerText}>
+            Service may be interrupted — contact your administrator.
+          </Text>
         </View>
       )}
 
@@ -2382,6 +2405,29 @@ const styles = StyleSheet.create({
   locationText: { fontSize: 16, color: '#333' },
   locationRouteMeta: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
 
+  pastDueBanner: {
+    position: 'absolute',
+    top: 52,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#fef3c7',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    zIndex: 201,
+    maxWidth: '88%',
+  },
+  pastDueBannerText: {
+    fontSize: 13,
+    color: '#7c2d12',
+    fontWeight: '500',
+    flex: 1,
+    flexWrap: 'wrap',
+  },
   locationDeniedBanner: {
     position: 'absolute',
     top: 12,

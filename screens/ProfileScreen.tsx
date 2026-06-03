@@ -90,6 +90,13 @@ export default function ProfileScreen() {
         { displayName: trimmed },
         { merge: true },
       );
+      // Keep the public profile in sync so other users (e.g. students tapping
+      // a bus marker) see the updated name without requiring a driver re-login.
+      await setDoc(
+        doc(db, 'orgs', orgId, 'publicUsers', user.uid),
+        { displayName: trimmed },
+        { merge: true },
+      );
       showAlert('Name updated', 'Saved', 'success');
     } catch {
       showAlert('Failed to update name. Please try again.', 'Error', 'error');

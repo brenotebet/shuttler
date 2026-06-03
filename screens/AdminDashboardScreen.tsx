@@ -1,6 +1,7 @@
 // screens/AdminDashboardScreen.tsx
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -452,6 +453,22 @@ export default function AdminDashboardScreen() {
 
   const handleExportCSV = useCallback(async () => {
     if (!orgId || isExporting) return;
+
+    // All plans include basicExport. If entitlements haven't loaded yet (org
+    // just provisioned), fall back to allowing the export rather than blocking.
+    const canExport = org?.entitlements?.basicExport !== false;
+    if (!canExport) {
+      Alert.alert('Upgrade Required', 'Data export is not available on your current plan. Please upgrade in the Billing tab.');
+      return;
+    }
+
+    // Extended retention (>90 days) requires the dataApi add-on.
+    const extendedRetention = org?.entitlements?.extendedRetention ?? false;
+    const BASIC_DAYS = 90;
+    const cutoffMs = extendedRetention
+      ? 0 // no cutoff — all historical data
+      : Date.now() - BASIC_DAYS * 24 * 60 * 60 * 1000;
+
     setIsExporting(true);
     try {
       const boardingSnap = await getDocs(collection(db, 'orgs', orgId, 'boardingCounts'));
@@ -472,6 +489,8 @@ export default function AdminDashboardScreen() {
         const stopName: string = data.stopName ?? data.stop?.name ?? 'Unknown';
         const createdAtMs: number = data.createdAt?.toMillis?.() ?? 0;
         const createdAtIso: string = data.createdAt?.toDate?.()?.toISOString() ?? '';
+
+        if (cutoffMs > 0 && createdAtMs < cutoffMs) return; // enforce retention window
 
         boardingRows.push([d.id, driverUid, stopName, count, createdAtIso].join(','));
 
@@ -494,13 +513,22 @@ export default function AdminDashboardScreen() {
         .map(([sid, { name, count }]) => [sid, name, count].join(','));
 
       const todayReqRows = reqSnap.docs
-        .filter((d) => ((d.data() as any).createdAt?.toMillis?.() ?? 0) >= todayMs)
+        .filter((d) => {
+          const ms = (d.data() as any).createdAt?.toMillis?.() ?? 0;
+          return ms >= todayMs && (cutoffMs === 0 || ms >= cutoffMs);
+        })
         .map((d) => {
           const data = d.data() as any;
           return [d.id, data.studentEmail ?? '', data.stop?.name ?? '', data.status ?? '', data.createdAt?.toDate?.()?.toISOString() ?? ''].join(',');
         });
 
+      const rangeNote = extendedRetention
+        ? `# Data range: all-time (Data Add-on active)`
+        : `# Data range: last ${BASIC_DAYS} days — upgrade to Data Add-on for full history`;
+
       const csv = [
+        rangeNote,
+        '',
         'BOARDING EVENTS',
         'id,driverUid,stopName,count,createdAt',
         ...boardingRows,
@@ -774,6 +802,11 @@ export default function AdminDashboardScreen() {
             : <Icon name="file-download" size={18} color="#fff" />}
           <Text style={styles.exportBtnText}>{isExporting ? 'Exporting…' : 'Export CSV'}</Text>
         </TouchableOpacity>
+        <Text style={styles.exportHint}>
+          {org?.entitlements?.extendedRetention
+            ? 'Full history export (Data Add-on active)'
+            : 'Last 90 days · Upgrade to Data Add-on for full history'}
+        </Text>
 
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -974,6 +1007,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   exportBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  exportHint: { fontSize: 12, color: '#9ca3af', textAlign: 'center', marginTop: 6, marginBottom: 4 },
 
   // 7-day bar chart
   trendRow: {

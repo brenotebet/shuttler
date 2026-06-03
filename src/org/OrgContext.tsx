@@ -66,6 +66,14 @@ export type BreakSettings = {
   breaksPerShift: number;
 };
 
+export type OrgEntitlements = {
+  aiAssistant: boolean;
+  basicExport: boolean;
+  dataApi: boolean;
+  extendedRetention: boolean;
+  scheduledExports: boolean;
+};
+
 export type OrgConfig = {
   orgId: string;
   name: string;
@@ -81,9 +89,11 @@ export type OrgConfig = {
     ne: { latitude: number; longitude: number };
     sw: { latitude: number; longitude: number };
   };
+  timezone?: string; // IANA timezone name, e.g. "America/Chicago"
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
   dataAddonActive?: boolean;
+  entitlements?: OrgEntitlements;
   approved?: boolean;
   reviewStatus?: 'pending' | 'approved' | 'rejected';
   rejectionReason?: string | null;
@@ -240,6 +250,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               primaryColor: data.primaryColor ?? prev.primaryColor,
               authMethod: data.authMethod ?? prev.authMethod,
               allowedEmailDomains: Array.isArray(data.allowedEmailDomains) ? data.allowedEmailDomains : prev.allowedEmailDomains,
+              timezone: data.timezone ?? prev.timezone,
               // Stops & routes
               stops: Array.isArray(data.stops) ? data.stops : prev.stops,
               routes: Array.isArray(data.routes) ? data.routes : prev.routes,
@@ -252,6 +263,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
               rejectionReason: data.rejectionReason ?? prev.rejectionReason ?? null,
               breakSettings: data.breakSettings ?? prev.breakSettings,
+              entitlements: data.entitlements ?? prev.entitlements,
             };
             writeCachedOrg(updated);
             return updated;

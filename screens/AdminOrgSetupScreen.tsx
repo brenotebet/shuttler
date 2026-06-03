@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -57,6 +58,29 @@ async function getBearerToken(): Promise<string> {
 }
 
 // ---- Profile Tab ----
+
+const COMMON_TIMEZONES: { label: string; value: string }[] = [
+  { label: 'Eastern Time',            value: 'America/New_York' },
+  { label: 'Central Time',            value: 'America/Chicago' },
+  { label: 'Mountain Time',           value: 'America/Denver' },
+  { label: 'Pacific Time',            value: 'America/Los_Angeles' },
+  { label: 'Alaska Time',             value: 'America/Anchorage' },
+  { label: 'Hawaii Time',             value: 'Pacific/Honolulu' },
+  { label: 'Atlantic Time (Canada)',  value: 'America/Halifax' },
+  { label: 'London / GMT',            value: 'Europe/London' },
+  { label: 'Central Europe',          value: 'Europe/Berlin' },
+  { label: 'Eastern Europe',          value: 'Europe/Helsinki' },
+  { label: 'Moscow',                  value: 'Europe/Moscow' },
+  { label: 'India',                   value: 'Asia/Kolkata' },
+  { label: 'China / Singapore',       value: 'Asia/Shanghai' },
+  { label: 'Japan / Korea',           value: 'Asia/Tokyo' },
+  { label: 'Gulf (Dubai)',            value: 'Asia/Dubai' },
+  { label: 'Sydney / Melbourne',      value: 'Australia/Sydney' },
+  { label: 'Perth',                   value: 'Australia/Perth' },
+  { label: 'New Zealand',             value: 'Pacific/Auckland' },
+  { label: 'São Paulo',               value: 'America/Sao_Paulo' },
+  { label: 'Mexico City',             value: 'America/Mexico_City' },
+];
 
 const COLOR_SWATCHES = [
   '#16a34a', // default green
@@ -735,7 +759,17 @@ function StopsTab() {
   const planLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
   const mapRef = useRef<MapView>(null);
   const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
-  const [routes, setRoutes] = useState<Route[]>(org?.routes ?? []);
+  const [routes, _setRoutes] = useState<Route[]>(org?.routes ?? []);
+  // Track whether the admin has unsaved route changes so a background Firestore
+  // snapshot (e.g. Stripe webhook updating subscriptionStatus) doesn't wipe them.
+  const routesDirtyRef = useRef(false);
+  const setRoutes = useCallback(
+    (updater: Route[] | ((prev: Route[]) => Route[])) => {
+      routesDirtyRef.current = true;
+      _setRoutes(updater as any);
+    },
+    [],
+  );
   const [mapCollapsed, setMapCollapsed] = useState(false);
 
   useEffect(() => {
@@ -752,9 +786,19 @@ function StopsTab() {
     return () => { onShow.remove(); onHide.remove(); };
   }, []);
 
-  // Keep local state in sync when org updates via real-time Firestore listener
+  // Default to the device's IANA timezone if the org hasn't saved one yet.
+  const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [timezone, setTimezone] = useState(org?.timezone ?? deviceTimezone);
+  const [showTzPicker, setShowTzPicker] = useState(false);
+  useEffect(() => { setTimezone(org?.timezone ?? deviceTimezone); }, [org?.timezone]);
+
+  // Keep local state in sync when org updates via real-time Firestore listener.
+  // Routes are only synced when the admin has no unsaved changes — a background
+  // snapshot (e.g. Stripe webhook) must not overwrite in-progress edits.
   useEffect(() => { setStops(org?.stops ?? []); }, [org?.stops]);
-  useEffect(() => { setRoutes(org?.routes ?? []); }, [org?.routes]);
+  useEffect(() => {
+    if (!routesDirtyRef.current) _setRoutes(org?.routes ?? []);
+  }, [org?.routes]);
 
   const hasOrgCenter = org?.mapCenter && (org.mapCenter.latitude !== 0 || org.mapCenter.longitude !== 0);
   const [mapCenter, setMapCenter] = useState(
@@ -917,10 +961,12 @@ function StopsTab() {
       await updateDoc(doc(db, 'orgs', org.orgId), {
         stops,
         routes,
+        timezone,
         mapCenter: bounds?.mapCenter ?? mapCenter,
         ...(bounds ? { mapBoundingBox: bounds.mapBoundingBox } : {}),
         updatedAt: serverTimestamp(),
       });
+      routesDirtyRef.current = false;
       await refreshOrg();
       if (isFirstSave && stops.length > 0) {
         navigation.navigate('DriverHome');
@@ -932,7 +978,7 @@ function StopsTab() {
     } finally {
       setIsSaving(false);
     }
-  }, [org, stops, routes, mapCenter, refreshOrg, navigation]);
+  }, [org, stops, routes, timezone, mapCenter, refreshOrg, navigation]);
 
   // Route helpers
   const handleAddRoute = useCallback(() => {
@@ -1198,6 +1244,48 @@ function StopsTab() {
           </View>
         ))}
         {stops.length === 0 && <Text style={styles.hint}>No stops yet. Fill the form above and tap Add Stop.</Text>}
+
+        {/* --- Timezone --- */}
+        <Text style={[styles.sectionLabel, { marginTop: 24 }]}>Timezone</Text>
+        <Text style={styles.hint}>Route schedules are evaluated in this timezone.</Text>
+        <TouchableOpacity
+          style={styles.tzRow}
+          onPress={() => setShowTzPicker(true)}
+          activeOpacity={0.7}
+        >
+          <Icon name="schedule" size={18} color="#6b7280" />
+          <Text style={styles.tzValue}>{timezone}</Text>
+          <Icon name="expand-more" size={20} color="#6b7280" />
+        </TouchableOpacity>
+
+        <Modal visible={showTzPicker} animationType="slide" transparent statusBarTranslucent>
+          <View style={styles.tzModalOverlay}>
+            <View style={styles.tzModalSheet}>
+              <View style={styles.tzModalHeader}>
+                <Text style={styles.tzModalTitle}>Select Timezone</Text>
+                <TouchableOpacity onPress={() => setShowTzPicker(false)}>
+                  <Icon name="close" size={22} color="#374151" />
+                </TouchableOpacity>
+              </View>
+              <FlatList
+                data={COMMON_TIMEZONES}
+                keyExtractor={(item) => item.value}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.tzOption, timezone === item.value && { backgroundColor: '#f0f4ff' }]}
+                    onPress={() => { setTimezone(item.value); setShowTzPicker(false); }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.tzOptionLabel}>{item.label}</Text>
+                      <Text style={styles.tzOptionValue}>{item.value}</Text>
+                    </View>
+                    {timezone === item.value && <Icon name="check" size={18} color="#4f46e5" />}
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          </View>
+        </Modal>
 
         {/* --- Routes section --- */}
         <View style={styles.routesHeader}>
@@ -1874,22 +1962,34 @@ function BillingTab() {
 
       {/* Data Add-on */}
       <Text style={[styles.sectionLabel, { marginTop: 8 }]}>Add-ons</Text>
-      <View style={[styles.planCard, org?.dataAddonActive && styles.planCardActive, org?.dataAddonActive && { borderColor: primaryColor }]}>
-        <View style={styles.planInfo}>
-          <View style={styles.planNameRow}>
-            <Text style={styles.planName}>Data Analytics</Text>
-            {org?.dataAddonActive && <View style={styles.currentBadge}><Text style={styles.currentBadgeText}>Active</Text></View>}
+      {(() => {
+        // Use entitlements as source of truth — enterprise plan also gets dataApi
+        // without the add-on, so checking dataAddonActive alone would mislead them.
+        const dataUnlocked = org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false;
+        return (
+          <View style={[styles.planCard, dataUnlocked && styles.planCardActive, dataUnlocked && { borderColor: primaryColor }]}>
+            <View style={styles.planInfo}>
+              <View style={styles.planNameRow}>
+                <Text style={styles.planName}>Data Analytics</Text>
+                {dataUnlocked && <View style={styles.currentBadge}><Text style={styles.currentBadgeText}>Active</Text></View>}
+              </View>
+              <Text style={[styles.planPrice, { color: primaryColor }]}>$49/mo</Text>
+              <Text style={styles.planDesc}>Full history export · All boarding records · Driver & stop breakdowns</Text>
+              {dataUnlocked && (
+                <Text style={[styles.planDesc, { color: '#2e7d32', marginTop: 4 }]}>
+                  ✓ Unlimited export history · Extended data retention
+                </Text>
+              )}
+            </View>
+            <AppButton
+              label={dataUnlocked ? 'Active' : (isLoading ? '…' : 'Add')}
+              onPress={() => !dataUnlocked && isApproved && openAddonCheckout()}
+              disabled={isLoading || dataUnlocked || !isApproved}
+              style={styles.planButton}
+            />
           </View>
-          <Text style={[styles.planPrice, { color: primaryColor }]}>$49/mo</Text>
-          <Text style={styles.planDesc}>Full raw data access · All boarding records · Driver & stop breakdowns</Text>
-        </View>
-        <AppButton
-          label={org?.dataAddonActive ? 'Active' : (isLoading ? '…' : 'Add')}
-          onPress={() => !org?.dataAddonActive && isApproved && openAddonCheckout()}
-          disabled={isLoading || !!org?.dataAddonActive || !isApproved}
-          style={styles.planButton}
-        />
-      </View>
+        );
+      })()}
 
       {isActive && (
         <AppButton
@@ -2321,6 +2421,67 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#888',
     marginBottom: spacing.item,
+  },
+  tzRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f9fafb',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginBottom: 20,
+  },
+  tzValue: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '500',
+  },
+  tzModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  tzModalSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '75%',
+    paddingBottom: 32,
+  },
+  tzModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 18,
+    borderBottomWidth: 1,
+    borderColor: '#f3f4f6',
+  },
+  tzModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  tzOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderColor: '#f3f4f6',
+  },
+  tzOptionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  tzOptionValue: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 1,
   },
   actionButton: {
     marginTop: spacing.item,

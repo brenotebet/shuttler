@@ -48,14 +48,18 @@ export default function DriverHistoryScreen() {
   const screenWidth = Dimensions.get('window').width;
   const chartWidth = screenWidth - spacing.screenPadding * 2 - spacing.section * 2;
 
-  // Stop requests history
+  // Stop requests history — same 30-day window as driver sessions so both
+  // sections cover the same period and the data is consistent.
   useEffect(() => {
     if (!driverId || !orgId) return;
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     return onSnapshot(
       query(
         collection(db, 'orgs', orgId, 'stopRequests'),
         where('driverUid', '==', driverId),
         where('status', '==', 'completed'),
+        where('completedAt', '>=', thirtyDaysAgo),
         orderBy('completedAt', 'desc'),
       ),
       (snapshot) => setStops(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),

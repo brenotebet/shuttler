@@ -611,7 +611,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       const routeId = currentRouteIdRef.current;
       if (routeId) {
         const route = orgRoutesRef.current.find((r) => r.id === routeId) ?? null;
-        if (route?.schedule && !isRouteActive(route)) {
+        if (route?.schedule && !isRouteActive(route, new Date(), org?.timezone)) {
           Notifications.scheduleNotificationAsync({
             content: {
               title: 'Location Sharing Stopped',
