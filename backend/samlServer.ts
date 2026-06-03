@@ -856,6 +856,14 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Org subscription is not active' });
     }
 
+    // Phone-auth orgs (K-12) use SMS OTP for parents — email registration is
+    // not available. Admins sign in with existing email accounts, not new ones.
+    if (org.authMethod === 'phone') {
+      return res.status(403).json({
+        error: 'This organization uses phone sign-in. Please use the phone sign-in option to access the app.',
+      });
+    }
+
     // Enforce allowed email domains if the org has configured them.
     const allowedDomains: string[] = org.allowedEmailDomains ?? [];
     if (allowedDomains.length > 0) {

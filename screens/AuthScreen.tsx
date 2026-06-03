@@ -227,7 +227,7 @@ function PasswordInput({
   );
 }
 
-function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: string; initialEmail?: string }) {
+function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: string; orgId: string; initialEmail?: string; adminOnly?: boolean }) {
   const { org } = useOrg();
   const { primaryColor } = useOrgTheme();
   const [mode, setMode] = useState<'signin' | 'signup'>(initialEmail ? 'signup' : 'signin');
@@ -562,7 +562,12 @@ function EmailPanel({ orgSlug, orgId, initialEmail }: { orgSlug: string; orgId: 
   return (
     <View style={styles.card}>
       <ErrorBanner message={formError} onDismiss={() => setFormError(null)} />
-      {initialEmail ? (
+      {adminOnly ? (
+        <View style={styles.founderBanner}>
+          <Icon name="admin-panel-settings" size={18} color="#1d4ed8" />
+          <Text style={styles.founderBannerText}>Admin sign-in only — parents use phone sign-in</Text>
+        </View>
+      ) : initialEmail ? (
         <View style={styles.founderBanner}>
           <Icon name="admin-panel-settings" size={18} color="#1d4ed8" />
           <Text style={styles.founderBannerText}>
@@ -915,7 +920,7 @@ export default function AuthScreen() {
     if (org.authMethod === 'phone' && adminOverride) {
       return (
         <>
-          <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} />
+          <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} adminOnly />
           <TouchableOpacity onPress={() => setAdminOverride(false)} style={styles.adminOverrideLink}>
             <Text style={[styles.adminOverrideLinkText, { color: primaryColor }]}>← Back to phone sign-in</Text>
           </TouchableOpacity>
@@ -935,7 +940,7 @@ export default function AuthScreen() {
           <>
             <PhonePanel orgId={org.orgId} />
             <TouchableOpacity onPress={() => setAdminOverride(true)} style={styles.adminOverrideLink}>
-              <Text style={[styles.adminOverrideLinkText, { color: primaryColor }]}>Admin? Sign in with email →</Text>
+              <Text style={styles.adminOverrideLinkText}>Admin sign-in</Text>
             </TouchableOpacity>
           </>
         );
@@ -1283,11 +1288,11 @@ const styles = StyleSheet.create({
   },
   adminOverrideLink: {
     alignSelf: 'center',
-    paddingVertical: 12,
+    paddingVertical: 16,
   },
   adminOverrideLinkText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    color: '#9ca3af',
   },
   socialDisclaimer: {
     fontSize: 11,

@@ -25,6 +25,7 @@ import AdminChatScreen from '../screens/AdminChatScreen';
 import AdminAnalyticsScreen from '../screens/AdminAnalyticsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import LegalScreen from '../screens/LegalScreen';
+import AccessibilityScreen from '../screens/AccessibilityScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -47,12 +48,13 @@ export type RootStackParamList = {
   DriverHistory: undefined;
   AdminDriver: undefined;
   AdminDashboard: undefined;
-  AdminOrgSetup: undefined;
+  AdminOrgSetup: { initialTab?: 'billing' } | undefined;
   AdminAnalytics: undefined;
   AdminChat: undefined;
   Profile: undefined;
   HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent'; isOnboarding?: boolean };
   Legal: undefined;
+  Accessibility: undefined;
 
   SubscriptionExpired: undefined;
 };
@@ -179,6 +181,7 @@ export default function StackNavigator() {
           <Stack.Screen name="AdminChat" component={AdminChatScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           <Stack.Screen name="Legal" component={LegalScreen} />
+          <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
         </Stack.Navigator>
       );
     }
@@ -198,6 +201,7 @@ export default function StackNavigator() {
             <Stack.Screen name="AdminChat" component={AdminChatScreen} />
             <Stack.Screen name="HowToUse" component={HowToUseScreen} />
             <Stack.Screen name="Legal" component={LegalScreen} />
+            <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
           </Stack.Navigator>
         );
       }
@@ -213,6 +217,7 @@ export default function StackNavigator() {
           <Stack.Screen name="AdminChat" component={AdminChatScreen} />
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           <Stack.Screen name="Legal" component={LegalScreen} />
+          <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
         </Stack.Navigator>
       );
     }
@@ -227,6 +232,7 @@ export default function StackNavigator() {
         <Stack.Screen name="AdminChat" component={AdminChatScreen} />
         <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         <Stack.Screen name="Legal" component={LegalScreen} />
+        <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
       </Stack.Navigator>
     );
   };

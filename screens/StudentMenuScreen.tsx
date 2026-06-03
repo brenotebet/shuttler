@@ -14,6 +14,7 @@ import { clearSamlSession } from '../src/auth/samlAuth';
 import { useAuth } from '../src/auth/AuthProvider';
 import { spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { FEEDBACK_ENABLED_KEY } from '../src/components/PickupConfirmModal';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
@@ -23,6 +24,7 @@ export default function StudentMenuScreen() {
   const { primaryColor } = useOrgTheme();
   const isParent = role === 'parent';
   const firstName = displayName?.split(' ')[0] ?? null;
+  const { fontScale } = useAccessibility();
   const [feedbackEnabled, setFeedbackEnabled] = useState(true);
 
   useEffect(() => {
@@ -64,10 +66,10 @@ export default function StudentMenuScreen() {
       >
       <View style={styles.hero}>
         {firstName ? (
-          <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
+          <Text style={[styles.greeting, { fontSize: 14 * fontScale }]}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={[styles.title, { color: primaryColor }]}>{isParent ? 'Parent Center' : 'Rider Center'}</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: primaryColor, fontSize: 28 * fontScale }]}>{isParent ? 'Parent Center' : 'Rider Center'}</Text>
+        <Text style={[styles.subtitle, { fontSize: 15 * fontScale }]}>
           {isParent ? 'Track your child\'s shuttle' : 'Manage your rides and profile'}
         </Text>
       </View>
@@ -115,6 +117,13 @@ export default function StudentMenuScreen() {
             thumbColor={feedbackEnabled ? primaryColor : '#9ca3af'}
           />
         </View>
+
+        <MenuItem
+          icon="accessibility"
+          title="Accessibility"
+          description="Adjust text size and motion preferences"
+          onPress={() => navigation.navigate('Accessibility')}
+        />
 
         <MenuItem
           icon="gavel"

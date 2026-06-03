@@ -12,6 +12,7 @@ import { DriverProvider } from './drivercontext/DriverContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/auth/AuthProvider';
 import { OrgProvider } from './src/org/OrgContext';
+import { AccessibilityProvider } from './src/contexts/AccessibilityContext';
 import { usePushToken } from './src/hooks/usePushToken';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -88,6 +89,7 @@ export default function App() {
     <ErrorBoundary>
       <StripeProvider publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ''}>
         <SafeAreaProvider>
+          <AccessibilityProvider>
           <OrgProvider>
             <AuthProvider>
               <PushTokenRegistrar />
@@ -100,6 +102,7 @@ export default function App() {
               </DriverProvider>
             </AuthProvider>
           </OrgProvider>
+          </AccessibilityProvider>
         </SafeAreaProvider>
       </StripeProvider>
     </ErrorBoundary>

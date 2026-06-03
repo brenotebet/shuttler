@@ -10,6 +10,7 @@ import { useDriver } from '../drivercontext/DriverContext';
 import { useLocationSharing } from '../location/LocationContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
+import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import { clearSamlSession } from '../src/auth/samlAuth';
@@ -29,6 +30,7 @@ export default function DriverMenuScreen() {
   const { role, displayName } = useAuth();
   const firstName = displayName?.split(' ')[0] ?? null;
   const { org } = useOrg();
+  const { fontScale } = useAccessibility();
   const needsSetup = role === 'admin' && (org?.stops?.length ?? 0) === 0;
 
   const handleLogout = () => {
@@ -73,12 +75,12 @@ export default function DriverMenuScreen() {
       >
       <View style={styles.hero}>
         {firstName ? (
-          <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
+          <Text style={[styles.greeting, { fontSize: 14 * fontScale }]}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={[styles.title, { color: primaryColor }]}>
+        <Text style={[styles.title, { color: primaryColor, fontSize: 28 * fontScale }]}>
           {role === 'admin' ? 'Admin Hub' : 'Driver Hub'}
         </Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.subtitle, { fontSize: 15 * fontScale }]}>
           {role === 'admin' ? 'Manage your org and operations' : 'Stay on top of requests and routes'}
         </Text>
       </View>
@@ -131,16 +133,32 @@ export default function DriverMenuScreen() {
 
         {role === 'admin' && (
           <MenuItem
+            icon="credit-card"
+            title="Billing & Plan"
+            description="Manage your subscription, plan limits, and add-ons"
+            onPress={() => navigation.navigate('AdminOrgSetup', { initialTab: 'billing' })}
+          />
+        )}
+
+        {role === 'admin' && (
+          <MenuItem
             icon="settings"
             title="Org Setup"
             description={
               needsSetup
                 ? 'No stops configured yet — tap to get started'
-                : 'Manage stops, routes, users and billing'
+                : 'Manage stops, routes, and users'
             }
             onPress={() => navigation.navigate('AdminOrgSetup')}
           />
         )}
+
+        <MenuItem
+          icon="accessibility"
+          title="Accessibility"
+          description="Adjust text size and motion preferences"
+          onPress={() => navigation.navigate('Accessibility')}
+        />
 
         <MenuItem
           icon="help-outline"

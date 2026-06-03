@@ -984,9 +984,16 @@ export default function DriverScreen() {
                     return (now - tsMs) / 1000 < STALE_WINDOW_SECONDS;
                   }).length;
                   if (otherOnline >= limits.maxVehicles) {
-                    showAlert(
-                      `Your ${limits.label} plan allows up to ${limits.maxVehicles} vehicles online at once. Upgrade to Campus to add more.`,
+                    Alert.alert(
                       'Vehicle limit reached',
+                      `Your ${limits.label} plan allows up to ${limits.maxVehicles} vehicles online at once. Upgrade your plan to put more vehicles on the road.`,
+                      [
+                        {
+                          text: 'Manage Billing',
+                          onPress: () => navigation.navigate('AdminOrgSetup', { initialTab: 'billing' }),
+                        },
+                        { text: 'OK', style: 'cancel' },
+                      ],
                     );
                     return;
                   }

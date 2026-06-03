@@ -1,13 +1,13 @@
 // src/components/PickupConfirmModal.tsx
 import React, { useState, useMemo } from 'react';
 import {
-  Modal,
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import BottomSheet from '../../components/BottomSheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { addDoc, collection, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
@@ -143,14 +143,7 @@ export default function PickupConfirmModal({
   const canSubmit = question.type === 'stars' ? selectedRating !== null : selectedOption !== null;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      statusBarTranslucent
-    >
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
+    <BottomSheet visible={visible} onClose={() => {}} sheetStyle={styles.sheet}>
           {/* Handle */}
           <View style={styles.handle} />
 
@@ -255,22 +248,12 @@ export default function PickupConfirmModal({
               </View>
             </>
           )}
-        </View>
-      </View>
-    </Modal>
+    </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
   sheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
     padding: 28,
     paddingBottom: 44,
     alignItems: 'center',

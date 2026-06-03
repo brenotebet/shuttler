@@ -4,7 +4,8 @@
 // Tabs: Org Profile | Auth Settings | Stop Configuration | Billing
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { RootStackParamList } from '../navigation/StackNavigator';
 import {
   ActivityIndicator,
   Alert,
@@ -45,6 +46,7 @@ import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { getPlanLimits, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
+import BottomSheet from '../components/BottomSheet';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
@@ -489,24 +491,25 @@ function ScheduleEditor({
         );
       })}
 
-      <Modal visible={pickerVisible} transparent animationType="slide" onRequestClose={() => setPickerVisible(false)}>
-        <TouchableOpacity style={hoursStyles.modalOverlay} activeOpacity={1} onPress={() => setPickerVisible(false)} />
-        <View style={hoursStyles.pickerSheet}>
-          <View style={hoursStyles.pickerBar}>
-            <TouchableOpacity onPress={() => setPickerVisible(false)}>
-              <Text style={hoursStyles.pickerCancel}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={confirmPicker}>
-              <Text style={[hoursStyles.pickerDone, { color: primaryColor }]}>Done</Text>
-            </TouchableOpacity>
-          </View>
-          <Picker selectedValue={pickerTemp} onValueChange={(v) => setPickerTemp(v as string)}>
-            {TIME_SLOTS.map((slot) => (
-              <Picker.Item key={slot} label={fmt12h(slot)} value={slot} />
-            ))}
-          </Picker>
+      <BottomSheet
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        sheetStyle={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 24 }}
+      >
+        <View style={hoursStyles.pickerBar}>
+          <TouchableOpacity onPress={() => setPickerVisible(false)}>
+            <Text style={hoursStyles.pickerCancel}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={confirmPicker}>
+            <Text style={[hoursStyles.pickerDone, { color: primaryColor }]}>Done</Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
+        <Picker selectedValue={pickerTemp} onValueChange={(v) => setPickerTemp(v as string)}>
+          {TIME_SLOTS.map((slot) => (
+            <Picker.Item key={slot} label={fmt12h(slot)} value={slot} />
+          ))}
+        </Picker>
+      </BottomSheet>
     </View>
   );
 }
@@ -530,16 +533,6 @@ const hoursStyles = StyleSheet.create({
   },
   timeBtnText: { fontSize: 13, fontWeight: '600', color: '#111' },
   closedLabel: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  pickerSheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingBottom: 24,
-  },
   pickerBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -752,7 +745,7 @@ function calcBoundsFromStops(stops: Stop[]) {
   };
 }
 
-function StopsTab() {
+function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   const { org, refreshOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
   const navigation = useNavigation<any>();
@@ -920,7 +913,14 @@ function StopsTab() {
       return;
     }
     if (stops.length >= planLimits.maxStops) {
-      showToast(`Stop limit reached. Your ${planLimits.label} plan allows ${stopLimitText(planLimits)}. Upgrade to Campus for unlimited stops.`, 'error');
+      Alert.alert(
+        'Stop limit reached',
+        `Your ${planLimits.label} plan includes ${stopLimitText(planLimits)}. Upgrade your plan to add more stops.`,
+        [
+          { text: 'Manage Billing', onPress: onGoToBilling },
+          { text: 'OK', style: 'cancel' },
+        ],
+      );
       return;
     }
     const newStop: Stop = {
@@ -984,7 +984,14 @@ function StopsTab() {
   const handleAddRoute = useCallback(() => {
     if (!newRouteName.trim()) return;
     if (routes.length >= planLimits.maxRoutes) {
-      showToast(`Route limit reached. Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}. Upgrade to Campus for unlimited routes.`, 'error');
+      Alert.alert(
+        'Route limit reached',
+        `Your ${planLimits.label} plan includes ${routeLimitText(planLimits)}. Upgrade your plan to add more routes.`,
+        [
+          { text: 'Manage Billing', onPress: onGoToBilling },
+          { text: 'OK', style: 'cancel' },
+        ],
+      );
       return;
     }
     setRoutes((prev) => [
@@ -1258,34 +1265,34 @@ function StopsTab() {
           <Icon name="expand-more" size={20} color="#6b7280" />
         </TouchableOpacity>
 
-        <Modal visible={showTzPicker} animationType="slide" transparent statusBarTranslucent>
-          <View style={styles.tzModalOverlay}>
-            <View style={styles.tzModalSheet}>
-              <View style={styles.tzModalHeader}>
-                <Text style={styles.tzModalTitle}>Select Timezone</Text>
-                <TouchableOpacity onPress={() => setShowTzPicker(false)}>
-                  <Icon name="close" size={22} color="#374151" />
-                </TouchableOpacity>
-              </View>
-              <FlatList
-                data={COMMON_TIMEZONES}
-                keyExtractor={(item) => item.value}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={[styles.tzOption, timezone === item.value && { backgroundColor: '#f0f4ff' }]}
-                    onPress={() => { setTimezone(item.value); setShowTzPicker(false); }}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.tzOptionLabel}>{item.label}</Text>
-                      <Text style={styles.tzOptionValue}>{item.value}</Text>
-                    </View>
-                    {timezone === item.value && <Icon name="check" size={18} color="#4f46e5" />}
-                  </TouchableOpacity>
-                )}
-              />
-            </View>
+        <BottomSheet
+          visible={showTzPicker}
+          onClose={() => setShowTzPicker(false)}
+          sheetStyle={{ paddingHorizontal: 0, paddingBottom: 32, maxHeight: '75%' }}
+        >
+          <View style={styles.tzModalHeader}>
+            <Text style={styles.tzModalTitle}>Select Timezone</Text>
+            <TouchableOpacity onPress={() => setShowTzPicker(false)}>
+              <Icon name="close" size={22} color="#374151" />
+            </TouchableOpacity>
           </View>
-        </Modal>
+          <FlatList
+            data={COMMON_TIMEZONES}
+            keyExtractor={(item) => item.value}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[styles.tzOption, timezone === item.value && { backgroundColor: '#f0f4ff' }]}
+                onPress={() => { setTimezone(item.value); setShowTzPicker(false); }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tzOptionLabel}>{item.label}</Text>
+                  <Text style={styles.tzOptionValue}>{item.value}</Text>
+                </View>
+                {timezone === item.value && <Icon name="check" size={18} color="#4f46e5" />}
+              </TouchableOpacity>
+            )}
+          />
+        </BottomSheet>
 
         {/* --- Routes section --- */}
         <View style={styles.routesHeader}>
@@ -1296,7 +1303,14 @@ function StopsTab() {
           <TouchableOpacity
             onPress={() => {
               if (routes.length >= planLimits.maxRoutes) {
-                showToast(`Route limit reached. Your ${planLimits.label} plan allows ${routeLimitText(planLimits)}.`, 'error');
+                Alert.alert(
+                  'Route limit reached',
+                  `Your ${planLimits.label} plan includes ${routeLimitText(planLimits)}. Upgrade your plan to add more routes.`,
+                  [
+                    { text: 'Manage Billing', onPress: onGoToBilling },
+                    { text: 'OK', style: 'cancel' },
+                  ],
+                );
                 return;
               }
               setShowRouteForm(true);
@@ -1418,7 +1432,7 @@ type OrgMember = {
   uid: string;
   email: string;
   displayName?: string;
-  role: 'student' | 'driver' | 'admin';
+  role: 'student' | 'driver' | 'admin' | 'parent';
   defaultRouteId?: string | null;
 };
 
@@ -1446,6 +1460,9 @@ function UsersTab() {
   // uid → defaultRouteId currently saved in Firestore for drivers
   const [driverDefaults, setDriverDefaults] = useState<Record<string, string | null>>({});
   const [savingRoute, setSavingRoute] = useState<string | null>(null);
+  const [rolePickerTarget, setRolePickerTarget] = useState<OrgMember | null>(null);
+  const [routePickerTarget, setRoutePickerTarget] = useState<OrgMember | null>(null);
+  const [search, setSearch] = useState('');
 
   const orgRoutes = org?.routes ?? [];
 
@@ -1488,21 +1505,9 @@ function UsersTab() {
   const handleAssignRoute = useCallback(
     (member: OrgMember) => {
       if (!org || orgRoutes.length === 0) return;
-      const current = driverDefaults[member.uid] ?? null;
-      Alert.alert(
-        `Assign default route`,
-        `${member.displayName ?? member.email}`,
-        [
-          ...orgRoutes.map((r) => ({
-            text: r.id === current ? `✓ ${r.name}` : r.name,
-            onPress: () => saveDefaultRoute(member.uid, r.id),
-          })),
-          { text: 'Clear assignment', onPress: () => saveDefaultRoute(member.uid, null) },
-          { text: 'Cancel', style: 'cancel' as const },
-        ],
-      );
+      setRoutePickerTarget(member);
     },
-    [org, orgRoutes, driverDefaults],
+    [org, orgRoutes],
   );
 
   const saveDefaultRoute = useCallback(
@@ -1536,16 +1541,7 @@ function UsersTab() {
         showToast('The org owner\'s role cannot be changed.', 'error');
         return;
       }
-      Alert.alert(
-        `Change role for ${member.displayName ?? member.email}`,
-        `Current role: ${ROLE_LABELS[member.role]}`,
-        [
-          { text: 'Student', onPress: () => applyRole(member.uid, 'student') },
-          { text: 'Driver', onPress: () => applyRole(member.uid, 'driver') },
-          { text: 'Admin', onPress: () => applyRole(member.uid, 'admin') },
-          { text: 'Cancel', style: 'cancel' },
-        ],
-      );
+      setRolePickerTarget(member);
     },
     [org, currentUser?.uid],
   );
@@ -1629,6 +1625,15 @@ function UsersTab() {
 
   const orgSlug = org?.slug ?? org?.orgId ?? '';
 
+  const searchQuery = search.trim().toLowerCase();
+  const filteredMembers = searchQuery
+    ? members.filter(
+        (m) =>
+          (m.displayName ?? '').toLowerCase().includes(searchQuery) ||
+          m.email.toLowerCase().includes(searchQuery),
+      )
+    : members;
+
   const handleShareInvite = () => {
     Share.share({
       message: `Join ${org?.name ?? 'our shuttle'} on Shuttler!\n\nOpen the Shuttler app, search for "${org?.name ?? orgSlug}", and sign up. Organization ID: ${orgSlug}`,
@@ -1636,6 +1641,7 @@ function UsersTab() {
   };
 
   return (
+    <>
     <ScrollView contentContainerStyle={styles.tabContent}>
       {/* Invite card */}
       <TouchableOpacity style={[usersStyles.inviteCard, { backgroundColor: `${primaryColor}0d`, borderColor: `${primaryColor}30` }]} onPress={handleShareInvite} activeOpacity={0.8}>
@@ -1659,7 +1665,27 @@ function UsersTab() {
         <Text style={styles.hint}>No members yet — share your org ID above so people can find you.</Text>
       )}
 
-      {members.map((member) => {
+      {members.length > 0 && (
+        <View style={[newStopStyles.searchRow, { marginBottom: 4 }]}>
+          <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 8 }} />
+          <TextInput
+            style={newStopStyles.searchInput}
+            placeholder="Search by name or email…"
+            placeholderTextColor="#9ca3af"
+            value={search}
+            onChangeText={setSearch}
+            autoCorrect={false}
+            autoCapitalize="none"
+            clearButtonMode="while-editing"
+          />
+        </View>
+      )}
+
+      {filteredMembers.length === 0 && search.trim() !== '' && (
+        <Text style={styles.hint}>No members match "{search.trim()}".</Text>
+      )}
+
+      {filteredMembers.map((member) => {
         const isDriver = member.role === 'driver' || member.role === 'admin';
         const assignedRouteId = driverDefaults[member.uid] ?? null;
         const assignedRoute = assignedRouteId ? orgRoutes.find((r) => r.id === assignedRouteId) : null;
@@ -1725,6 +1751,91 @@ function UsersTab() {
         );
       })}
     </ScrollView>
+
+    {/* Role Picker Sheet */}
+    <BottomSheet visible={rolePickerTarget !== null} onClose={() => setRolePickerTarget(null)}>
+      <View style={pickerSheetStyles.handle} />
+      <Text style={pickerSheetStyles.title} numberOfLines={1}>
+        {rolePickerTarget?.displayName ?? rolePickerTarget?.email}
+      </Text>
+      <Text style={pickerSheetStyles.subtitle}>Select a role</Text>
+      {(['student', 'driver', 'parent', 'admin'] as const).map((role) => {
+        const color = role === 'admin' ? primaryColor : ROLE_COLORS[role];
+        const isCurrent = rolePickerTarget?.role === role;
+        return (
+          <TouchableOpacity
+            key={role}
+            style={pickerSheetStyles.option}
+            onPress={() => {
+              applyRole(rolePickerTarget!.uid, role);
+              setRolePickerTarget(null);
+            }}
+          >
+            <View style={[pickerSheetStyles.roleCircle, { backgroundColor: `${color}18` }]}>
+              <Text style={[pickerSheetStyles.roleCircleText, { color }]}>
+                {ROLE_LABELS[role].charAt(0)}
+              </Text>
+            </View>
+            <Text style={[pickerSheetStyles.optionLabel, isCurrent && pickerSheetStyles.optionLabelActive]}>
+              {ROLE_LABELS[role]}
+            </Text>
+            {isCurrent && <Icon name="check" size={18} color={primaryColor} />}
+          </TouchableOpacity>
+        );
+      })}
+      <TouchableOpacity style={pickerSheetStyles.cancelBtn} onPress={() => setRolePickerTarget(null)}>
+        <Text style={pickerSheetStyles.cancelText}>Cancel</Text>
+      </TouchableOpacity>
+    </BottomSheet>
+
+    {/* Route Picker Sheet */}
+    <BottomSheet visible={routePickerTarget !== null} onClose={() => setRoutePickerTarget(null)}>
+      <View style={pickerSheetStyles.handle} />
+      <Text style={pickerSheetStyles.title} numberOfLines={1}>
+        {routePickerTarget?.displayName ?? routePickerTarget?.email}
+      </Text>
+      <Text style={pickerSheetStyles.subtitle}>Assign a default route</Text>
+      <TouchableOpacity
+        style={pickerSheetStyles.option}
+        onPress={() => {
+          saveDefaultRoute(routePickerTarget!.uid, null);
+          setRoutePickerTarget(null);
+        }}
+      >
+        <View style={[pickerSheetStyles.roleCircle, { backgroundColor: '#f3f4f6' }]}>
+          <Icon name="remove" size={14} color="#9ca3af" />
+        </View>
+        <Text style={[pickerSheetStyles.optionLabel, !driverDefaults[routePickerTarget?.uid ?? ''] && pickerSheetStyles.optionLabelActive]}>
+          No default route
+        </Text>
+        {!driverDefaults[routePickerTarget?.uid ?? ''] && <Icon name="check" size={18} color={primaryColor} />}
+      </TouchableOpacity>
+      {orgRoutes.map((route) => {
+        const isAssigned = driverDefaults[routePickerTarget?.uid ?? ''] === route.id;
+        return (
+          <TouchableOpacity
+            key={route.id}
+            style={pickerSheetStyles.option}
+            onPress={() => {
+              saveDefaultRoute(routePickerTarget!.uid, route.id);
+              setRoutePickerTarget(null);
+            }}
+          >
+            <View style={[pickerSheetStyles.roleCircle, { backgroundColor: `${primaryColor}15` }]}>
+              <Icon name="directions-bus" size={14} color={primaryColor} />
+            </View>
+            <Text style={[pickerSheetStyles.optionLabel, isAssigned && pickerSheetStyles.optionLabelActive]} numberOfLines={1}>
+              {route.name}
+            </Text>
+            {isAssigned && <Icon name="check" size={18} color={primaryColor} />}
+          </TouchableOpacity>
+        );
+      })}
+      <TouchableOpacity style={pickerSheetStyles.cancelBtn} onPress={() => setRoutePickerTarget(null)}>
+        <Text style={pickerSheetStyles.cancelText}>Cancel</Text>
+      </TouchableOpacity>
+    </BottomSheet>
+    </>
   );
 }
 
@@ -1797,6 +1908,70 @@ const usersStyles = StyleSheet.create({
   },
   removeDisabled: {
     opacity: 0.3,
+  },
+});
+
+const pickerSheetStyles = StyleSheet.create({
+  handle: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  optionLabel: {
+    flex: 1,
+    fontSize: 15,
+    color: '#374151',
+  },
+  optionLabelActive: {
+    fontWeight: '700',
+    color: '#111',
+  },
+  roleCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roleCircleText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  cancelBtn: {
+    marginTop: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#f3f4f6',
+    borderRadius: 12,
+  },
+  cancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
   },
 });
 
@@ -2209,11 +2384,12 @@ const opsStyles = StyleSheet.create({
 
 export default function AdminOrgSetupScreen() {
   const navigation = useNavigation();
+  const route = useRoute<RouteProp<RootStackParamList, 'AdminOrgSetup'>>();
   const { org: setupOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
   useFirstLoginOnboarding();
   const [activeTab, setActiveTab] = useState<Tab>(
-    (setupOrg?.stops?.length ?? 0) === 0 ? 'stops' : 'profile',
+    route.params?.initialTab ?? ((setupOrg?.stops?.length ?? 0) === 0 ? 'stops' : 'profile'),
   );
 
   const tabs: { key: Tab; icon: string; label: string }[] = [
@@ -2283,7 +2459,7 @@ export default function AdminOrgSetupScreen() {
       >
         {activeTab === 'profile' && <ProfileTab />}
         {activeTab === 'auth' && <AuthTab />}
-        {activeTab === 'stops' && <StopsTab />}
+        {activeTab === 'stops' && <StopsTab onGoToBilling={() => setActiveTab('billing')} />}
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'ops' && <OperationsTab />}
         {activeTab === 'billing' && <BillingTab />}
@@ -2487,18 +2663,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#111827',
     fontWeight: '500',
-  },
-  tzModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
-  tzModalSheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '75%',
-    paddingBottom: 32,
   },
   tzModalHeader: {
     flexDirection: 'row',
