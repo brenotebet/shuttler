@@ -2,15 +2,8 @@
 // Visible only to users with the superAdmin Firebase custom claim.
 // Lists pending org applications and allows approving or rejecting them.
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, FlatList, StyleSheet, TouchableOpacity, View } from 'react-native'
+import { Text } from '../components/Text';
 import { auth } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';

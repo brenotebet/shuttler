@@ -1,7 +1,8 @@
 // src/screens/AdminDriverScreen.tsx
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Text, FlatList, StyleSheet, ActivityIndicator, View } from 'react-native';
+import { FlatList, StyleSheet, ActivityIndicator, View } from 'react-native'
+import { Text } from '../components/Text';
 import { db } from '../firebase/firebaseconfig';
 import {
   collection,

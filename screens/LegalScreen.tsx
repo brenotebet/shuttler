@@ -1,7 +1,8 @@
 // screens/LegalScreen.tsx
 
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, TouchableOpacity } from 'react-native'
+import { Text } from '../components/Text';
 import * as Linking from 'expo-linking';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import ScreenContainer from '../components/ScreenContainer';

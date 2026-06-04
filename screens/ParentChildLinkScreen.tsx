@@ -6,16 +6,8 @@
 // The parent selects a child when requesting a stop on MapScreen.
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native'
+import { Text } from '../components/Text';
 import {
   addDoc,
   collection,

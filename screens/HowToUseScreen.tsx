@@ -5,15 +5,8 @@
 // RootStack so users can revisit it at any time.
 
 import React, { useRef, useState } from 'react';
-import {
-  Dimensions,
-  FlatList,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Dimensions, FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native'
+import { Text } from '../components/Text';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';

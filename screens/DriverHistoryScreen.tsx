@@ -1,7 +1,8 @@
 // src/screens/DriverHistoryScreen.tsx
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Dimensions } from 'react-native';
+import { View, FlatList, StyleSheet, Dimensions } from 'react-native'
+import { Text } from '../components/Text';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { CARD_BACKGROUND } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';

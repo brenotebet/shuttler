@@ -1,21 +1,8 @@
 // src/screens/MapScreen.tsx
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ActivityIndicator,
-  TouchableOpacity,
-  Animated,
-  Image,
-  FlatList,
-  TouchableWithoutFeedback,
-  Dimensions,
-  Alert,
-  Modal,
-  Linking,
-} from 'react-native';
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Image, FlatList, TouchableWithoutFeedback, Dimensions, Alert, Modal, Linking } from 'react-native'
+import { Text } from '../components/Text';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 import MapView, {

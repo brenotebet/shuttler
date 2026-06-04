@@ -1,7 +1,8 @@
 // src/screens/StudentHistoryScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet } from 'react-native';
+import { View, FlatList, StyleSheet } from 'react-native'
+import { Text } from '../components/Text';
 import { auth, db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';

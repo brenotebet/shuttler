@@ -1,12 +1,7 @@
 // src/components/PickupConfirmModal.tsx
 import React, { useState, useMemo } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-} from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
+import { Text } from '../../components/Text';
 import BottomSheet from '../../components/BottomSheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';

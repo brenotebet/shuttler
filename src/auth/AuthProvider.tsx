@@ -18,6 +18,8 @@ type AuthContextType = {
   role: Role | null;
   orgId: string | null;
   displayName: string | null;
+  phone: string | null;
+  phoneVerified: boolean;
   initializing: boolean;
   signingOut: boolean;
   emailVerified: boolean;
@@ -30,6 +32,8 @@ const AuthContext = createContext<AuthContextType>({
   role: null,
   orgId: null,
   displayName: null,
+  phone: null,
+  phoneVerified: false,
   initializing: true,
   signingOut: false,
   emailVerified: false,
@@ -43,6 +47,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [claimedOrgId, setClaimedOrgId] = useState<string | null>(null);
   const [role, setRole] = useState<Role | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
+  const [phone, setPhone] = useState<string | null>(null);
+  const [phoneVerified, setPhoneVerified] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
@@ -112,6 +118,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (snap.exists()) {
           setRole(normalizeRole(snap.data()?.role));
           setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
+          setPhone(snap.data()?.phone ?? null);
+          setPhoneVerified(snap.data()?.phoneVerified === true);
         } else {
           if (isSocialSignInPending()) {
             // A social sign-in is in progress — the user doc is being created
@@ -149,7 +157,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const orgId = org?.orgId ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, role, orgId, displayName, initializing, signingOut, emailVerified, isSuperAdmin, reloadUser }}>
+    <AuthContext.Provider value={{ user, role, orgId, displayName, phone, phoneVerified, initializing, signingOut, emailVerified, isSuperAdmin, reloadUser }}>
       {children}
     </AuthContext.Provider>
   );

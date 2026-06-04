@@ -4,18 +4,8 @@
 // POST /orgs/create, then lands the founder on AuthScreen to register.
 
 import React, { useCallback, useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  LayoutAnimation,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, KeyboardAvoidingView, LayoutAnimation, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native'
+import { Text } from '../components/Text';
 import * as Linking from 'expo-linking';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';

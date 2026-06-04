@@ -1,7 +1,8 @@
 // screens/EmailVerificationScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { BackHandler, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { BackHandler, View, StyleSheet, TouchableOpacity } from 'react-native'
+import { Text } from '../components/Text';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../config';

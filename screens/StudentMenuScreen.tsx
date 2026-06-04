@@ -1,7 +1,8 @@
 // src/screens/StudentMenuScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Alert, Switch, ScrollView } from 'react-native';
+import { View, StyleSheet, Alert, Switch, ScrollView } from 'react-native'
+import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signOut } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
@@ -15,6 +16,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
+import { useProfileStatus } from '../src/hooks/useProfileStatus';
 import { FEEDBACK_ENABLED_KEY } from '../src/components/PickupConfirmModal';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
@@ -25,6 +27,7 @@ export default function StudentMenuScreen() {
   const isParent = role === 'parent';
   const firstName = displayName?.split(' ')[0] ?? null;
   const { fontScale } = useAccessibility();
+  const profileStatus = useProfileStatus();
   const [feedbackEnabled, setFeedbackEnabled] = useState(true);
 
   useEffect(() => {
@@ -79,16 +82,26 @@ export default function StudentMenuScreen() {
           <MenuItem
             icon="people"
             title="My Children"
-            description="Link your child's account to track their shuttle"
+            description={
+              profileStatus.missingFields.includes('child profile')
+                ? 'Add your child to start tracking their shuttle'
+                : "Manage your children's profiles"
+            }
             onPress={() => navigation.navigate('ParentChildLink')}
+            badge={profileStatus.missingFields.includes('child profile')}
           />
         )}
 
         <MenuItem
           icon="person"
           title="My Profile"
-          description="Edit your name, phone, and preferences"
+          description={
+            profileStatus.isComplete || profileStatus.missingFields.every((f) => f === 'child profile')
+              ? 'Edit your name, phone, and preferences'
+              : `Missing: ${profileStatus.missingFields.filter((f) => f !== 'child profile').join(', ')}`
+          }
           onPress={() => navigation.navigate('Profile')}
+          badge={profileStatus.missingFields.some((f) => f !== 'child profile')}
         />
 
         <MenuItem

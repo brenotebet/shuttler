@@ -6,25 +6,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/StackNavigator';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Image,
-  Keyboard,
-  KeyboardAvoidingView,
-  LayoutAnimation,
-  Modal,
-  Platform,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, ScrollView, Share, StyleSheet, Switch, TextInput, TouchableOpacity, View } from 'react-native'
+import { Text } from '../components/Text';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -1975,6 +1958,233 @@ const pickerSheetStyles = StyleSheet.create({
   },
 });
 
+// ---- Plan Detail Sheet ----
+
+const PLAN_DETAILS: Record<string, {
+  label: string;
+  price: string;
+  tagline: string;
+  highlight?: string;
+  features: { icon: string; text: string }[];
+  compareNote?: string;
+}> = {
+  starter: {
+    label: 'Starter',
+    price: '$149 / mo',
+    tagline: 'Everything you need to launch your shuttle operation.',
+    features: [
+      { icon: 'directions-bus', text: 'Up to 3 vehicles online at once' },
+      { icon: 'place', text: 'Up to 10 stops · 1 route' },
+      { icon: 'gps-fixed', text: 'Real-time GPS tracking for all riders' },
+      { icon: 'touch-app', text: 'Stop request system for students & parents' },
+      { icon: 'phone-android', text: 'Driver app included' },
+      { icon: 'dashboard', text: 'Live admin dashboard' },
+      { icon: 'auto-awesome', text: 'AI assistant + weekly & monthly insights' },
+      { icon: 'email', text: 'Email support' },
+    ],
+  },
+  campus: {
+    label: 'Campus',
+    price: '$299 / mo',
+    tagline: 'Built for universities, airports, and growing operations.',
+    highlight: 'Most popular',
+    compareNote: 'Everything in Starter, plus:',
+    features: [
+      { icon: 'directions-bus', text: 'Up to 8 vehicles online at once' },
+      { icon: 'all-inclusive', text: 'Unlimited routes and stops' },
+      { icon: 'schedule', text: 'Per-weekday route scheduling' },
+      { icon: 'security', text: 'SAML SSO for institutional login' },
+      { icon: 'support-agent', text: 'Priority support' },
+    ],
+  },
+  enterprise: {
+    label: 'Enterprise',
+    price: 'Custom pricing',
+    tagline: 'For large-scale deployments with custom requirements.',
+    compareNote: 'Everything in Campus, plus:',
+    features: [
+      { icon: 'directions-bus', text: 'Unlimited vehicles' },
+      { icon: 'palette', text: 'Custom branding' },
+      { icon: 'verified', text: 'SLA guarantee' },
+      { icon: 'support-agent', text: 'Dedicated support manager' },
+      { icon: 'code', text: 'Custom integrations & data API' },
+    ],
+  },
+  data_addon: {
+    label: 'Data Analytics',
+    price: '$49 / mo',
+    tagline: 'Your complete boarding data — visualized, filterable, exportable.',
+    highlight: 'Add-on to any plan',
+    features: [
+      { icon: 'history', text: 'Full boarding history, all time' },
+      { icon: 'trending-up', text: 'Trend analysis vs previous periods (7D / 30D / 90D)' },
+      { icon: 'place', text: 'Stop-by-stop ridership bar charts' },
+      { icon: 'people', text: 'Per-driver performance breakdown' },
+      { icon: 'calendar-today', text: 'Weekday ridership patterns' },
+      { icon: 'share', text: 'CSV export for reports and records' },
+    ],
+  },
+};
+
+function PlanDetailSheet({
+  planKey,
+  visible,
+  onClose,
+  onAction,
+  actionLabel,
+  actionDisabled,
+  primaryColor,
+}: {
+  planKey: string | null;
+  visible: boolean;
+  onClose: () => void;
+  onAction: () => void;
+  actionLabel: string;
+  actionDisabled?: boolean;
+  primaryColor: string;
+}) {
+  const plan = planKey ? PLAN_DETAILS[planKey] : null;
+  if (!plan) return null;
+
+  return (
+    <BottomSheet visible={visible} onClose={onClose} sheetStyle={detailStyles.sheet}>
+      <View style={detailStyles.handle} />
+      <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+        {plan.highlight && (
+          <View style={[detailStyles.highlightBadge, { backgroundColor: `${primaryColor}18` }]}>
+            <Icon name="star" size={12} color={primaryColor} />
+            <Text style={[detailStyles.highlightText, { color: primaryColor }]}>{plan.highlight}</Text>
+          </View>
+        )}
+        <Text style={detailStyles.planName}>{plan.label}</Text>
+        <Text style={[detailStyles.planPrice, { color: primaryColor }]}>{plan.price}</Text>
+        <Text style={detailStyles.tagline}>{plan.tagline}</Text>
+
+        <View style={detailStyles.divider} />
+
+        {plan.compareNote && (
+          <Text style={detailStyles.compareNote}>{plan.compareNote}</Text>
+        )}
+
+        <View style={detailStyles.featureList}>
+          {plan.features.map(({ icon, text }) => (
+            <View key={text} style={detailStyles.featureRow}>
+              <View style={[detailStyles.featureIconWrap, { backgroundColor: `${primaryColor}12` }]}>
+                <Icon name={icon} size={16} color={primaryColor} />
+              </View>
+              <Text style={detailStyles.featureText}>{text}</Text>
+            </View>
+          ))}
+        </View>
+
+        <TouchableOpacity
+          style={[
+            detailStyles.ctaBtn,
+            { backgroundColor: actionDisabled ? '#e5e7eb' : primaryColor },
+          ]}
+          onPress={() => { if (!actionDisabled) { onAction(); onClose(); } }}
+          disabled={actionDisabled}
+        >
+          <Text style={[detailStyles.ctaBtnText, { color: actionDisabled ? '#9ca3af' : '#fff' }]}>
+            {actionLabel}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </BottomSheet>
+  );
+}
+
+const detailStyles = StyleSheet.create({
+  sheet: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 40,
+    maxHeight: '85%',
+  },
+  handle: {
+    width: 40, height: 4,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  highlightBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 10,
+  },
+  highlightText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  planName: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111',
+    marginBottom: 4,
+  },
+  planPrice: {
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  tagline: {
+    fontSize: 14,
+    color: '#6b7280',
+    lineHeight: 20,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#f3f4f6',
+    marginVertical: 16,
+  },
+  compareNote: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  featureList: {
+    gap: 12,
+    marginBottom: 24,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  featureIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  featureText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+  },
+  ctaBtn: {
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  ctaBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+});
+
 // ---- Billing Tab ----
 
 function BillingTab() {
@@ -2080,6 +2290,8 @@ function BillingTab() {
     }
   }, [org, refreshOrg]);
 
+  const [detailPlan, setDetailPlan] = useState<string | null>(null);
+
   const currentLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
   const isActive = org?.subscriptionStatus === 'active';
   const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
@@ -2159,6 +2371,9 @@ function BillingTab() {
               </View>
               <Text style={[styles.planPrice, { color: primaryColor }]}>{plan.price}</Text>
               <Text style={styles.planDesc}>{plan.desc}</Text>
+              <TouchableOpacity onPress={() => setDetailPlan(plan.key)} style={styles.learnMoreBtn}>
+                <Text style={[styles.learnMoreText, { color: primaryColor }]}>See what's included →</Text>
+              </TouchableOpacity>
             </View>
             <AppButton
               label={isCurrent ? 'Active' : (!isApproved ? 'Pending' : (isLoading ? '…' : 'Subscribe'))}
@@ -2175,6 +2390,9 @@ function BillingTab() {
           <Text style={styles.planName}>Enterprise</Text>
           <Text style={[styles.planPrice, { color: primaryColor }]}>Custom pricing</Text>
           <Text style={styles.planDesc}>Unlimited vehicles · SSO · SLA · Custom branding</Text>
+          <TouchableOpacity onPress={() => setDetailPlan('enterprise')} style={styles.learnMoreBtn}>
+            <Text style={[styles.learnMoreText, { color: primaryColor }]}>See what's included →</Text>
+          </TouchableOpacity>
         </View>
         <AppButton
           label="Contact us"
@@ -2186,8 +2404,6 @@ function BillingTab() {
       {/* Data Add-on */}
       <Text style={[styles.sectionLabel, { marginTop: 8 }]}>Add-ons</Text>
       {(() => {
-        // Use entitlements as source of truth — enterprise plan also gets dataApi
-        // without the add-on, so checking dataAddonActive alone would mislead them.
         const dataUnlocked = org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false;
         return (
           <View style={[styles.planCard, dataUnlocked && styles.planCardActive, dataUnlocked && { borderColor: primaryColor }]}>
@@ -2197,11 +2413,15 @@ function BillingTab() {
                 {dataUnlocked && <View style={styles.currentBadge}><Text style={styles.currentBadgeText}>Active</Text></View>}
               </View>
               <Text style={[styles.planPrice, { color: primaryColor }]}>$49/mo</Text>
-              <Text style={styles.planDesc}>Full history export · All boarding records · Driver & stop breakdowns</Text>
-              {dataUnlocked && (
+              <Text style={styles.planDesc}>Trends, charts, driver stats, and CSV export.</Text>
+              {dataUnlocked ? (
                 <Text style={[styles.planDesc, { color: '#2e7d32', marginTop: 4 }]}>
                   ✓ Unlimited export history · Extended data retention
                 </Text>
+              ) : (
+                <TouchableOpacity onPress={() => setDetailPlan('data_addon')} style={styles.learnMoreBtn}>
+                  <Text style={[styles.learnMoreText, { color: primaryColor }]}>See what's included →</Text>
+                </TouchableOpacity>
               )}
             </View>
             <AppButton
@@ -2213,6 +2433,35 @@ function BillingTab() {
           </View>
         );
       })()}
+
+      {/* Plan detail sheet */}
+      <PlanDetailSheet
+        planKey={detailPlan}
+        visible={detailPlan !== null}
+        onClose={() => setDetailPlan(null)}
+        primaryColor={primaryColor}
+        onAction={() => {
+          if (detailPlan === 'data_addon') {
+            openAddonCheckout();
+          } else if (detailPlan === 'enterprise') {
+            WebBrowser.openBrowserAsync('https://shuttler.net');
+          } else if (detailPlan) {
+            openCheckout(detailPlan);
+          }
+        }}
+        actionLabel={
+          detailPlan === 'data_addon' ? 'Add Data Analytics — $49/mo'
+          : detailPlan === 'enterprise' ? 'Contact Us'
+          : detailPlan === 'campus' ? 'Subscribe — $299/mo'
+          : 'Subscribe — $149/mo'
+        }
+        actionDisabled={
+          isLoading || !isApproved ||
+          (detailPlan !== 'data_addon' && detailPlan !== 'enterprise' &&
+            org?.subscriptionPlan === detailPlan && isActive) ||
+          (detailPlan === 'data_addon' && (org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false))
+        }
+      />
 
       {isActive && (
         <AppButton
@@ -3055,6 +3304,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#888',
     marginTop: 2,
+  },
+  learnMoreBtn: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+  },
+  learnMoreText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   planButton: {
     minWidth: 90,

@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native'
+import { Text } from '../../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 interface Props {

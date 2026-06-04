@@ -1,13 +1,9 @@
 // screens/AdminAnalyticsScreen.tsx
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, ScrollView, Share, StyleSheet, TouchableOpacity, View } from 'react-native'
+import { Text } from '../components/Text';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import BottomSheet from '../components/BottomSheet';
 import * as WebBrowser from 'expo-web-browser';
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
@@ -21,6 +17,8 @@ import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+
+const ANALYTICS_WELCOME_KEY = 'shuttler_analytics_welcomed';
 
 type Tab = 'insights' | 'analytics';
 
@@ -193,6 +191,64 @@ interface BoardingCount {
   createdAt: any;
 }
 
+type Period = '7d' | '30d' | '90d' | 'all';
+
+const PERIOD_OPTIONS: { label: string; value: Period; days: number | null }[] = [
+  { label: '7D', value: '7d', days: 7 },
+  { label: '30D', value: '30d', days: 30 },
+  { label: '90D', value: '90d', days: 90 },
+  { label: 'All', value: 'all', days: null },
+];
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function HBarChart({
+  items,
+  color,
+  maxItems = 6,
+}: {
+  items: { label: string; value: number }[];
+  color: string;
+  maxItems?: number;
+}) {
+  const shown = items.slice(0, maxItems);
+  const max = Math.max(...shown.map((i) => i.value), 1);
+  return (
+    <View style={a.barChartWrap}>
+      {shown.map(({ label, value }, i) => (
+        <View key={i} style={a.barRow}>
+          <Text style={a.barLabel} numberOfLines={1}>{label}</Text>
+          <View style={a.barTrack}>
+            <View
+              style={[
+                a.barFill,
+                {
+                  width: `${Math.max((value / max) * 100, 2)}%` as any,
+                  backgroundColor: i === 0 ? color : `${color}70`,
+                },
+              ]}
+            />
+          </View>
+          <Text style={a.barValue}>{value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function TrendBadge({ pct }: { pct: number | null }) {
+  if (pct === null) return null;
+  const up = pct >= 0;
+  return (
+    <View style={[a.trendBadge, { backgroundColor: up ? '#dcfce7' : '#fee2e2' }]}>
+      <Icon name={up ? 'arrow-upward' : 'arrow-downward'} size={11} color={up ? '#16a34a' : '#dc2626'} />
+      <Text style={[a.trendText, { color: up ? '#16a34a' : '#dc2626' }]}>
+        {Math.abs(pct)}% vs prev. period
+      </Text>
+    </View>
+  );
+}
+
 function AnalyticsSection() {
   const { org, refreshOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
@@ -201,6 +257,20 @@ function AnalyticsSection() {
   const [error, setError] = useState<string | null>(null);
   const [driverNames, setDriverNames] = useState<Record<string, string>>({});
   const [isUpgrading, setIsUpgrading] = useState(false);
+  const [period, setPeriod] = useState<Period>('30d');
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [showAddonDetail, setShowAddonDetail] = useState(false);
+
+  // One-time welcome banner after purchase
+  useEffect(() => {
+    if (!org?.dataAddonActive) return;
+    AsyncStorage.getItem(ANALYTICS_WELCOME_KEY).then((seen) => {
+      if (!seen) {
+        setShowWelcome(true);
+        AsyncStorage.setItem(ANALYTICS_WELCOME_KEY, '1');
+      }
+    });
+  }, [org?.dataAddonActive]);
 
   // Upsell flow
   const openAddonCheckout = useCallback(async () => {
@@ -260,33 +330,76 @@ function AnalyticsSection() {
     ).then((pairs) => setDriverNames(Object.fromEntries(pairs)));
   }, [records, org?.orgId]);
 
+  // ── Upsell gate ──
   if (!org?.dataAddonActive) {
     return (
-      <View style={s.upsellContainer}>
-        <Icon name="lock" size={40} color="#d1d5db" />
-        <Text style={s.upsellTitle}>Raw Data Analytics</Text>
-        <Text style={s.upsellBody}>
-          Access full boarding records, stop logs, driver stats, and more — everything collected, all in one place.
-        </Text>
-        <View style={s.featureList}>
-          {['All boarding records', 'Per-driver performance', 'Stop-by-stop breakdown', 'Recent activity log'].map((f) => (
-            <View key={f} style={s.featureRow}>
-              <Icon name="check-circle" size={16} color={primaryColor} />
-              <Text style={s.featureText}>{f}</Text>
+      <>
+        <View style={s.upsellContainer}>
+          <View style={[s.upsellIconWrap, { backgroundColor: `${primaryColor}12` }]}>
+            <Icon name="bar-chart" size={40} color={primaryColor} />
+          </View>
+          <Text style={s.upsellTitle}>Unlock Data Analytics</Text>
+          <Text style={s.upsellBody}>
+            See exactly how your shuttle is performing — trends, charts, and driver stats all in one place.
+          </Text>
+          <View style={s.priceBox}>
+            <Text style={[s.price, { color: primaryColor }]}>$49<Text style={s.priceSub}>/mo</Text></Text>
+            <Text style={s.priceNote}>Add-on to any plan · Cancel anytime</Text>
+          </View>
+          <AppButton
+            label={isUpgrading ? '…' : 'Add Data Analytics — $49/mo'}
+            onPress={openAddonCheckout}
+            disabled={isUpgrading}
+            style={[s.upgradeBtn, { backgroundColor: primaryColor }]}
+          />
+          <TouchableOpacity style={s.learnMoreBtn} onPress={() => setShowAddonDetail(true)}>
+            <Text style={[s.learnMoreText, { color: primaryColor }]}>See everything that's included →</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Inline detail sheet */}
+        <BottomSheet
+          visible={showAddonDetail}
+          onClose={() => setShowAddonDetail(false)}
+          sheetStyle={s.detailSheet}
+        >
+          <View style={s.detailHandle} />
+          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+            <View style={[s.detailHighlight, { backgroundColor: `${primaryColor}12` }]}>
+              <Icon name="star" size={12} color={primaryColor} />
+              <Text style={[s.detailHighlightText, { color: primaryColor }]}>Add-on to any plan</Text>
             </View>
-          ))}
-        </View>
-        <View style={s.priceBox}>
-          <Text style={[s.price, { color: primaryColor }]}>$49<Text style={s.priceSub}>/mo</Text></Text>
-          <Text style={s.priceNote}>Add-on to any plan</Text>
-        </View>
-        <AppButton
-          label={isUpgrading ? '…' : 'Add Data Analytics — $49/mo'}
-          onPress={openAddonCheckout}
-          disabled={isUpgrading}
-          style={[s.upgradeBtn, { backgroundColor: primaryColor }]}
-        />
-      </View>
+            <Text style={s.detailName}>Data Analytics</Text>
+            <Text style={[s.detailPrice, { color: primaryColor }]}>$49 / mo</Text>
+            <Text style={s.detailTagline}>Your complete boarding data — visualized, filterable, and exportable.</Text>
+            <View style={s.detailDivider} />
+            {[
+              { icon: 'history', text: 'Full boarding history, all time' },
+              { icon: 'trending-up', text: 'Trend analysis vs previous periods (7D / 30D / 90D)' },
+              { icon: 'place', text: 'Stop-by-stop ridership bar charts' },
+              { icon: 'people', text: 'Per-driver performance breakdown' },
+              { icon: 'calendar-today', text: 'Weekday ridership patterns' },
+              { icon: 'share', text: 'CSV export for reports and records' },
+            ].map(({ icon, text }) => (
+              <View key={text} style={s.detailFeatureRow}>
+                <View style={[s.detailFeatureIcon, { backgroundColor: `${primaryColor}12` }]}>
+                  <Icon name={icon} size={16} color={primaryColor} />
+                </View>
+                <Text style={s.detailFeatureText}>{text}</Text>
+              </View>
+            ))}
+            <TouchableOpacity
+              style={[s.detailCta, { backgroundColor: isUpgrading ? '#e5e7eb' : primaryColor }]}
+              onPress={() => { setShowAddonDetail(false); openAddonCheckout(); }}
+              disabled={isUpgrading}
+            >
+              <Text style={[s.detailCtaText, { color: isUpgrading ? '#9ca3af' : '#fff' }]}>
+                Add Data Analytics — $49/mo
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </BottomSheet>
+      </>
     );
   }
 
@@ -299,80 +412,197 @@ function AnalyticsSection() {
     </View>
   );
 
-  const stopMap = new Map<string, { name: string; total: number }>();
-  const driverMap = new Map<string, { name: string; total: number }>();
-  let totalBoarded = 0;
+  // ── Data computation ──
+  const now = Date.now();
+  const opt = PERIOD_OPTIONS.find((p) => p.value === period)!;
+  const cutoffMs = opt.days ? now - opt.days * 86_400_000 : 0;
+  const prevCutoffMs = opt.days ? now - 2 * opt.days * 86_400_000 : 0;
 
-  records.forEach((r) => {
-    totalBoarded += r.count ?? 0;
-    const sEntry = stopMap.get(r.stopId) ?? { name: r.stopName ?? r.stopId, total: 0 };
-    sEntry.total += r.count ?? 0;
-    stopMap.set(r.stopId, sEntry);
-    if (r.driverUid) {
-      const dEntry = driverMap.get(r.driverUid) ?? { name: driverNames[r.driverUid] ?? r.driverUid.slice(0, 8), total: 0 };
-      dEntry.total += r.count ?? 0;
-      dEntry.name = driverNames[r.driverUid] ?? dEntry.name;
-      driverMap.set(r.driverUid, dEntry);
-    }
+  const ts = (r: BoardingCount) => r.createdAt?.toDate?.()?.getTime?.() ?? 0;
+  const filtered = opt.days ? records.filter((r) => ts(r) >= cutoffMs) : records;
+  const prev = opt.days ? records.filter((r) => ts(r) >= prevCutoffMs && ts(r) < cutoffMs) : [];
+
+  const aggregate = (recs: BoardingCount[]) => {
+    const stops = new Map<string, { name: string; total: number }>();
+    const drivers = new Map<string, { name: string; total: number }>();
+    const days = [0, 0, 0, 0, 0, 0, 0];
+    let total = 0;
+    recs.forEach((r) => {
+      const c = r.count ?? 0;
+      total += c;
+      const s = stops.get(r.stopId) ?? { name: r.stopName ?? r.stopId, total: 0 };
+      s.total += c;
+      stops.set(r.stopId, s);
+      if (r.driverUid) {
+        const d = drivers.get(r.driverUid) ?? { name: driverNames[r.driverUid] ?? r.driverUid.slice(0, 8), total: 0 };
+        d.total += c;
+        d.name = driverNames[r.driverUid] ?? d.name;
+        drivers.set(r.driverUid, d);
+      }
+      const dayIdx = r.createdAt?.toDate?.()?.getDay?.() ?? 0;
+      days[dayIdx] += c;
+    });
+    return { total, stops, drivers, days };
+  };
+
+  const cur = aggregate(filtered);
+  const prevAgg = aggregate(prev);
+
+  const trendPct: number | null =
+    opt.days && prevAgg.total > 0
+      ? Math.round(((cur.total - prevAgg.total) / prevAgg.total) * 100)
+      : null;
+
+  const topStops = [...cur.stops.values()].sort((a, b) => b.total - a.total).slice(0, 6);
+  const topDrivers = [...cur.drivers.values()].sort((a, b) => b.total - a.total).slice(0, 5);
+  // Order Mon–Sun
+  const weekdayData = [1, 2, 3, 4, 5, 6, 0].map((i) => ({ label: DAY_LABELS[i], value: cur.days[i] }));
+
+  // Grouped recent activity
+  const todayStr = new Date().toDateString();
+  const yesterdayStr = new Date(now - 86_400_000).toDateString();
+  const grouped: { label: string; items: BoardingCount[] }[] = [];
+  const seenLabels = new Map<string, BoardingCount[]>();
+  filtered.slice(0, 40).forEach((r) => {
+    const d = r.createdAt?.toDate?.();
+    const ds = d?.toDateString?.() ?? 'Unknown';
+    const label = ds === todayStr ? 'Today'
+      : ds === yesterdayStr ? 'Yesterday'
+      : d?.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }) ?? ds;
+    if (!seenLabels.has(label)) { seenLabels.set(label, []); grouped.push({ label, items: seenLabels.get(label)! }); }
+    seenLabels.get(label)!.push(r);
   });
 
-  const topStops = [...stopMap.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 8);
-  const topDrivers = [...driverMap.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 5);
+  // CSV export
+  const handleExport = async () => {
+    const header = 'Date,Stop,Driver,Boardings\n';
+    const rows = filtered.map((r) => {
+      const date = r.createdAt?.toDate?.()?.toISOString?.()?.slice(0, 10) ?? '';
+      const stop = `"${(r.stopName ?? r.stopId ?? '').replace(/"/g, '""')}"`;
+      const driver = `"${(driverNames[r.driverUid] ?? r.driverUid ?? '').replace(/"/g, '""')}"`;
+      return `${date},${stop},${driver},${r.count ?? 0}`;
+    }).join('\n');
+    try {
+      await Share.share({
+        message: header + rows,
+        title: `${org?.name ?? 'Shuttler'} — Boarding Data`,
+      });
+    } catch { /* dismissed */ }
+  };
 
   return (
-    <ScrollView contentContainerStyle={s.scrollContent}>
-      <View style={s.summaryRow}>
-        <View style={[s.summaryCard, { flex: 1 }]}>
-          <Text style={[s.summaryValue, { color: primaryColor }]}>{totalBoarded}</Text>
-          <Text style={s.summaryLabel}>Total Boarded</Text>
-        </View>
-        <View style={[s.summaryCard, { flex: 1 }]}>
-          <Text style={[s.summaryValue, { color: primaryColor }]}>{stopMap.size}</Text>
-          <Text style={s.summaryLabel}>Active Stops</Text>
-        </View>
-        <View style={[s.summaryCard, { flex: 1 }]}>
-          <Text style={[s.summaryValue, { color: primaryColor }]}>{driverMap.size}</Text>
-          <Text style={s.summaryLabel}>Active Drivers</Text>
-        </View>
-      </View>
+    <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
 
-      <Text style={s.sectionTitle}>Busiest Stops</Text>
-      <View style={s.listCard}>
-        {topStops.map(([stopId, { name, total }], i) => (
-          <View key={stopId} style={[s.listRow, i > 0 && s.listRowBorder]}>
-            <View style={s.rankBadge}><Text style={s.rankText}>{i + 1}</Text></View>
-            <Text style={s.listLabel} numberOfLines={1}>{name}</Text>
-            <Text style={s.listValue}>{total} boarded</Text>
+      {/* Welcome banner — shown once after purchase */}
+      {showWelcome && (
+        <View style={[a.welcomeBanner, { borderColor: `${primaryColor}30`, backgroundColor: `${primaryColor}08` }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[a.welcomeTitle, { color: primaryColor }]}>Analytics Unlocked 🎉</Text>
+            <Text style={a.welcomeBody}>Your full boarding history is here. Use the period filter to spot trends and the export button to share data with your team.</Text>
           </View>
+          <TouchableOpacity onPress={() => setShowWelcome(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Icon name="close" size={18} color="#9ca3af" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Period filter */}
+      <View style={a.periodRow}>
+        {PERIOD_OPTIONS.map((p) => (
+          <TouchableOpacity
+            key={p.value}
+            style={[a.periodChip, period === p.value && { backgroundColor: primaryColor, borderColor: primaryColor }]}
+            onPress={() => setPeriod(p.value)}
+          >
+            <Text style={[a.periodChipText, period === p.value && a.periodChipTextActive]}>{p.label}</Text>
+          </TouchableOpacity>
         ))}
       </View>
 
-      <Text style={s.sectionTitle}>Top Drivers</Text>
-      <View style={s.listCard}>
-        {topDrivers.map(([uid, { name, total }], i) => (
-          <View key={uid} style={[s.listRow, i > 0 && s.listRowBorder]}>
-            <View style={s.rankBadge}><Text style={s.rankText}>{i + 1}</Text></View>
-            <Text style={s.listLabel} numberOfLines={1}>{name}</Text>
-            <Text style={s.listValue}>{total} boarded</Text>
+      {/* Hero metric */}
+      <View style={[a.heroCard, { ...cardShadow }]}>
+        <Text style={a.heroLabel}>Total Boardings</Text>
+        <Text style={[a.heroValue, { color: primaryColor }]}>{cur.total.toLocaleString()}</Text>
+        <TrendBadge pct={trendPct} />
+        <View style={a.heroStatsRow}>
+          <View style={a.heroStat}>
+            <Text style={[a.heroStatValue, { color: primaryColor }]}>{cur.stops.size}</Text>
+            <Text style={a.heroStatLabel}>Active Stops</Text>
           </View>
-        ))}
+          <View style={a.heroStatDivider} />
+          <View style={a.heroStat}>
+            <Text style={[a.heroStatValue, { color: primaryColor }]}>{cur.drivers.size}</Text>
+            <Text style={a.heroStatLabel}>Active Drivers</Text>
+          </View>
+          <View style={a.heroStatDivider} />
+          <View style={a.heroStat}>
+            <Text style={[a.heroStatValue, { color: primaryColor }]}>
+              {cur.drivers.size > 0 ? Math.round(cur.total / cur.drivers.size) : 0}
+            </Text>
+            <Text style={a.heroStatLabel}>Avg / Driver</Text>
+          </View>
+        </View>
       </View>
 
-      <Text style={s.sectionTitle}>Recent Activity</Text>
-      <View style={s.listCard}>
-        {records.slice(0, 20).map((r, i) => {
-          const dateStr = r.createdAt?.toDate?.()?.toLocaleDateString([], { month: 'short', day: 'numeric' });
-          return (
-            <View key={r.id} style={[s.listRow, i > 0 && s.listRowBorder]}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.listLabel} numberOfLines={1}>{r.stopName ?? r.stopId}</Text>
-                <Text style={s.listMeta}>{driverNames[r.driverUid] ?? r.driverUid?.slice(0, 8)} · {dateStr}</Text>
+      {/* Busiest Stops */}
+      {topStops.length > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Busiest Stops</Text>
+          <View style={[a.chartCard, cardShadow]}>
+            <HBarChart items={topStops.map((s) => ({ label: s.name, value: s.total }))} color={primaryColor} />
+          </View>
+        </View>
+      )}
+
+      {/* Top Drivers */}
+      {topDrivers.length > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Top Drivers</Text>
+          <View style={[a.chartCard, cardShadow]}>
+            <HBarChart items={topDrivers.map((d) => ({ label: d.name, value: d.total }))} color={primaryColor} />
+          </View>
+        </View>
+      )}
+
+      {/* Weekday pattern */}
+      {weekdayData.some((d) => d.value > 0) && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Ridership by Day</Text>
+          <View style={[a.chartCard, cardShadow]}>
+            <HBarChart items={weekdayData} color={primaryColor} maxItems={7} />
+          </View>
+        </View>
+      )}
+
+      {/* Recent Activity — grouped */}
+      {grouped.length > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Recent Activity</Text>
+          {grouped.map(({ label, items }) => (
+            <View key={label}>
+              <Text style={a.groupLabel}>{label}</Text>
+              <View style={[s.listCard, { marginBottom: 8 }]}>
+                {items.map((r, i) => (
+                  <View key={r.id} style={[s.listRow, i > 0 && s.listRowBorder]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.listLabel} numberOfLines={1}>{r.stopName ?? r.stopId}</Text>
+                      <Text style={s.listMeta}>{driverNames[r.driverUid] ?? r.driverUid?.slice(0, 8)}</Text>
+                    </View>
+                    <Text style={s.listValue}>{r.count} boarded</Text>
+                  </View>
+                ))}
               </View>
-              <Text style={s.listValue}>{r.count} boarded</Text>
             </View>
-          );
-        })}
-      </View>
+          ))}
+        </View>
+      )}
+
+      {/* Export */}
+      <TouchableOpacity style={[a.exportBtn, { borderColor: primaryColor }]} onPress={handleExport}>
+        <Icon name="share" size={16} color={primaryColor} />
+        <Text style={[a.exportBtnText, { color: primaryColor }]}>Export CSV</Text>
+      </TouchableOpacity>
+
     </ScrollView>
   );
 }
@@ -472,7 +702,8 @@ const s = StyleSheet.create({
   errorText: { color: '#DC2626', fontSize: 14, textAlign: 'center' },
   // Upsell
   upsellContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 },
-  upsellTitle: { fontSize: 20, fontWeight: '700', color: '#111', textAlign: 'center' },
+  upsellIconWrap: { width: 80, height: 80, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  upsellTitle: { fontSize: 22, fontWeight: '800', color: '#111', textAlign: 'center' },
   upsellBody: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 20 },
   featureList: { alignSelf: 'stretch', gap: 8 },
   featureRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -482,4 +713,190 @@ const s = StyleSheet.create({
   priceSub: { fontSize: 18, fontWeight: '400' },
   priceNote: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
   upgradeBtn: { width: '100%', marginTop: 4 },
+  learnMoreBtn: { paddingVertical: 4 },
+  learnMoreText: { fontSize: 14, fontWeight: '600' },
+  // Inline detail sheet
+  detailSheet: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 40, maxHeight: '85%' },
+  detailHandle: { width: 40, height: 4, backgroundColor: '#e5e7eb', borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
+  detailHighlight: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10 },
+  detailHighlightText: { fontSize: 12, fontWeight: '700' },
+  detailName: { fontSize: 22, fontWeight: '800', color: '#111', marginBottom: 4 },
+  detailPrice: { fontSize: 28, fontWeight: '700', marginBottom: 6 },
+  detailTagline: { fontSize: 14, color: '#6b7280', lineHeight: 20 },
+  detailDivider: { height: 1, backgroundColor: '#f3f4f6', marginVertical: 16 },
+  detailFeatureRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  detailFeatureIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  detailFeatureText: { flex: 1, fontSize: 14, color: '#374151', lineHeight: 20 },
+  detailCta: { borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
+  detailCtaText: { fontSize: 16, fontWeight: '700' },
+});
+
+// Styles for the unlocked analytics section
+const a = StyleSheet.create({
+  // Welcome banner
+  welcomeBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 4,
+  },
+  welcomeTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  welcomeBody: {
+    fontSize: 13,
+    color: '#4b5563',
+    lineHeight: 19,
+  },
+  // Period filter
+  periodRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 4,
+  },
+  periodChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+  },
+  periodChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  periodChipTextActive: {
+    color: '#fff',
+  },
+  // Hero card
+  heroCard: {
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    padding: 20,
+    alignItems: 'center',
+    gap: 6,
+  },
+  heroLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  heroValue: {
+    fontSize: 48,
+    fontWeight: '800',
+    lineHeight: 56,
+  },
+  trendBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 2,
+  },
+  trendText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  heroStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    width: '100%',
+  },
+  heroStat: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  heroStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#f3f4f6',
+  },
+  heroStatValue: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  heroStatLabel: {
+    fontSize: 11,
+    color: '#9ca3af',
+  },
+  // Chart cards
+  section: {
+    gap: 8,
+  },
+  chartCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 16,
+  },
+  barChartWrap: {
+    gap: 10,
+  },
+  barRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  barLabel: {
+    width: 80,
+    fontSize: 12,
+    color: '#374151',
+    fontWeight: '500',
+  },
+  barTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  barValue: {
+    width: 36,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+    textAlign: 'right',
+  },
+  // Activity groups
+  groupLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  // Export
+  exportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginTop: 8,
+    backgroundColor: '#fff',
+  },
+  exportBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
 });

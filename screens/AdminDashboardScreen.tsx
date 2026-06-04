@@ -1,16 +1,7 @@
 // screens/AdminDashboardScreen.tsx
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-  TouchableOpacity,
-  TextInput,
-  Share,
-} from 'react-native';
+import { Alert, View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, TextInput, Share } from 'react-native'
+import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';

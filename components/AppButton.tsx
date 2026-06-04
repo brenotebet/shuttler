@@ -1,11 +1,6 @@
 import React from 'react';
-import {
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  StyleProp,
-  ViewStyle,
-} from 'react-native';
+import { TouchableOpacity, StyleSheet, StyleProp, ViewStyle } from 'react-native'
+import { Text } from './Text';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow } from '../src/styles/common';
 

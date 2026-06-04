@@ -1,13 +1,6 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  TextInputProps,
-  StyleProp,
-  ViewStyle,
-} from 'react-native';
+import { View, TextInput, StyleSheet, TextInputProps, StyleProp, ViewStyle } from 'react-native'
+import { Text } from './Text';
 import { borderRadius, spacing } from '../src/styles/common';
 
 export type FormFieldProps = TextInputProps & {

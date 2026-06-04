@@ -1,7 +1,8 @@
 // src/screens/DriverMenuScreen.tsx
 
 import React from 'react';
-import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, StyleSheet, Alert, ScrollView } from 'react-native'
+import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -11,6 +12,7 @@ import { useLocationSharing } from '../location/LocationContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
+import { useProfileStatus } from '../src/hooks/useProfileStatus';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import { clearSamlSession } from '../src/auth/samlAuth';
@@ -31,6 +33,7 @@ export default function DriverMenuScreen() {
   const firstName = displayName?.split(' ')[0] ?? null;
   const { org } = useOrg();
   const { fontScale } = useAccessibility();
+  const profileStatus = useProfileStatus();
   const needsSetup = role === 'admin' && (org?.stops?.length ?? 0) === 0;
 
   const handleLogout = () => {
@@ -89,8 +92,13 @@ export default function DriverMenuScreen() {
         <MenuItem
           icon="person"
           title="My Profile"
-          description="Edit your name, phone, and preferences"
+          description={
+            profileStatus.isComplete
+              ? 'Edit your name, phone, and preferences'
+              : `Missing: ${profileStatus.missingFields.join(', ')}`
+          }
           onPress={() => navigation.navigate('Profile')}
+          badge={!profileStatus.isComplete}
         />
 
         <MenuItem
@@ -150,6 +158,7 @@ export default function DriverMenuScreen() {
                 : 'Manage stops, routes, and users'
             }
             onPress={() => navigation.navigate('AdminOrgSetup')}
+            badge={needsSetup}
           />
         )}
 

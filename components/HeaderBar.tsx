@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, StyleSheet } from 'react-native'
+import { Text } from './Text';
 import { useNavigation } from '@react-navigation/native';
 import { BACKGROUND_COLOR, TEXT_PRIMARY } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';

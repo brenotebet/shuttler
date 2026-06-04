@@ -1,15 +1,7 @@
 // screens/ProfileScreen.tsx
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
+import { View, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native'
+import { Text } from '../components/Text';
 import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -17,10 +9,14 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import { auth, db } from '../firebase/firebaseconfig';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
+import type { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
+import { useProfileStatus } from '../src/hooks/useProfileStatus';
 import { spacing } from '../src/styles/common';
 import PhoneInput from '../src/components/PhoneInput';
 
@@ -47,7 +43,8 @@ function formatPhone(raw: string): string {
 }
 
 export default function ProfileScreen() {
-  const { user, displayName, role, orgId } = useAuth();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { user, displayName, role, orgId, phoneVerified } = useAuth();
   const { org } = useOrg();
   const { primaryColor } = useOrgTheme();
 
@@ -66,6 +63,21 @@ export default function ProfileScreen() {
   const isEmailAuth = org?.authMethod === 'email' || org?.authMethod === 'email+google';
   const isSaml = org?.authMethod === 'saml';
   const email = user?.email ?? null;
+
+  // Phone-auth users are verified by Firebase — auto-populate & mark verified once.
+  useEffect(() => {
+    const firebasePhone = user?.phoneNumber;
+    if (!firebasePhone || !user?.uid || !orgId || phoneVerified) return;
+    const updates: Record<string, string | boolean> = { phoneVerified: true };
+    if (!phone) updates.phone = firebasePhone;
+    setDoc(doc(db, 'orgs', orgId, 'users', user.uid), updates, { merge: true }).catch(() => {});
+    if (!phone) setPhone(firebasePhone);
+  }, [user?.phoneNumber, user?.uid, orgId, phoneVerified]);
+
+  const profileStatus = useProfileStatus();
+  const showBanner = !profileStatus.isComplete && !isSaml && profileStatus.missingFields.some((f) => f !== 'child profile');
+  const nameIncomplete = !name.trim() || name.trim().split(/\s+/).filter(Boolean).length < 2;
+  const phoneIncomplete = !phone.trim();
 
   // Load phone from Firestore
   useEffect(() => {
@@ -171,8 +183,18 @@ export default function ProfileScreen() {
           <Text style={styles.roleBadge}>{role ?? 'Member'}</Text>
         </View>
 
+        {/* Completion banner */}
+        {showBanner && (
+          <View style={styles.completionBanner}>
+            <Icon name="info-outline" size={16} color="#92400e" />
+            <Text style={styles.completionBannerText}>
+              Complete your profile — add your {profileStatus.missingFields.filter((f) => f !== 'child profile').join(' and ')}.
+            </Text>
+          </View>
+        )}
+
         {/* Name */}
-        <View style={styles.card}>
+        <View style={[styles.card, nameIncomplete && !isSaml && styles.cardIncomplete]}>
           <Text style={styles.cardLabel}>Display Name</Text>
           <View style={styles.fieldRow}>
             <TextInput
@@ -216,8 +238,21 @@ export default function ProfileScreen() {
         )}
 
         {/* Phone */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Phone Number</Text>
+        <View style={[styles.card, phoneIncomplete && styles.cardIncomplete]}>
+          <View style={styles.cardLabelRow}>
+            <Text style={styles.cardLabel}>Phone Number</Text>
+            {phoneVerified ? (
+              <View style={styles.verifiedChip}>
+                <Icon name="verified" size={12} color="#16a34a" />
+                <Text style={styles.verifiedChipText}>Verified</Text>
+              </View>
+            ) : phone.trim() ? (
+              <View style={styles.unverifiedChip}>
+                <Icon name="info-outline" size={12} color="#92400e" />
+                <Text style={styles.unverifiedChipText}>Not verified</Text>
+              </View>
+            ) : null}
+          </View>
           <View style={styles.fieldRow}>
             <PhoneInput
               value={phone}
@@ -235,6 +270,15 @@ export default function ProfileScreen() {
                 : <Icon name="check" size={18} color="#fff" />}
             </TouchableOpacity>
           </View>
+          {!phoneVerified && phone.trim() ? (
+            <TouchableOpacity
+              style={[styles.verifyBtn, { borderColor: primaryColor }]}
+              onPress={() => navigation.navigate('PhoneVerification', { phone: phone.trim() })}
+            >
+              <Icon name="verified-user" size={15} color={primaryColor} />
+              <Text style={[styles.verifyBtnText, { color: primaryColor }]}>Verify this number →</Text>
+            </TouchableOpacity>
+          ) : null}
           <Text style={styles.fieldNote}>Used for notifications and driver contact. Not shared publicly.</Text>
         </View>
 
@@ -331,6 +375,23 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
   },
+  completionBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#fef3c7',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    padding: 12,
+    marginBottom: 14,
+  },
+  completionBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#92400e',
+    lineHeight: 18,
+  },
   card: {
     backgroundColor: '#fff',
     borderRadius: 14,
@@ -340,12 +401,62 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     gap: 10,
   },
+  cardIncomplete: {
+    borderColor: '#fcd34d',
+  },
+  cardLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   cardLabel: {
     fontSize: 11,
     fontWeight: '700',
     color: '#9ca3af',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  verifiedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#dcfce7',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  verifiedChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#16a34a',
+  },
+  unverifiedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fef3c7',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  unverifiedChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#92400e',
+  },
+  verifyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start',
+  },
+  verifyBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   fieldRow: {
     flexDirection: 'row',

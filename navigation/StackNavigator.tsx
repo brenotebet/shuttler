@@ -1,7 +1,8 @@
 // navigation/StackNavigator.tsx
 
 import React, { useEffect } from 'react';
-import { ActivityIndicator, Animated, Text, View, StyleSheet, TouchableOpacity } from 'react-native';
+import { ActivityIndicator, Animated, View, StyleSheet, TouchableOpacity } from 'react-native'
+import { Text } from '../components/Text';
 import * as SplashScreen from 'expo-splash-screen';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
@@ -26,6 +27,7 @@ import AdminAnalyticsScreen from '../screens/AdminAnalyticsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import LegalScreen from '../screens/LegalScreen';
 import AccessibilityScreen from '../screens/AccessibilityScreen';
+import PhoneVerificationScreen from '../screens/PhoneVerificationScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -55,6 +57,7 @@ export type RootStackParamList = {
   HowToUse: { role: 'student' | 'driver' | 'admin' | 'parent'; isOnboarding?: boolean };
   Legal: undefined;
   Accessibility: undefined;
+  PhoneVerification: { phone?: string } | undefined;
 
   SubscriptionExpired: undefined;
 };
@@ -182,6 +185,7 @@ export default function StackNavigator() {
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           <Stack.Screen name="Legal" component={LegalScreen} />
           <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
+          <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
         </Stack.Navigator>
       );
     }
@@ -202,6 +206,7 @@ export default function StackNavigator() {
             <Stack.Screen name="HowToUse" component={HowToUseScreen} />
             <Stack.Screen name="Legal" component={LegalScreen} />
             <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
+          <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
           </Stack.Navigator>
         );
       }
@@ -218,6 +223,7 @@ export default function StackNavigator() {
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           <Stack.Screen name="Legal" component={LegalScreen} />
           <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
+          <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
         </Stack.Navigator>
       );
     }
@@ -233,6 +239,7 @@ export default function StackNavigator() {
         <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         <Stack.Screen name="Legal" component={LegalScreen} />
         <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
+          <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
       </Stack.Navigator>
     );
   };

@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { View, StyleSheet, StyleProp, ViewStyle } from 'react-native'
+import { Text } from './Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CARD_BACKGROUND, TEXT_PRIMARY, TEXT_SECONDARY } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';

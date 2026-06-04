@@ -5,17 +5,8 @@
 // and pick theirs, then navigates to AuthScreen for the actual sign-in.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-  RefreshControl,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Image, StyleSheet, TextInput, TouchableOpacity, View, RefreshControl } from 'react-native'
+import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';

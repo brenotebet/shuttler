@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
-import { View, Text, Platform, ScrollView } from 'react-native';
+import { View, Platform, ScrollView } from 'react-native'
+import { Text } from './components/Text';
 import * as SplashScreen from 'expo-splash-screen';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});

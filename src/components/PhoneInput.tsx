@@ -1,14 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  Modal,
-  FlatList,
-  StyleSheet,
-  ViewStyle,
-} from 'react-native';
+import { View, TextInput, TouchableOpacity, Modal, FlatList, StyleSheet, ViewStyle } from 'react-native'
+import { Text } from '../../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 export type Country = {
