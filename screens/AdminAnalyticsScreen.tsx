@@ -1,5 +1,5 @@
 // screens/AdminAnalyticsScreen.tsx
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, Share, StyleSheet, TouchableOpacity, View } from 'react-native'
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -260,6 +260,16 @@ function AnalyticsSection() {
   const [period, setPeriod] = useState<Period>('30d');
   const [showWelcome, setShowWelcome] = useState(false);
   const [showAddonDetail, setShowAddonDetail] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const baselineAddon = useRef(org?.dataAddonActive);
+
+  // Show confirmation the moment the webhook updates Firestore
+  useEffect(() => {
+    if (org?.dataAddonActive && !baselineAddon.current) {
+      setShowConfirmation(true);
+      baselineAddon.current = true;
+    }
+  }, [org?.dataAddonActive]);
 
   // One-time welcome banner after purchase
   useEffect(() => {
@@ -396,6 +406,23 @@ function AnalyticsSection() {
                 Add Data Analytics — $49/mo
               </Text>
             </TouchableOpacity>
+        </BottomSheet>
+
+        {/* Confirmation — shown when Firestore confirms the purchase */}
+        <BottomSheet visible={showConfirmation} onClose={() => setShowConfirmation(false)} sheetStyle={s.confirmSheet}>
+          <View style={[s.confirmIconCircle, { backgroundColor: `${primaryColor}15` }]}>
+            <Icon name="check-circle" size={48} color={primaryColor} />
+          </View>
+          <Text style={s.confirmTitle}>Analytics Unlocked!</Text>
+          <Text style={s.confirmBody}>
+            Your full boarding history is now live. Use the period filter to spot trends, compare drivers, and export your data.
+          </Text>
+          <TouchableOpacity
+            style={[s.confirmBtn, { backgroundColor: primaryColor }]}
+            onPress={() => setShowConfirmation(false)}
+          >
+            <Text style={s.confirmBtnText}>View My Analytics</Text>
+          </TouchableOpacity>
         </BottomSheet>
       </>
     );
@@ -727,6 +754,13 @@ const s = StyleSheet.create({
   detailFeatureText: { flex: 1, fontSize: 14, color: '#374151', lineHeight: 20 },
   detailCta: { borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
   detailCtaText: { fontSize: 16, fontWeight: '700' },
+  // Purchase confirmation
+  confirmSheet: { paddingHorizontal: 24, paddingTop: 32, paddingBottom: 48, alignItems: 'center' },
+  confirmIconCircle: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  confirmTitle: { fontSize: 22, fontWeight: '800', color: '#111', textAlign: 'center', marginBottom: 10 },
+  confirmBody: { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22, marginBottom: 28 },
+  confirmBtn: { borderRadius: 14, paddingVertical: 15, paddingHorizontal: 32, width: '100%', alignItems: 'center' },
+  confirmBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
 });
 
 // Styles for the unlocked analytics section

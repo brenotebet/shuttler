@@ -2288,6 +2288,36 @@ function BillingTab() {
   }, [org, refreshOrg]);
 
   const [detailPlan, setDetailPlan] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<'plan' | 'addon' | null>(null);
+  const navigation = useNavigation<any>();
+
+  // Capture baseline so we only celebrate changes that happen this session
+  const baselineStatus = useRef(org?.subscriptionStatus);
+  const baselinePlan   = useRef(org?.subscriptionPlan);
+  const baselineAddon  = useRef(org?.dataAddonActive);
+
+  // React to Firestore live updates — fires as soon as the webhook updates the doc.
+  // Covers three purchase paths:
+  //   1. Trial → first subscription  (status:  trialing → active)
+  //   2. Plan upgrade                 (plan:    starter  → campus)
+  //   3. Data addon activation        (dataAddonActive: false → true)
+  useEffect(() => {
+    if (!org) return;
+
+    const wentActive  = org.subscriptionStatus === 'active' && baselineStatus.current !== 'active';
+    const planChanged = !!org.subscriptionPlan && org.subscriptionPlan !== baselinePlan.current;
+
+    if (wentActive || planChanged) {
+      setConfirmation('plan');
+      baselineStatus.current = org.subscriptionStatus;
+      baselinePlan.current   = org.subscriptionPlan;
+    }
+
+    if (org.dataAddonActive && !baselineAddon.current) {
+      setConfirmation('addon');
+      baselineAddon.current = true;
+    }
+  }, [org?.subscriptionStatus, org?.subscriptionPlan, org?.dataAddonActive]);
 
   const currentLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
   const isActive = org?.subscriptionStatus === 'active';
@@ -2312,6 +2342,7 @@ function BillingTab() {
   ];
 
   return (
+    <>
     <ScrollView contentContainerStyle={styles.tabContent}>
       {/* Current plan card */}
       <View style={styles.statusCard}>
@@ -2469,8 +2500,93 @@ function BillingTab() {
         />
       )}
     </ScrollView>
+
+    {/* Purchase confirmation sheet */}
+    <BottomSheet visible={confirmation !== null} onClose={() => setConfirmation(null)} sheetStyle={confirmStyles.sheet}>
+      <View style={[confirmStyles.iconCircle, { backgroundColor: `${primaryColor}15` }]}>
+        <Icon name="check-circle" size={48} color={primaryColor} />
+      </View>
+      <Text style={confirmStyles.title}>
+        {confirmation === 'addon' ? 'Analytics Unlocked!' : `You're on the ${currentLimits.label} plan!`}
+      </Text>
+      <Text style={confirmStyles.body}>
+        {confirmation === 'addon'
+          ? 'Your full boarding history, trend charts, driver stats, and CSV export are now available.'
+          : `Your subscription is active. You now have access to ${vehicleLimitText(currentLimits).toLowerCase()} and ${routeLimitText(currentLimits).toLowerCase()}.`}
+      </Text>
+      {confirmation === 'addon' && (
+        <TouchableOpacity
+          style={[confirmStyles.primaryBtn, { backgroundColor: primaryColor }]}
+          onPress={() => { setConfirmation(null); navigation.navigate('AdminAnalytics'); }}
+        >
+          <Icon name="bar-chart" size={18} color="#fff" />
+          <Text style={confirmStyles.primaryBtnText}>Go to Analytics</Text>
+        </TouchableOpacity>
+      )}
+      <TouchableOpacity style={confirmStyles.secondaryBtn} onPress={() => setConfirmation(null)}>
+        <Text style={confirmStyles.secondaryBtnText}>Done</Text>
+      </TouchableOpacity>
+    </BottomSheet>
+    </>
   );
 }
+
+const confirmStyles = StyleSheet.create({
+  sheet: {
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 48,
+    alignItems: 'center',
+  },
+  iconCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  body: {
+    fontSize: 15,
+    color: '#6b7280',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 28,
+  },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 32,
+    marginBottom: 12,
+    width: '100%',
+    justifyContent: 'center',
+  },
+  primaryBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  secondaryBtn: {
+    paddingVertical: 12,
+    width: '100%',
+    alignItems: 'center',
+  },
+  secondaryBtnText: {
+    fontSize: 15,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
+});
 
 // ---- Operations Tab ----
 

@@ -261,6 +261,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               // Subscription
               subscriptionStatus: data.subscriptionStatus ?? prev.subscriptionStatus,
               subscriptionPlan: data.subscriptionPlan ?? prev.subscriptionPlan,
+              dataAddonActive: data.dataAddonActive ?? prev.dataAddonActive,
               approved: data.approved ?? prev.approved,
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
               rejectionReason: data.rejectionReason ?? prev.rejectionReason ?? null,
