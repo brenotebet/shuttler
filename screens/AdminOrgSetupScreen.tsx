@@ -2049,7 +2049,6 @@ function PlanDetailSheet({
   return (
     <BottomSheet visible={visible} onClose={onClose} sheetStyle={detailStyles.sheet}>
       <View style={detailStyles.handle} />
-      <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
         {plan.highlight && (
           <View style={[detailStyles.highlightBadge, { backgroundColor: `${primaryColor}18` }]}>
             <Icon name="star" size={12} color={primaryColor} />
@@ -2089,7 +2088,6 @@ function PlanDetailSheet({
             {actionLabel}
           </Text>
         </TouchableOpacity>
-      </ScrollView>
     </BottomSheet>
   );
 }
@@ -2098,8 +2096,7 @@ const detailStyles = StyleSheet.create({
   sheet: {
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 40,
-    maxHeight: '85%',
+    paddingBottom: 48,
   },
   handle: {
     width: 40, height: 4,

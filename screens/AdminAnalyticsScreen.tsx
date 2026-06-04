@@ -364,7 +364,6 @@ function AnalyticsSection() {
           sheetStyle={s.detailSheet}
         >
           <View style={s.detailHandle} />
-          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
             <View style={[s.detailHighlight, { backgroundColor: `${primaryColor}12` }]}>
               <Icon name="star" size={12} color={primaryColor} />
               <Text style={[s.detailHighlightText, { color: primaryColor }]}>Add-on to any plan</Text>
@@ -397,7 +396,6 @@ function AnalyticsSection() {
                 Add Data Analytics — $49/mo
               </Text>
             </TouchableOpacity>
-          </ScrollView>
         </BottomSheet>
       </>
     );
@@ -716,7 +714,7 @@ const s = StyleSheet.create({
   learnMoreBtn: { paddingVertical: 4 },
   learnMoreText: { fontSize: 14, fontWeight: '600' },
   // Inline detail sheet
-  detailSheet: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 40, maxHeight: '85%' },
+  detailSheet: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 48 },
   detailHandle: { width: 40, height: 4, backgroundColor: '#e5e7eb', borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
   detailHighlight: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10 },
   detailHighlightText: { fontSize: 12, fontWeight: '700' },

@@ -140,7 +140,7 @@ const PLAN_PRICE_IDS: Record<string, string> = {
   enterprise: process.env.STRIPE_PRICE_ENTERPRISE || '',
 };
 
-const STRIPE_PRICE_DATA_ADDON = process.env.STRIPE_PRICE_DATA_ADDON || '';
+const STRIPE_PRICE_DATA_ADDON = process.env.STRIPE_PRICE_DATA || '';
 
 // ---------- Handoff token store (Firestore-backed) ----------
 // Using Firestore instead of an in-memory Map so tokens survive server restarts.
@@ -1260,6 +1260,7 @@ app.post('/billing/create-addon-checkout-session', requireAuth, async (req: Requ
     }
 
     if (!STRIPE_PRICE_DATA_ADDON) {
+      console.error('[billing] Missing price ID for data add-on. Set STRIPE_PRICE_DATA in env vars.');
       return res.status(500).json({ error: 'Data add-on is not available. Please contact support.' });
     }
 
