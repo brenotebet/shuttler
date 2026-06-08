@@ -1,8 +1,10 @@
 // src/screens/StudentHistoryScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, FlatList, StyleSheet } from 'react-native'
+import { View, FlatList, StyleSheet, TouchableOpacity } from 'react-native'
 import { Text } from '../components/Text';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { auth, db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -12,6 +14,7 @@ import { useOrgTheme } from '../src/org/useOrgTheme';
 import ScreenContainer from '../components/ScreenContainer';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { useAuth } from '../src/auth/AuthProvider';
+import type { RootStackParamList } from '../navigation/StackNavigator';
 
 function formatRelativeTime(date: Date): string {
   const diffMs = Date.now() - date.getTime();
@@ -26,6 +29,7 @@ function formatRelativeTime(date: Date): string {
 }
 
 export default function StudentHistoryScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [stops, setStops] = useState<any[]>([]);
   const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
@@ -98,7 +102,14 @@ export default function StudentHistoryScreen() {
             {role === 'parent' && !watchUid ? (
               <>
                 <Text style={styles.emptyText}>No child linked yet.</Text>
-                <Text style={styles.emptyHint}>Go to My Children to link your child's account.</Text>
+                <Text style={styles.emptyHint}>Link your child's profile to see their ride history.</Text>
+                <TouchableOpacity
+                  style={[styles.emptyBtn, { borderColor: primaryColor }]}
+                  onPress={() => navigation.navigate('ParentChildLink')}
+                >
+                  <Icon name="person-add" size={16} color={primaryColor} />
+                  <Text style={[styles.emptyBtnText, { color: primaryColor }]}>Add Child Profile</Text>
+                </TouchableOpacity>
               </>
             ) : (
               <>
@@ -170,6 +181,20 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     marginTop: 4,
     textAlign: 'center',
+  },
+  emptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    marginTop: 16,
+  },
+  emptyBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   emptyContainer: {
     flexGrow: 1,

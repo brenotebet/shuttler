@@ -538,6 +538,7 @@ export default function DriverScreen() {
       try {
         let studentUid: string | null = null;
         let stopName: string | null = null;
+        let stopId: string | null = null;
 
         await runTransaction(db, async (tx) => {
           const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
@@ -549,11 +550,12 @@ export default function DriverScreen() {
           if (current?.arrivedAt) return;
           studentUid = current.studentUid ?? null;
           stopName = current.stop?.name ?? null;
+          stopId = current.stop?.id ?? current.stopId ?? null;
           tx.update(ref, { arrivedAt: serverTimestamp() });
         });
 
         if (studentUid) {
-          void notifyStudentArrived(orgId, studentUid, stopName ?? 'your stop');
+          void notifyStudentArrived(orgId, studentUid, stopName ?? 'your stop', stopId ?? undefined);
         }
       } catch (err) {
         console.error('Failed to set arrivedAt on stop request', err);

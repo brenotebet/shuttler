@@ -598,7 +598,20 @@ export default function AdminDashboardScreen() {
         <Text style={styles.sectionTitle}>Drivers</Text>
 
         {driverStats.length === 0 && (
-          <Text style={styles.emptyText}>No drivers found in this org.</Text>
+          <View style={styles.driversEmptyState}>
+            <Icon name="directions-bus" size={40} color="#d1d5db" />
+            <Text style={styles.driversEmptyTitle}>No drivers yet</Text>
+            <Text style={styles.driversEmptyHint}>
+              Invite drivers from Org Setup → Users, then ask them to sign in and go online.
+            </Text>
+            <TouchableOpacity
+              style={[styles.driversEmptyBtn, { borderColor: primaryColor }]}
+              onPress={() => navigation.navigate('AdminOrgSetup')}
+            >
+              <Icon name="person-add" size={16} color={primaryColor} />
+              <Text style={[styles.driversEmptyBtnText, { color: primaryColor }]}>Go to Org Setup</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {driverStats.map((driver) => (
@@ -852,6 +865,38 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   emptyText: { color: TEXT_SECONDARY, fontSize: 14, marginBottom: 16 },
+  driversEmptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    gap: 8,
+  },
+  driversEmptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+    marginTop: 8,
+  },
+  driversEmptyHint: {
+    fontSize: 13,
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  driversEmptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 8,
+  },
+  driversEmptyBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
 
   // Generic card
   card: {

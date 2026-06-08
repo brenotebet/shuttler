@@ -75,7 +75,7 @@ export default function ProfileScreen() {
   }, [user?.phoneNumber, user?.uid, orgId, phoneVerified]);
 
   const profileStatus = useProfileStatus();
-  const showBanner = !profileStatus.isComplete && !isSaml && profileStatus.missingFields.some((f) => f !== 'child profile');
+  const showBanner = !profileStatus.isComplete && !isSaml && profileStatus.missingFields.some((f) => f !== 'Child Profile');
   const nameIncomplete = !name.trim() || name.trim().split(/\s+/).filter(Boolean).length < 2;
   const phoneIncomplete = !phone.trim();
 
@@ -188,7 +188,7 @@ export default function ProfileScreen() {
           <View style={styles.completionBanner}>
             <Icon name="info-outline" size={16} color="#92400e" />
             <Text style={styles.completionBannerText}>
-              Complete your profile — add your {profileStatus.missingFields.filter((f) => f !== 'child profile').join(' and ')}.
+              Complete your profile — add your {profileStatus.missingFields.filter((f) => f !== 'Child Profile').join(' and ')}.
             </Text>
           </View>
         )}

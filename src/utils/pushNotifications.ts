@@ -31,9 +31,10 @@ export async function notifyStudentArrived(
   orgId: string,
   studentUid: string,
   stopName: string,
+  stopId?: string,
 ): Promise<void> {
   try {
-    await post('/notifications/stop-arrived', { orgId, studentUid, stopName });
+    await post('/notifications/stop-arrived', { orgId, studentUid, stopName, stopId });
   } catch {
     // Non-critical
   }

@@ -1,8 +1,13 @@
 // src/screens/DriverHistoryScreen.tsx
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, FlatList, StyleSheet, Dimensions } from 'react-native'
+import { View, FlatList, StyleSheet, Dimensions, TouchableOpacity } from 'react-native'
 import { Text } from '../components/Text';
+import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation/StackNavigator';
+import { useAuth } from '../src/auth/AuthProvider';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { CARD_BACKGROUND } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
@@ -12,7 +17,6 @@ import {
   collection, doc, getDoc, query, where, onSnapshot, orderBy, limit,
 } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
-import { useAuth } from '../src/auth/AuthProvider';
 import ScreenContainer from '../components/ScreenContainer';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
@@ -39,12 +43,13 @@ function fmtDate(date: Date): string {
 }
 
 export default function DriverHistoryScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [stops, setStops] = useState<any[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
   const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
   const lookupInFlightRef = useRef<Set<string>>(new Set());
   const { driverId } = useDriver();
-  const { orgId } = useAuth();
+  const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
   const screenWidth = Dimensions.get('window').width;
   const chartWidth = screenWidth - spacing.screenPadding * 2 - spacing.section * 2;
@@ -177,7 +182,24 @@ export default function DriverHistoryScreen() {
             </View>
           );
         }}
-        ListEmptyComponent={<Text style={styles.emptyText}>No completed rides yet.</Text>}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Icon name="history" size={52} color="#d1d5db" style={{ marginBottom: 12 }} />
+            <Text style={styles.emptyTitle}>No rides yet</Text>
+            <Text style={styles.emptyBody}>
+              Complete your first pickup to see your stats and charts here.
+            </Text>
+            {role === 'admin' && (
+              <TouchableOpacity
+                style={[styles.emptyBtn, { borderColor: primaryColor }]}
+                onPress={() => navigation.navigate('AdminOrgSetup', { initialTab: 'users' })}
+              >
+                <Icon name="person-add" size={16} color={primaryColor} />
+                <Text style={[styles.emptyBtnText, { color: primaryColor }]}>Invite a Driver</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        }
         ListHeaderComponent={
           <View style={styles.headerContent}>
             <Text style={[styles.heading, { color: primaryColor }]}>Driver Dashboard</Text>
@@ -359,6 +381,26 @@ const styles = StyleSheet.create({
   cardStudent: { fontSize: 16, fontWeight: '500', marginBottom: 4, color: '#333', flexWrap: 'wrap' },
   cardText: { fontSize: 14, color: '#555', marginBottom: 4, flexWrap: 'wrap' },
   cardTimestamp: { fontSize: 12, color: '#777', flexWrap: 'wrap' },
-  emptyText: { fontSize: 16, color: '#6b7280', textAlign: 'center' },
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 32,
+    gap: 8,
+  },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#374151' },
+  emptyBody: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 20, maxWidth: 260 },
+  emptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 8,
+  },
+  emptyBtnText: { fontSize: 14, fontWeight: '600' },
   emptyContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
 });

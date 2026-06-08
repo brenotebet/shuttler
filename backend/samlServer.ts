@@ -1725,6 +1725,7 @@ async function sendExpoPushNotifications(
   tokens: string[],
   title: string,
   body: string,
+  data?: Record<string, string>,
 ): Promise<void> {
   const valid = tokens.filter((t) => t && t.startsWith('ExponentPushToken['));
   if (valid.length === 0) return;
@@ -1736,6 +1737,7 @@ async function sendExpoPushNotifications(
       title,
       body,
       sound: 'default',
+      ...(data ? { data } : {}),
     }));
 
     await fetch('https://exp.host/--/api/v2/push/send', {
@@ -1766,12 +1768,18 @@ app.post('/notifications/stop-request-created', requireAuth, async (req: Request
     const tokens: string[] = [];
     usersSnap.forEach((d) => {
       const data = d.data();
-      if ((data.role === 'driver' || data.role === 'admin') && data.expoPushToken) {
+      const newRequestEnabled = data?.notificationPrefs?.newRequest !== false;
+      if ((data.role === 'driver' || data.role === 'admin') && data.expoPushToken && newRequestEnabled) {
         tokens.push(data.expoPushToken as string);
       }
     });
 
-    await sendExpoPushNotifications(tokens, 'New Stop Request', 'A student is requesting a pickup.');
+    await sendExpoPushNotifications(
+      tokens,
+      'New Stop Request',
+      'A student is requesting a pickup.',
+      { type: 'new_request', orgId },
+    );
     return res.json({ sent: tokens.length });
   } catch (e) {
     console.error('[notifications] stop-request-created error:', e);
@@ -1785,7 +1793,7 @@ app.post('/notifications/stop-request-created', requireAuth, async (req: Request
  */
 app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: Response) => {
   const orgId: string | undefined = (req as any).claims?.orgId;
-  const { studentUid, stopName } = req.body as { studentUid?: string; stopName?: string };
+  const { studentUid, stopName, stopId } = req.body as { studentUid?: string; stopName?: string; stopId?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
 
@@ -1793,17 +1801,25 @@ app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: R
     const userDoc = await admin.firestore()
       .collection('orgs').doc(orgId).collection('users').doc(studentUid)
       .get();
-    const token = userDoc.data()?.expoPushToken as string | undefined;
+    const userData = userDoc.data();
+    const token = userData?.expoPushToken as string | undefined;
+    const busArrivingEnabled = userData?.notificationPrefs?.busArriving !== false;
 
-    if (token) {
+    if (token && busArrivingEnabled) {
       await sendExpoPushNotifications(
         [token],
         'Bus Arriving!',
         `Your bus is arriving at ${stopName ?? 'your stop'}.`,
+        {
+          type: 'bus_arriving',
+          orgId,
+          ...(stopId ? { stopId } : {}),
+          ...(stopName ? { stopName } : {}),
+        },
       );
     }
 
-    return res.json({ sent: token ? 1 : 0 });
+    return res.json({ sent: token && busArrivingEnabled ? 1 : 0 });
   } catch (e) {
     console.error('[notifications] stop-arrived error:', e);
     return res.status(500).json({ error: 'Failed to send notification' });
@@ -1824,16 +1840,18 @@ app.post('/notifications/stop-request-cancelled', requireAuth, async (req: Reque
     const userDoc = await admin.firestore()
       .collection('orgs').doc(orgId).collection('users').doc(studentUid)
       .get();
-    const token = userDoc.data()?.expoPushToken as string | undefined;
+    const userData = userDoc.data();
+    const token = userData?.expoPushToken as string | undefined;
+    const cancelledEnabled = userData?.notificationPrefs?.requestCancelled !== false;
 
-    if (token) {
+    if (token && cancelledEnabled) {
       const body = reason === 'no_buses_online'
         ? 'There are no buses currently online. Your request was cancelled.'
         : 'The driver has gone offline. Your request was cancelled.';
-      await sendExpoPushNotifications([token], 'Request Cancelled', body);
+      await sendExpoPushNotifications([token], 'Request Cancelled', body, { type: 'request_cancelled', orgId });
     }
 
-    return res.json({ sent: token ? 1 : 0 });
+    return res.json({ sent: token && cancelledEnabled ? 1 : 0 });
   } catch (e) {
     console.error('[notifications] stop-request-cancelled error:', e);
     return res.status(500).json({ error: 'Failed to send notification' });
@@ -1854,17 +1872,20 @@ app.post('/notifications/stop-completed', requireAuth, async (req: Request, res:
     const userDoc = await admin.firestore()
       .collection('orgs').doc(orgId).collection('users').doc(studentUid)
       .get();
-    const token = userDoc.data()?.expoPushToken as string | undefined;
+    const userData = userDoc.data();
+    const token = userData?.expoPushToken as string | undefined;
+    const completedEnabled = userData?.notificationPrefs?.requestCompleted !== false;
 
-    if (token) {
+    if (token && completedEnabled) {
       await sendExpoPushNotifications(
         [token],
         'Bus Has Arrived!',
         `The bus has completed your pickup at ${stopName ?? 'your stop'}.`,
+        { type: 'request_completed', orgId },
       );
     }
 
-    return res.json({ sent: token ? 1 : 0 });
+    return res.json({ sent: token && completedEnabled ? 1 : 0 });
   } catch (e) {
     console.error('[notifications] stop-completed error:', e);
     return res.status(500).json({ error: 'Failed to send notification' });

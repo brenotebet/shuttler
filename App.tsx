@@ -1,11 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Platform, ScrollView } from 'react-native'
 import { Text } from './components/Text';
 import * as SplashScreen from 'expo-splash-screen';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
-import { NavigationContainer } from '@react-navigation/native';
-import StackNavigator from './navigation/StackNavigator';
+import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import StackNavigator, { RootStackParamList } from './navigation/StackNavigator';
 import { LocationProvider } from './location/LocationContext';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
@@ -81,7 +81,43 @@ function PushTokenRegistrar() {
   return null;
 }
 
+function NotificationDeepLinker({ navigationRef }: { navigationRef: React.RefObject<NavigationContainerRef<RootStackParamList> | null> }) {
+  const lastResponse = Notifications.useLastNotificationResponse();
+
+  useEffect(() => {
+    if (!lastResponse) return;
+    const data = lastResponse.notification.request.content.data as
+      | Record<string, string>
+      | undefined;
+    if (!data?.type) return;
+
+    const nav = navigationRef.current;
+    if (!nav?.isReady()) return;
+
+    switch (data.type) {
+      case 'new_request':
+        nav.navigate('DriverHome');
+        break;
+      case 'bus_arriving':
+        nav.navigate('StudentHome', data.stopId
+          ? { screen: 'Map', params: { focusStopId: data.stopId, focusStopName: data.stopName } }
+          : undefined);
+        break;
+      case 'request_cancelled':
+        nav.navigate('StudentHome');
+        break;
+      case 'request_completed':
+        nav.navigate('StudentHistory');
+        break;
+    }
+  }, [lastResponse]);
+
+  return null;
+}
+
 export default function App() {
+  const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
+
   useEffect(() => {
     registerForPushNotificationsAsync();
   }, []);
@@ -96,8 +132,9 @@ export default function App() {
               <PushTokenRegistrar />
               <DriverProvider>
                 <LocationProvider>
-                  <NavigationContainer>
+                  <NavigationContainer ref={navigationRef}>
                     <StackNavigator />
+                    <NotificationDeepLinker navigationRef={navigationRef} />
                   </NavigationContainer>
                 </LocationProvider>
               </DriverProvider>

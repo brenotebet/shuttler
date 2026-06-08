@@ -45,7 +45,7 @@ import { notifyDriversNewRequest } from '../src/utils/pushNotifications';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrg, Route } from '../src/org/OrgContext';
@@ -228,6 +228,9 @@ type BusPopup = {
 
 export default function MapScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const mapRoute = useRoute<RouteProp<StudentTabParamList, 'Map'>>();
+  const focusStopId = mapRoute.params?.focusStopId ?? null;
+  const prevFocusStopIdRef = useRef<string | null>(null);
   const { org } = useOrg();
   const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
@@ -370,6 +373,26 @@ export default function MapScreen() {
     }
     return map;
   }, [orgRoutes]);
+
+  // Pan to and select the stop referenced in a bus_arriving push notification.
+  useEffect(() => {
+    if (!focusStopId) return;
+    if (prevFocusStopIdRef.current === focusStopId) return;
+    if (stops.length === 0) return; // org not loaded yet — re-runs when stops arrive
+    const targetStop = stops.find((s) => s.id === focusStopId);
+    if (!targetStop) return;
+    prevFocusStopIdRef.current = focusStopId;
+    // Small delay so the map has time to mount (cold-start navigation)
+    const timer = setTimeout(() => {
+      mapRef.current?.animateToRegion(
+        { latitude: targetStop.latitude, longitude: targetStop.longitude, latitudeDelta: 0.007, longitudeDelta: 0.007 },
+        600,
+      );
+      const match = requestableStops.find((e) => e.stop.id === focusStopId);
+      if (match) setSelectedStopKey(match.key);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [focusStopId, stops, requestableStops]);
 
   const [busLocations, setBusLocations] = useState<{
     [id: string]: {

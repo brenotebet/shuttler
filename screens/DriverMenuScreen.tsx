@@ -1,11 +1,12 @@
 // src/screens/DriverMenuScreen.tsx
 
-import React from 'react';
-import { View, StyleSheet, Alert, ScrollView } from 'react-native'
+import React, { useCallback, useEffect, useState } from 'react';
+import { TouchableOpacity, View, StyleSheet, Alert, ScrollView } from 'react-native'
 import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useDriver } from '../drivercontext/DriverContext';
 import { useLocationSharing } from '../location/LocationContext';
@@ -13,15 +14,189 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
+import { collection, doc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import { db } from '../firebase/firebaseconfig';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
 import { clearSamlSession } from '../src/auth/samlAuth';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import MenuItem from '../components/MenuItem';
 import ScreenContainer from '../components/ScreenContainer';
-import { spacing } from '../src/styles/common';
+import { cardShadow, spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+
+// ── Setup checklist (admins only) ────────────────────────────────────────────
+
+type OrgSetupTab = 'profile' | 'auth' | 'stops' | 'users' | 'ops' | 'billing';
+
+function SetupChecklist({
+  orgId,
+  primaryColor,
+  onNavigate,
+}: {
+  orgId: string;
+  primaryColor: string;
+  onNavigate: (tab: OrgSetupTab) => void;
+}) {
+  const { org } = useOrg();
+  const [dismissed, setDismissed] = useState<boolean | null>(null);
+  const [hasDriver, setHasDriver] = useState<boolean | null>(null);
+  const storageKey = `setup_checklist_dismissed_${orgId}`;
+
+  useEffect(() => {
+    AsyncStorage.getItem(storageKey)
+      .then((val) => setDismissed(val === '1'))
+      .catch(() => setDismissed(false));
+  }, [storageKey]);
+
+  useEffect(() => {
+    getDocs(query(collection(db, 'orgs', orgId, 'users'), where('role', '==', 'driver'), limit(1)))
+      .then((snap) => setHasDriver(!snap.empty))
+      .catch(() => setHasDriver(false));
+  }, [orgId]);
+
+  const hasStops = (org?.stops?.length ?? 0) > 0;
+  const hasRoutes = (org?.routes?.length ?? 0) > 0;
+  const driverReady = hasDriver === true;
+
+  const allDone = hasStops && hasRoutes && driverReady;
+
+  useEffect(() => {
+    if (allDone) {
+      AsyncStorage.setItem(storageKey, '1').catch(() => {});
+      setDismissed(true);
+    }
+  }, [allDone, storageKey]);
+
+  const dismiss = useCallback(() => {
+    AsyncStorage.setItem(storageKey, '1').catch(() => {});
+    setDismissed(true);
+  }, [storageKey]);
+
+  if (dismissed === null || dismissed || hasDriver === null) return null;
+
+  const steps: { key: string; label: string; done: boolean; tab: OrgSetupTab }[] = [
+    { key: 'stops', label: 'Add your shuttle stops', done: hasStops, tab: 'stops' },
+    { key: 'routes', label: 'Create at least one route', done: hasRoutes, tab: 'stops' },
+    { key: 'driver', label: 'Invite a driver', done: driverReady, tab: 'users' },
+  ];
+
+  const doneCount = steps.filter((s) => s.done).length;
+  const pct = Math.round((doneCount / steps.length) * 100);
+
+  return (
+    <View style={checklistStyles.card}>
+      <View style={checklistStyles.header}>
+        <View style={checklistStyles.titleRow}>
+          <Icon name="assignment-turned-in" size={16} color={primaryColor} />
+          <Text style={checklistStyles.title}>Getting Started</Text>
+          <Text style={checklistStyles.progress}>{doneCount}/{steps.length}</Text>
+        </View>
+        <TouchableOpacity onPress={dismiss} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <Icon name="close" size={18} color="#9ca3af" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={checklistStyles.progressBarBg}>
+        <View style={[checklistStyles.progressBarFill, { backgroundColor: primaryColor, width: `${pct}%` as any }]} />
+      </View>
+
+      {steps.map((step, i) => (
+        <TouchableOpacity
+          key={step.key}
+          style={[checklistStyles.step, i === 0 && checklistStyles.stepFirst]}
+          onPress={() => { if (!step.done) onNavigate(step.tab); }}
+          disabled={step.done}
+          activeOpacity={step.done ? 1 : 0.7}
+        >
+          <View style={[checklistStyles.circle, step.done && { backgroundColor: primaryColor, borderColor: primaryColor }]}>
+            {step.done && <Icon name="check" size={11} color="#fff" />}
+          </View>
+          <Text style={[checklistStyles.stepLabel, step.done && checklistStyles.stepLabelDone]}>
+            {step.label}
+          </Text>
+          {!step.done && <Icon name="chevron-right" size={18} color="#9ca3af" />}
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+const checklistStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 14,
+    marginBottom: 16,
+    ...cardShadow,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  titleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  title: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111',
+  },
+  progress: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginRight: 8,
+  },
+  progressBarBg: {
+    height: 4,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  step: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 9,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  stepFirst: {
+    borderTopWidth: 0,
+  },
+  circle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#d1d5db',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: '#374151',
+  },
+  stepLabelDone: {
+    color: '#9ca3af',
+    textDecorationLine: 'line-through',
+  },
+});
 
 export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -57,10 +232,21 @@ export default function DriverMenuScreen() {
       // 2️⃣ Clear local driver UI state
       clearDriverContext();
 
-      // 3️⃣ Clear SAML session so the next login prompts for fresh credentials
+      // 3️⃣ Clear push token from Firestore so stale notifications aren't sent to this device
+      const uid = auth.currentUser?.uid;
+      const orgId = org?.orgId;
+      if (uid && orgId) {
+        setDoc(
+          doc(db, 'orgs', orgId, 'users', uid),
+          { expoPushToken: null },
+          { merge: true },
+        ).catch(() => {});
+      }
+
+      // 4️⃣ Clear SAML session so the next login prompts for fresh credentials
       await clearSamlSession();
 
-      // 4️⃣ Sign out of Firebase Auth
+      // 5️⃣ Sign out of Firebase Auth
       await signOut(auth);
 
       // ❌ DO NOT navigate manually
@@ -87,6 +273,14 @@ export default function DriverMenuScreen() {
           {role === 'admin' ? 'Manage your org and operations' : 'Stay on top of requests and routes'}
         </Text>
       </View>
+
+      {role === 'admin' && org?.orgId ? (
+        <SetupChecklist
+          orgId={org.orgId}
+          primaryColor={primaryColor}
+          onNavigate={(tab) => navigation.navigate('AdminOrgSetup', { initialTab: tab })}
+        />
+      ) : null}
 
       <View style={styles.menuSection}>
         <MenuItem
@@ -161,6 +355,13 @@ export default function DriverMenuScreen() {
             badge={needsSetup}
           />
         )}
+
+        <MenuItem
+          icon="notifications"
+          title="Notifications"
+          description="Choose which push notifications you receive"
+          onPress={() => navigation.navigate('NotificationPrefs')}
+        />
 
         <MenuItem
           icon="accessibility"

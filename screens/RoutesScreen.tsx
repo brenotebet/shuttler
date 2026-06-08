@@ -3,10 +3,14 @@ import React, { useState, useMemo } from 'react';
 import { View, ScrollView, TouchableOpacity, StyleSheet } from 'react-native'
 import { Text } from '../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation/StackNavigator';
 
 import ScreenContainer from '../components/ScreenContainer';
 import { useOrg } from '../src/org/OrgContext';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { useAuth } from '../src/auth/AuthProvider';
 import { spacing } from '../src/styles/common';
 import type { Route, WeekSchedule, DaySchedule } from '../src/org/OrgContext';
 
@@ -164,8 +168,10 @@ function RouteCard({ route, stops, primaryColor }: {
 }
 
 export default function RoutesScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { org } = useOrg();
   const { primaryColor } = useOrgTheme();
+  const { role } = useAuth();
   const routes = org?.routes ?? [];
   const stops = org?.stops ?? [];
 
@@ -175,6 +181,7 @@ export default function RoutesScreen() {
   );
 
   if (routes.length === 0) {
+    const isAdmin = role === 'admin';
     return (
       <ScreenContainer style={styles.container}>
         <View style={styles.header}>
@@ -182,9 +189,22 @@ export default function RoutesScreen() {
           <Text style={styles.subtitle}>{org?.name ?? ''}</Text>
         </View>
         <View style={styles.emptyState}>
-          <Icon name="directions-bus" size={48} color="#d1d5db" style={{ marginBottom: 16 }} />
+          <Icon name="directions-bus" size={52} color="#d1d5db" style={{ marginBottom: 12 }} />
           <Text style={styles.emptyTitle}>No routes yet</Text>
-          <Text style={styles.emptyBody}>Your organization hasn't set up any routes yet. Check back later.</Text>
+          <Text style={styles.emptyBody}>
+            {isAdmin
+              ? 'Create a route in Org Setup to define the stop order your drivers follow.'
+              : 'Your organization hasn\'t set up any routes yet. Check back later.'}
+          </Text>
+          {isAdmin && (
+            <TouchableOpacity
+              style={[styles.emptyBtn, { borderColor: primaryColor }]}
+              onPress={() => navigation.navigate('AdminOrgSetup', { initialTab: 'stops' })}
+            >
+              <Icon name="add-road" size={16} color={primaryColor} />
+              <Text style={[styles.emptyBtnText, { color: primaryColor }]}>Set Up Routes</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </ScreenContainer>
     );
@@ -350,7 +370,18 @@ const styles = StyleSheet.create({
   scheduleDash: { fontSize: 9, color: '#9ca3af' },
   scheduleClosed: { fontSize: 9, color: '#9ca3af', fontStyle: 'italic', marginTop: 2 },
   noInfo: { fontSize: 13, color: '#9ca3af', textAlign: 'center', paddingVertical: 8 },
-  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 80 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#374151', marginBottom: 8 },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 8 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#374151' },
   emptyBody: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 21, maxWidth: 280 },
+  emptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 8,
+  },
+  emptyBtnText: { fontSize: 14, fontWeight: '600' },
 });

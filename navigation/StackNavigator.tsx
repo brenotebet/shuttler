@@ -28,6 +28,7 @@ import ProfileScreen from '../screens/ProfileScreen';
 import LegalScreen from '../screens/LegalScreen';
 import AccessibilityScreen from '../screens/AccessibilityScreen';
 import PhoneVerificationScreen from '../screens/PhoneVerificationScreen';
+import NotificationPrefsScreen from '../screens/NotificationPrefsScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -41,7 +42,7 @@ export type RootStackParamList = {
   EmailVerification: undefined;
 
   // Authenticated stacks
-  StudentHome: undefined;
+  StudentHome: { screen: 'Map'; params: { focusStopId?: string; focusStopName?: string } } | undefined;
   DriverHome: undefined;
 
   // Stack-level screens
@@ -50,7 +51,7 @@ export type RootStackParamList = {
   DriverHistory: undefined;
   AdminDriver: undefined;
   AdminDashboard: undefined;
-  AdminOrgSetup: { initialTab?: 'billing' } | undefined;
+  AdminOrgSetup: { initialTab?: 'profile' | 'auth' | 'stops' | 'users' | 'ops' | 'billing' } | undefined;
   AdminAnalytics: undefined;
   AdminChat: undefined;
   Profile: undefined;
@@ -58,6 +59,7 @@ export type RootStackParamList = {
   Legal: undefined;
   Accessibility: undefined;
   PhoneVerification: { phone?: string } | undefined;
+  NotificationPrefs: undefined;
 
   SubscriptionExpired: undefined;
 };
@@ -185,6 +187,7 @@ export default function StackNavigator() {
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           <Stack.Screen name="Legal" component={LegalScreen} />
           <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
+          <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
           <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
         </Stack.Navigator>
       );
@@ -206,7 +209,8 @@ export default function StackNavigator() {
             <Stack.Screen name="HowToUse" component={HowToUseScreen} />
             <Stack.Screen name="Legal" component={LegalScreen} />
             <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
-          <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
+            <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
+            <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
           </Stack.Navigator>
         );
       }
@@ -223,6 +227,7 @@ export default function StackNavigator() {
           <Stack.Screen name="HowToUse" component={HowToUseScreen} />
           <Stack.Screen name="Legal" component={LegalScreen} />
           <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
+          <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
           <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
         </Stack.Navigator>
       );
@@ -239,7 +244,8 @@ export default function StackNavigator() {
         <Stack.Screen name="HowToUse" component={HowToUseScreen} />
         <Stack.Screen name="Legal" component={LegalScreen} />
         <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
-          <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
+        <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
+        <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
       </Stack.Navigator>
     );
   };

@@ -10,8 +10,10 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import ScreenContainer from '../components/ScreenContainer';
 import MenuItem from '../components/MenuItem';
-import { auth } from '../firebase/firebaseconfig';
+import { auth, db } from '../firebase/firebaseconfig';
+import { doc, setDoc } from 'firebase/firestore';
 import { clearSamlSession } from '../src/auth/samlAuth';
+import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
@@ -24,6 +26,7 @@ export default function StudentMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { role, displayName } = useAuth();
   const { primaryColor } = useOrgTheme();
+  const { org } = useOrg();
   const isParent = role === 'parent';
   const firstName = displayName?.split(' ')[0] ?? null;
   const { fontScale } = useAccessibility();
@@ -54,6 +57,16 @@ export default function StudentMenuScreen() {
 
   const confirmLogout = async () => {
     try {
+      // Clear push token so stale notifications aren't sent to this device
+      const uid = auth.currentUser?.uid;
+      const orgId = org?.orgId;
+      if (uid && orgId) {
+        setDoc(
+          doc(db, 'orgs', orgId, 'users', uid),
+          { expoPushToken: null },
+          { merge: true },
+        ).catch(() => {});
+      }
       await clearSamlSession();
       await signOut(auth);
     } catch (err) {
@@ -83,12 +96,12 @@ export default function StudentMenuScreen() {
             icon="people"
             title="My Children"
             description={
-              profileStatus.missingFields.includes('child profile')
+              profileStatus.missingFields.includes('Child Profile')
                 ? 'Add your child to start tracking their shuttle'
                 : "Manage your children's profiles"
             }
             onPress={() => navigation.navigate('ParentChildLink')}
-            badge={profileStatus.missingFields.includes('child profile')}
+            badge={profileStatus.missingFields.includes('Child Profile')}
           />
         )}
 
@@ -96,12 +109,12 @@ export default function StudentMenuScreen() {
           icon="person"
           title="My Profile"
           description={
-            profileStatus.isComplete || profileStatus.missingFields.every((f) => f === 'child profile')
+            profileStatus.isComplete || profileStatus.missingFields.every((f) => f === 'Child Profile')
               ? 'Edit your name, phone, and preferences'
-              : `Missing: ${profileStatus.missingFields.filter((f) => f !== 'child profile').join(', ')}`
+              : `Missing: ${profileStatus.missingFields.filter((f) => f !== 'Child Profile').join(', ')}`
           }
           onPress={() => navigation.navigate('Profile')}
-          badge={profileStatus.missingFields.some((f) => f !== 'child profile')}
+          badge={profileStatus.missingFields.some((f) => f !== 'Child Profile')}
         />
 
         <MenuItem
@@ -130,6 +143,13 @@ export default function StudentMenuScreen() {
             thumbColor={feedbackEnabled ? primaryColor : '#9ca3af'}
           />
         </View>
+
+        <MenuItem
+          icon="notifications"
+          title="Notifications"
+          description="Choose which push notifications you receive"
+          onPress={() => navigation.navigate('NotificationPrefs')}
+        />
 
         <MenuItem
           icon="accessibility"

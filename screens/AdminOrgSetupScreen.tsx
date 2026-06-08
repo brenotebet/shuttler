@@ -2213,15 +2213,16 @@ function BillingTab() {
         const redirectedUrl = (result as any).url as string | undefined;
         if (!redirectedUrl?.includes('session_id=')) return;
 
-        // Payment completed — poll for the webhook to process.
-        for (let i = 0; i < 5; i++) {
-          await new Promise((r) => setTimeout(r, 2000));
-          await refreshOrg();
-        }
+        // Payment confirmed — unlock the UI immediately.
+        // The Firestore live listener fires the confirmation sheet as soon as
+        // the webhook updates the org doc. Background polls are a safety net.
+        void refreshOrg();
+        setTimeout(() => void refreshOrg(), 3000);
+        setTimeout(() => void refreshOrg(), 7000);
       } catch (e: any) {
         showToast(e?.message ?? 'Failed to open billing.', 'error');
       } finally {
-        setIsLoading(false);
+        setIsLoading(false);  // unblocks immediately — no more 10s freeze
       }
     },
     [org, refreshOrg],
@@ -2246,10 +2247,9 @@ function BillingTab() {
       const redirectedUrl = (result as any).url as string | undefined;
       if (!redirectedUrl?.includes('session_id=')) return;
 
-      for (let i = 0; i < 5; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        await refreshOrg();
-      }
+      void refreshOrg();
+      setTimeout(() => void refreshOrg(), 3000);
+      setTimeout(() => void refreshOrg(), 7000);
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to open billing.', 'error');
     } finally {

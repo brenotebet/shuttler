@@ -28,19 +28,19 @@ export function useProfileStatus(): ProfileStatus {
   // Name: must be present and contain at least two words (first + last)
   const nameParts = (displayName ?? '').trim().split(/\s+/).filter(Boolean);
   if (!displayName?.trim()) {
-    missingFields.push('full name');
+    missingFields.push('Full Name');
   } else if (nameParts.length < 2) {
-    missingFields.push('last name');
+    missingFields.push('Last Name');
   }
 
   // Phone: required for all roles
   if (!phone?.trim()) {
-    missingFields.push('phone number');
+    missingFields.push('Phone Number');
   }
 
   // Parents must have at least one child profile
   if (role === 'parent' && hasChildren === false) {
-    missingFields.push('child profile');
+    missingFields.push('Child Profile');
   }
 
   const waitingForChildren = role === 'parent' && hasChildren === null;

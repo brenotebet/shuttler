@@ -295,10 +295,12 @@ function AnalyticsSection() {
       });
       const { url, error: err } = await res.json();
       if (err) throw new Error(err);
-      await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
-      for (let i = 0; i < 5; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        await refreshOrg();
+      const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      const redirectedUrl = (result as any).url as string | undefined;
+      if (result.type === 'success' && redirectedUrl?.includes('session_id=')) {
+        void refreshOrg();
+        setTimeout(() => void refreshOrg(), 3000);
+        setTimeout(() => void refreshOrg(), 7000);
       }
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to open billing.', 'error');

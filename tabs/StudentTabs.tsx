@@ -8,7 +8,7 @@ import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 
 export type StudentTabParamList = {
-  Map: undefined;
+  Map: { focusStopId?: string; focusStopName?: string } | undefined;
   Routes: undefined;
   Menu: undefined;
 };
