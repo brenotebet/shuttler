@@ -48,8 +48,8 @@ export default function StudentHistoryScreen() {
     const q = query(
       collection(db, 'orgs', orgId, 'stopRequests'),
       where('studentUid', '==', watchUid),
-      where('status', '==', 'completed'),
-      orderBy('completedAt', 'desc')
+      where('status', 'in', ['completed', 'cancelled']),
+      orderBy('createdAt', 'desc'),
     );
     const unsub = onSnapshot(
       q,
@@ -73,23 +73,49 @@ export default function StudentHistoryScreen() {
         data={stops}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => {
-          const completedDate =
-            item.completedAt?.toDate?.() ||
-            item.completedTimestamp?.toDate?.() ||
-            item.timestamp?.toDate?.() ||
+          const isCancelled = item.status === 'cancelled';
+          const eventDate =
+            (isCancelled
+              ? item.cancelledAt?.toDate?.()
+              : item.completedAt?.toDate?.() || item.completedTimestamp?.toDate?.()) ||
+            item.createdAt?.toDate?.() ||
             null;
+
+          const cancelReason = isCancelled
+            ? item.cancelledReason === 'driver_offline'    ? 'Driver went offline'
+            : item.cancelledReason === 'no_buses_online'   ? 'No buses available'
+            : item.cancelledReason === 'ttl_expired_15m'   ? 'Request timed out'
+            : item.cancelledReason === 'student_cancelled' ? 'Cancelled by you'
+            : item.cancelledReason === 'driver_skipped'    ? "Driver couldn't reach stop"
+            : 'Cancelled'
+            : null;
+
           return (
-            <View style={styles.card}>
+            <View style={[styles.card, isCancelled && styles.cardCancelled]}>
               <View style={styles.cardHeader}>
-                <View style={styles.cardIconWrap}>
-                  <Icon name="place" size={18} color={primaryColor} />
+                <View style={[styles.cardIconWrap, isCancelled && styles.cardIconWrapCancelled]}>
+                  <Icon
+                    name={isCancelled ? 'cancel' : 'place'}
+                    size={18}
+                    color={isCancelled ? '#9ca3af' : primaryColor}
+                  />
                 </View>
                 <View style={styles.cardContent}>
-                  <Text style={styles.cardTitle}>{item.stop?.name ?? 'Unknown stop'}</Text>
+                  <View style={styles.cardTitleRow}>
+                    <Text style={[styles.cardTitle, isCancelled && styles.cardTitleCancelled]}>
+                      {item.stop?.name ?? 'Unknown stop'}
+                    </Text>
+                    {isCancelled && (
+                      <View style={styles.cancelledBadge}>
+                        <Text style={styles.cancelledBadgeText}>Cancelled</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={styles.cardDetail}>
-                    {completedDate
-                      ? `${formatRelativeTime(completedDate)}  ·  ${completedDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+                    {eventDate
+                      ? `${formatRelativeTime(eventDate)}  ·  ${eventDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
                       : 'Time unavailable'}
+                    {cancelReason ? `  ·  ${cancelReason}` : ''}
                   </Text>
                 </View>
               </View>
@@ -143,6 +169,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.item / 2,
     ...cardShadow,
   },
+  cardCancelled: {
+    opacity: 0.75,
+  },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -157,14 +186,37 @@ const styles = StyleSheet.create({
     marginRight: spacing.item,
     flexShrink: 0,
   },
+  cardIconWrapCancelled: {
+    backgroundColor: '#f3f4f6',
+  },
   cardContent: {
     flex: 1,
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    marginBottom: 2,
   },
   cardTitle: {
     fontSize: 15,
     fontWeight: '600',
     color: '#111',
-    marginBottom: 2,
+  },
+  cardTitleCancelled: {
+    color: '#6b7280',
+  },
+  cancelledBadge: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  cancelledBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#9ca3af',
   },
   cardDetail: {
     fontSize: 13,

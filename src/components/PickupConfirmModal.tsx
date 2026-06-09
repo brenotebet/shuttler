@@ -5,7 +5,7 @@ import { Text } from '../../components/Text';
 import BottomSheet from '../../components/BottomSheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { addDoc, collection, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, updateDoc, doc, runTransaction } from 'firebase/firestore';
 import { db } from '../../firebase/firebaseconfig';
 import { showAlert } from '../utils/alerts';
 
@@ -71,13 +71,21 @@ export default function PickupConfirmModal({
   const handleNotYet = async () => {
     setSaving(true);
     try {
-      await updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), {
-        status: 'pending',
-        confirmationExpiresAtMs: null,
+      const requestRef = doc(db, 'orgs', orgId, 'stopRequests', requestId);
+      // Use a transaction so we only revert if the request is still awaiting —
+      // prevents a "Something went wrong" error if the 5-min TTL timer fired first.
+      let reverted = false;
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(requestRef);
+        if (snap.data()?.status !== 'awaiting_confirmation') return;
+        tx.update(requestRef, { status: 'pending', confirmationExpiresAtMs: null });
+        reverted = true;
       });
-      showAlert('Got it — your request is still active and the driver will see it.', 'Still waiting', 'info');
+      if (reverted) {
+        showAlert('Got it — your request is still active and the driver will see it.', 'Still waiting', 'info');
+      }
     } catch {
-      showAlert('Something went wrong. Please try again.', 'Error', 'error');
+      // Silently close — the request completed on its own, which is fine
     } finally {
       setSaving(false);
       onDone();

@@ -1,8 +1,9 @@
 // screens/NotificationPrefsScreen.tsx
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Switch, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, StyleSheet, Switch, ScrollView, ActivityIndicator, TouchableOpacity, Linking, AppState } from 'react-native';
 import { Text } from '../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import * as Notifications from 'expo-notifications';
 
 import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
@@ -33,8 +34,23 @@ export default function NotificationPrefsScreen() {
   const [prefs, setPrefs] = useState<NotifPrefs>(DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [permStatus, setPermStatus] = useState<'granted' | 'denied' | 'undetermined' | null>(null);
 
   const uid = auth.currentUser?.uid;
+
+  const checkPermission = useCallback(async () => {
+    const { status } = await Notifications.getPermissionsAsync();
+    setPermStatus(status as 'granted' | 'denied' | 'undetermined');
+  }, []);
+
+  useEffect(() => {
+    checkPermission();
+    // Re-check when user comes back from Settings
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkPermission();
+    });
+    return () => sub.remove();
+  }, [checkPermission]);
 
   useEffect(() => {
     if (!orgId || !uid) return;
@@ -112,6 +128,24 @@ export default function NotificationPrefsScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
+          {permStatus === 'denied' && (
+            <View style={styles.permBanner}>
+              <Icon name="notifications-off" size={22} color="#92400e" style={{ flexShrink: 0 }} />
+              <View style={styles.permBannerText}>
+                <Text style={styles.permBannerTitle}>Notifications are disabled</Text>
+                <Text style={styles.permBannerBody}>
+                  You won't receive bus arrival alerts or pickup updates. Enable them in Settings.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.permBannerBtn}
+                onPress={() => Linking.openSettings()}
+              >
+                <Text style={styles.permBannerBtnText}>Open Settings</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           <Text style={styles.sectionLabel}>Push Notifications</Text>
           <Text style={styles.hint}>
             You'll always receive critical alerts. Toggle the optional ones below.
@@ -212,4 +246,27 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 8,
   },
+  permBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    borderRadius: borderRadius.lg,
+    padding: 14,
+    marginBottom: 20,
+  },
+  permBannerText: { flex: 1 },
+  permBannerTitle: { fontSize: 13, fontWeight: '700', color: '#92400e', marginBottom: 3 },
+  permBannerBody: { fontSize: 12, color: '#78350f', lineHeight: 17 },
+  permBannerBtn: {
+    backgroundColor: '#f59e0b',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    alignSelf: 'flex-start',
+    flexShrink: 0,
+  },
+  permBannerBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
 });

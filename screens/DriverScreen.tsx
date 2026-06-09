@@ -1,5 +1,5 @@
 // DriverScreen.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, View, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native'
 import { Text } from '../components/Text';
@@ -18,6 +18,7 @@ import {
   doc,
   serverTimestamp,
   setDoc,
+  updateDoc,
   limit,
   getDoc,
   getDocs,
@@ -29,7 +30,7 @@ import {
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
-import { notifyStudentArrived, notifyStudentCompleted } from '../src/utils/pushNotifications';
+import { notifyStudentArrived, notifyStudentCompleted, notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 import { BACKGROUND_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
@@ -820,6 +821,35 @@ export default function DriverScreen() {
     });
   }, [otherBusesRaw, orgId]);
 
+  const handleSkipRequest = useCallback((reqId: string, studentUid: string | null, stopName: string) => {
+    Alert.alert(
+      "Can't reach this stop?",
+      `The student at ${stopName} will be notified and can request again on the next pass.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: "Skip request",
+          style: 'destructive',
+          onPress: async () => {
+            if (!orgId) return;
+            try {
+              await updateDoc(doc(db, 'orgs', orgId, 'stopRequests', reqId), {
+                status: 'cancelled',
+                cancelledReason: 'driver_skipped',
+                cancelledAt: serverTimestamp(),
+              });
+              if (studentUid) {
+                void notifyStudentRequestCancelled(orgId, studentUid, 'driver_skipped');
+              }
+            } catch (e) {
+              console.error('[skip request]', e);
+            }
+          },
+        },
+      ],
+    );
+  }, [orgId]);
+
   const saveBoardingCount = async () => {
     if (!driverId || isSavingBoarding) return;
     setIsSavingBoarding(true);
@@ -1260,9 +1290,18 @@ export default function DriverScreen() {
 
                 return (
                   <View key={req.id} style={styles.feedRow}>
-                    <Text style={styles.feedStop}>{stopName}</Text>
-                    <Text style={styles.feedMeta}>Requested {formatTimeAgo(createdAtMs)}</Text>
-                    <Text style={styles.feedStudent}>{studentLabel}</Text>
+                    <View style={styles.feedRowInfo}>
+                      <Text style={styles.feedStop}>{stopName}</Text>
+                      <Text style={styles.feedMeta}>Requested {formatTimeAgo(createdAtMs)}</Text>
+                      <Text style={styles.feedStudent}>{studentLabel}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.feedSkipBtn}
+                      onPress={() => handleSkipRequest(req.id, req.studentUid ?? null, stopName)}
+                      hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                    >
+                      <Text style={styles.feedSkipText}>Skip</Text>
+                    </TouchableOpacity>
                   </View>
                 );
               })
@@ -1548,13 +1587,26 @@ const styles = StyleSheet.create({
   actionButtonDisabled: { opacity: 0.45 },
   feedWrap: {},
   feedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#ddd',
+    gap: 10,
   },
+  feedRowInfo: { flex: 1 },
   feedStop: { fontSize: 15, fontWeight: '600', color: '#111' },
   feedMeta: { fontSize: 13, color: '#666', marginTop: 2 },
   feedStudent: { fontSize: 13, color: '#444', marginTop: 2 },
+  feedSkipBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+  },
+  feedSkipText: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
   emptyText: { fontSize: 14, color: '#777', paddingVertical: 10 },
   routePickerScroll: { marginBottom: 10 },
   routePickerContent: { gap: 8, paddingBottom: 4 },

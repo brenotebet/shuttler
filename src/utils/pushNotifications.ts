@@ -40,11 +40,11 @@ export async function notifyStudentArrived(
   }
 }
 
-/** Called when a student's request is cancelled (driver offline / no buses) — notifies the student. */
+/** Called when a student's request is cancelled — notifies the student. */
 export async function notifyStudentRequestCancelled(
   orgId: string,
   studentUid: string,
-  reason: 'driver_offline' | 'no_buses_online',
+  reason: 'driver_offline' | 'no_buses_online' | 'driver_skipped',
 ): Promise<void> {
   try {
     await post('/notifications/stop-request-cancelled', { orgId, studentUid, reason });

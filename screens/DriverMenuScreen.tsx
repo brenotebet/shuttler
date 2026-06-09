@@ -1,7 +1,7 @@
 // src/screens/DriverMenuScreen.tsx
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { TouchableOpacity, View, StyleSheet, Alert, ScrollView } from 'react-native'
+import { TouchableOpacity, View, StyleSheet, Alert, ScrollView, Linking } from 'react-native'
 import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,7 +14,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
-import { collection, doc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, limit, onSnapshot, query, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
@@ -52,9 +52,12 @@ function SetupChecklist({
   }, [storageKey]);
 
   useEffect(() => {
-    getDocs(query(collection(db, 'orgs', orgId, 'users'), where('role', '==', 'driver'), limit(1)))
-      .then((snap) => setHasDriver(!snap.empty))
-      .catch(() => setHasDriver(false));
+    const unsub = onSnapshot(
+      query(collection(db, 'orgs', orgId, 'users'), where('role', '==', 'driver'), limit(1)),
+      (snap) => setHasDriver(!snap.empty),
+      () => setHasDriver(false),
+    );
+    return unsub;
   }, [orgId]);
 
   const hasStops = (org?.stops?.length ?? 0) > 0;
@@ -375,6 +378,13 @@ export default function DriverMenuScreen() {
           title="How to Use"
           description="Step-by-step guide to the app"
           onPress={() => navigation.navigate('HowToUse', { role: role === 'admin' ? 'admin' : 'driver' })}
+        />
+
+        <MenuItem
+          icon="help-outline"
+          title="Get Help"
+          description="Contact support or report an issue"
+          onPress={() => Linking.openURL('mailto:support@shuttler.net').catch(() => {})}
         />
 
         <MenuItem

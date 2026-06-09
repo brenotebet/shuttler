@@ -1847,6 +1847,8 @@ app.post('/notifications/stop-request-cancelled', requireAuth, async (req: Reque
     if (token && cancelledEnabled) {
       const body = reason === 'no_buses_online'
         ? 'There are no buses currently online. Your request was cancelled.'
+        : reason === 'driver_skipped'
+        ? "The driver couldn't reach your stop. Please request again when the next bus comes around."
         : 'The driver has gone offline. Your request was cancelled.';
       await sendExpoPushNotifications([token], 'Request Cancelled', body, { type: 'request_cancelled', orgId });
     }

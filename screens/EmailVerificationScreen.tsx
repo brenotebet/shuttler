@@ -14,12 +14,21 @@ import { spacing, borderRadius, cardShadow } from '../src/styles/common';
 import { useAuth } from '../src/auth/AuthProvider';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
+const RESEND_COOLDOWN = 30;
+
 export default function EmailVerificationScreen() {
   const { reloadUser } = useAuth();
   const [checking, setChecking] = useState(false);
   const [resending, setResending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const email = auth.currentUser?.email ?? '';
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   // Sign out on hardware back press (Android) — there's no previous screen to go to
   useEffect(() => {
@@ -46,7 +55,7 @@ export default function EmailVerificationScreen() {
   };
 
   const handleResend = async () => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || resendCooldown > 0) return;
     setResending(true);
     try {
       const token = await auth.currentUser.getIdToken();
@@ -59,6 +68,7 @@ export default function EmailVerificationScreen() {
         throw new Error(data?.error ?? `Server error ${res.status}`);
       }
       showAlert(`Verification email sent to ${email}.`, 'Email sent');
+      setResendCooldown(RESEND_COOLDOWN);
     } catch (e: any) {
       showAlert(e?.message ?? 'Failed to resend verification email.', 'Error');
     } finally {
@@ -93,11 +103,15 @@ export default function EmailVerificationScreen() {
 
           <TouchableOpacity
             onPress={handleResend}
-            disabled={resending}
+            disabled={resending || resendCooldown > 0}
             style={styles.resendButton}
           >
-            <Text style={styles.resendText}>
-              {resending ? 'Sending…' : 'Resend verification email'}
+            <Text style={[styles.resendText, (resendCooldown > 0) && styles.resendTextDisabled]}>
+              {resending
+                ? 'Sending…'
+                : resendCooldown > 0
+                ? `Resend in ${resendCooldown}s`
+                : 'Resend verification email'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -160,6 +174,9 @@ const styles = StyleSheet.create({
   resendText: {
     color: PRIMARY_COLOR,
     fontSize: 14,
+  },
+  resendTextDisabled: {
+    color: '#9ca3af',
   },
   signOutButton: {
     paddingVertical: spacing.item / 2,

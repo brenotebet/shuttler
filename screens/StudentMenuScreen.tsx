@@ -1,7 +1,7 @@
 // src/screens/StudentMenuScreen.tsx
 
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Alert, Switch, ScrollView } from 'react-native'
+import { View, StyleSheet, Alert, Switch, ScrollView, Linking } from 'react-native'
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signOut } from 'firebase/auth';
@@ -156,6 +156,13 @@ export default function StudentMenuScreen() {
           title="Accessibility"
           description="Adjust text size and motion preferences"
           onPress={() => navigation.navigate('Accessibility')}
+        />
+
+        <MenuItem
+          icon="help-outline"
+          title="Get Help"
+          description="Contact support or report an issue"
+          onPress={() => Linking.openURL('mailto:support@shuttler.net').catch(() => {})}
         />
 
         <MenuItem

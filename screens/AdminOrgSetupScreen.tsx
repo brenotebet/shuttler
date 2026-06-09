@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/StackNavigator';
-import { ActivityIndicator, Alert, FlatList, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, ScrollView, Share, StyleSheet, Switch, TextInput, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, Alert, Clipboard, FlatList, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, ScrollView, Share, StyleSheet, Switch, TextInput, TouchableOpacity, View } from 'react-native'
 import { Text } from '../components/Text';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -1607,6 +1607,8 @@ function UsersTab() {
   }
 
   const orgSlug = org?.slug ?? org?.orgId ?? '';
+  const [inviteRole, setInviteRole] = useState<'student' | 'driver' | 'parent'>('student');
+  const [copiedId, setCopiedId] = useState(false);
 
   const searchQuery = search.trim().toLowerCase();
   const filteredMembers = searchQuery
@@ -1617,28 +1619,89 @@ function UsersTab() {
       )
     : members;
 
-  const handleShareInvite = () => {
-    Share.share({
-      message: `Join ${org?.name ?? 'our shuttle'} on Shuttler!\n\nOpen the Shuttler app, search for "${org?.name ?? orgSlug}", and sign up. Organization ID: ${orgSlug}`,
-    }).catch(() => {});
+  const INVITE_MESSAGES: Record<typeof inviteRole, string> = {
+    student: `You're invited to use ${org?.name ?? 'our shuttle'} on Shuttler!\n\n1. Download the Shuttler app\n2. Search for "${org?.name ?? orgSlug}" (Org ID: ${orgSlug})\n3. Sign up and you're all set — track the bus and request pickups in real time.`,
+    driver:  `You've been invited to drive for ${org?.name ?? 'our shuttle'} on Shuttler!\n\n1. Download the Shuttler app\n2. Search for "${org?.name ?? orgSlug}" (Org ID: ${orgSlug})\n3. Sign up — your admin will assign you the Driver role\n4. Open the app, start sharing location, and you're live.`,
+    parent:  `Track your child's shuttle with ${org?.name ?? 'our shuttle'} on Shuttler!\n\n1. Download the Shuttler app\n2. Search for "${org?.name ?? orgSlug}" (Org ID: ${orgSlug})\n3. Sign up and add your child's profile\n4. See the bus live and get notified when it arrives at their stop.`,
   };
+
+  const handleShareInvite = () => {
+    Share.share({ message: INVITE_MESSAGES[inviteRole] }).catch(() => {});
+  };
+
+  const handleCopyId = () => {
+    Clipboard.setString(orgSlug);
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  };
+
+  const INVITE_ROLE_LABELS: { key: typeof inviteRole; label: string; icon: string }[] = [
+    { key: 'student', label: 'Student', icon: 'school' },
+    { key: 'driver',  label: 'Driver',  icon: 'directions-bus' },
+    { key: 'parent',  label: 'Parent',  icon: 'family-restroom' },
+  ];
 
   return (
     <>
     <ScrollView contentContainerStyle={styles.tabContent}>
       {/* Invite card */}
-      <TouchableOpacity style={[usersStyles.inviteCard, { backgroundColor: `${primaryColor}0d`, borderColor: `${primaryColor}30` }]} onPress={handleShareInvite} activeOpacity={0.8}>
-        <View style={[usersStyles.inviteIconWrap, { backgroundColor: `${primaryColor}18` }]}>
-          <Icon name="share" size={20} color={primaryColor} />
+      <View style={[usersStyles.inviteCard, { backgroundColor: `${primaryColor}0d`, borderColor: `${primaryColor}30` }]}>
+        {/* Header row */}
+        <View style={usersStyles.inviteHeader}>
+          <View style={[usersStyles.inviteIconWrap, { backgroundColor: `${primaryColor}18` }]}>
+            <Icon name="person-add" size={20} color={primaryColor} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={usersStyles.inviteTitle}>Invite people to join</Text>
+            <Text style={usersStyles.inviteBody}>Choose a role, then share</Text>
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={usersStyles.inviteTitle}>Invite people to join</Text>
-          <Text style={usersStyles.inviteBody} numberOfLines={1}>
-            Org ID: <Text style={[usersStyles.inviteSlug, { color: primaryColor }]}>{orgSlug}</Text>
-          </Text>
+
+        {/* Role chips */}
+        <View style={usersStyles.roleChips}>
+          {INVITE_ROLE_LABELS.map(({ key, label, icon }) => (
+            <TouchableOpacity
+              key={key}
+              style={[
+                usersStyles.roleChip,
+                inviteRole === key && { backgroundColor: primaryColor, borderColor: primaryColor },
+              ]}
+              onPress={() => setInviteRole(key)}
+            >
+              <Icon name={icon} size={14} color={inviteRole === key ? '#fff' : '#6b7280'} />
+              <Text style={[usersStyles.roleChipText, inviteRole === key && { color: '#fff' }]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
-        <Icon name="chevron-right" size={20} color="#d1d5db" />
-      </TouchableOpacity>
+
+        {/* Org ID row + actions */}
+        <View style={usersStyles.inviteActions}>
+          <View style={usersStyles.orgIdRow}>
+            <Text style={usersStyles.orgIdLabel}>Org ID</Text>
+            <Text style={[usersStyles.inviteSlug, { color: primaryColor }]} numberOfLines={1}>{orgSlug}</Text>
+          </View>
+          <View style={usersStyles.inviteBtns}>
+            <TouchableOpacity
+              style={[usersStyles.inviteBtn, usersStyles.inviteBtnSecondary]}
+              onPress={handleCopyId}
+            >
+              <Icon name={copiedId ? 'check' : 'content-copy'} size={15} color={copiedId ? '#16a34a' : '#6b7280'} />
+              <Text style={[usersStyles.inviteBtnText, copiedId && { color: '#16a34a' }]}>
+                {copiedId ? 'Copied!' : 'Copy ID'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[usersStyles.inviteBtn, { backgroundColor: primaryColor }]}
+              onPress={handleShareInvite}
+            >
+              <Icon name="share" size={15} color="#fff" />
+              <Text style={[usersStyles.inviteBtnText, { color: '#fff' }]}>Share invite</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
 
       <Text style={styles.hint}>
         Tap a member's role badge to change it. Tap the route badge on drivers to assign a default route.
@@ -1824,15 +1887,17 @@ function UsersTab() {
 
 const usersStyles = StyleSheet.create({
   inviteCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: `${PRIMARY_COLOR}0d`,
     borderWidth: 1,
     borderColor: `${PRIMARY_COLOR}30`,
     borderRadius: 12,
     padding: 14,
     marginBottom: 16,
+    gap: 12,
+  },
+  inviteHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   inviteIconWrap: {
     width: 38,
@@ -1841,6 +1906,7 @@ const usersStyles = StyleSheet.create({
     backgroundColor: `${PRIMARY_COLOR}18`,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   inviteTitle: {
     fontSize: 14,
@@ -1852,9 +1918,69 @@ const usersStyles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
   },
+  roleChips: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  roleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+  },
+  roleChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  inviteActions: {
+    gap: 8,
+  },
+  orgIdRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  orgIdLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   inviteSlug: {
+    flex: 1,
+    fontSize: 13,
     fontWeight: '700',
     color: PRIMARY_COLOR,
+  },
+  inviteBtns: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  inviteBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  inviteBtnSecondary: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+  },
+  inviteBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6b7280',
   },
   selfAvatar: {
     backgroundColor: `${PRIMARY_COLOR}25`,

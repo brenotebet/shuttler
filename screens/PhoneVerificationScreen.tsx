@@ -1,5 +1,5 @@
 // screens/PhoneVerificationScreen.tsx
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   TextInput,
@@ -35,6 +35,21 @@ type RouteT = RouteProp<RootStackParamList, 'PhoneVerification'>;
 
 type Step = 'phone' | 'otp' | 'success';
 
+const RESEND_COOLDOWN = 30;
+
+function friendlyAuthError(e: any): string {
+  switch (e?.code) {
+    case 'auth/invalid-verification-code': return 'That code is incorrect. Please try again.';
+    case 'auth/code-expired': return 'The code expired. Tap "Resend code" to get a new one.';
+    case 'auth/too-many-requests': return 'Too many attempts. Please wait a minute before trying again.';
+    case 'auth/invalid-phone-number': return 'That phone number is invalid. Check the format and country code.';
+    case 'auth/missing-phone-number': return 'Please enter a phone number.';
+    case 'auth/captcha-check-failed': return 'reCAPTCHA check failed. Please try again.';
+    case 'auth/network-request-failed': return 'Network error. Check your connection and try again.';
+    default: return e?.message ?? 'Something went wrong. Please try again.';
+  }
+}
+
 export default function PhoneVerificationScreen() {
   const navigation = useNavigation();
   const route = useRoute<RouteT>();
@@ -48,6 +63,29 @@ export default function PhoneVerificationScreen() {
   const [step, setStep] = useState<Step>('phone');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Tick down the resend cooldown every second
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  const sendCode = useCallback(async (phoneNumber: string) => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const result = await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier.current!);
+      setVerificationId(result.verificationId);
+      setStep('otp');
+      setResendCooldown(RESEND_COOLDOWN);
+    } catch (e: any) {
+      setError(friendlyAuthError(e));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, []);
 
   const handleSendCode = useCallback(async () => {
     const cleaned = phone.trim();
@@ -55,18 +93,15 @@ export default function PhoneVerificationScreen() {
       setError('Enter a valid phone number with country code (e.g. +1 555 123 4567).');
       return;
     }
+    await sendCode(cleaned);
+  }, [phone, sendCode]);
+
+  const handleResend = useCallback(async () => {
+    if (resendCooldown > 0 || isSubmitting) return;
+    setCode('');
     setError(null);
-    setIsSubmitting(true);
-    try {
-      const result = await signInWithPhoneNumber(auth, cleaned, recaptchaVerifier.current!);
-      setVerificationId(result.verificationId);
-      setStep('otp');
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to send code. Check the number and try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [phone]);
+    await sendCode(phone.trim());
+  }, [phone, resendCooldown, isSubmitting, sendCode]);
 
   const handleVerifyCode = useCallback(async () => {
     if (!verificationId || code.trim().length < 6 || !user || !orgId) return;
@@ -78,10 +113,9 @@ export default function PhoneVerificationScreen() {
       try {
         await linkWithCredential(user, credential);
       } catch (linkErr: any) {
-        // credential-already-in-use means the phone is linked to a different Firebase
-        // account. The user still proved ownership by receiving and entering the OTP,
-        // so we treat it as verified.
-        // provider-already-linked means THIS user already has this phone linked — fine.
+        // credential-already-in-use: phone is linked to a different account — user proved
+        // ownership via OTP, so treat as verified.
+        // provider-already-linked: this user already has this phone linked — fine.
         const code_ = linkErr?.code ?? '';
         if (
           code_ !== 'auth/credential-already-in-use' &&
@@ -91,7 +125,7 @@ export default function PhoneVerificationScreen() {
         }
       }
 
-      // Mark verified in Firestore
+      // Mark verified in Firestore — AuthProvider's onSnapshot picks this up immediately
       await setDoc(
         doc(db, 'orgs', orgId, 'users', user.uid),
         { phone: phone.trim(), phoneVerified: true },
@@ -100,13 +134,7 @@ export default function PhoneVerificationScreen() {
 
       setStep('success');
     } catch (e: any) {
-      const msg =
-        e?.code === 'auth/invalid-verification-code'
-          ? 'That code is incorrect. Please try again.'
-          : e?.code === 'auth/code-expired'
-          ? 'The code expired. Go back and request a new one.'
-          : e?.message ?? 'Verification failed. Please try again.';
-      setError(msg);
+      setError(friendlyAuthError(e));
     } finally {
       setIsSubmitting(false);
     }
@@ -120,7 +148,6 @@ export default function PhoneVerificationScreen() {
       <FirebaseRecaptchaVerifierModal
         ref={recaptchaVerifier}
         firebaseConfig={app.options}
-        attemptInvisibleVerification
       />
 
       <KeyboardAvoidingView
@@ -185,12 +212,22 @@ export default function PhoneVerificationScreen() {
                     disabled={isSubmitting || code.trim().length < 6}
                     style={[s.btn, { backgroundColor: primaryColor }]}
                   />
-                  <TouchableOpacity
-                    style={s.resendRow}
-                    onPress={() => { setStep('phone'); setCode(''); setVerificationId(null); setError(null); }}
-                  >
-                    <Text style={[s.resendText, { color: primaryColor }]}>Wrong number? Start over</Text>
-                  </TouchableOpacity>
+                  <View style={s.resendRow}>
+                    <TouchableOpacity
+                      onPress={handleResend}
+                      disabled={resendCooldown > 0 || isSubmitting}
+                    >
+                      <Text style={[s.resendText, { color: resendCooldown > 0 ? '#9ca3af' : primaryColor }]}>
+                        {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : 'Resend code'}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={s.resendSep}>·</Text>
+                    <TouchableOpacity
+                      onPress={() => { setStep('phone'); setCode(''); setVerificationId(null); setError(null); setResendCooldown(0); }}
+                    >
+                      <Text style={[s.resendText, { color: primaryColor }]}>Wrong number?</Text>
+                    </TouchableOpacity>
+                  </View>
                 </>
               )}
             </>
@@ -286,13 +323,20 @@ const s = StyleSheet.create({
     lineHeight: 18,
   },
   resendRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     marginTop: 16,
     paddingVertical: 8,
   },
   resendText: {
     fontSize: 14,
     fontWeight: '500',
+  },
+  resendSep: {
+    fontSize: 14,
+    color: '#d1d5db',
   },
   successContainer: {
     alignItems: 'center',
