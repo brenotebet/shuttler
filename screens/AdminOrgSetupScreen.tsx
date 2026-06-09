@@ -1446,6 +1446,9 @@ function UsersTab() {
   const [rolePickerTarget, setRolePickerTarget] = useState<OrgMember | null>(null);
   const [routePickerTarget, setRoutePickerTarget] = useState<OrgMember | null>(null);
   const [search, setSearch] = useState('');
+  // Invite controls — must stay above all early returns
+  const [inviteRole, setInviteRole] = useState<'student' | 'driver' | 'parent'>('student');
+  const [copiedId, setCopiedId] = useState(false);
 
   const orgRoutes = org?.routes ?? [];
 
@@ -1607,8 +1610,6 @@ function UsersTab() {
   }
 
   const orgSlug = org?.slug ?? org?.orgId ?? '';
-  const [inviteRole, setInviteRole] = useState<'student' | 'driver' | 'parent'>('student');
-  const [copiedId, setCopiedId] = useState(false);
 
   const searchQuery = search.trim().toLowerCase();
   const filteredMembers = searchQuery

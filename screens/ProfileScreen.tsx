@@ -1,5 +1,5 @@
 // screens/ProfileScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native'
 import { Text } from '../components/Text';
 import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -52,6 +52,8 @@ export default function ProfileScreen() {
   const [phone, setPhone] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [savingPhone, setSavingPhone] = useState(false);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const verifiedPhoneSnapshot = useRef('');
 
   // Password change (email auth only)
   const [currentPw, setCurrentPw] = useState('');
@@ -123,11 +125,13 @@ export default function ProfileScreen() {
     if (!user?.uid || !orgId) return;
     setSavingPhone(true);
     try {
+      const numberChanged = trimmed !== verifiedPhoneSnapshot.current;
       await setDoc(
         doc(db, 'orgs', orgId, 'users', user.uid),
-        { phone: trimmed },
+        { phone: trimmed, ...(numberChanged && phoneVerified ? { phoneVerified: false } : {}) },
         { merge: true },
       );
+      setEditingPhone(false);
       showAlert('Phone number saved', 'Saved', 'success');
     } catch {
       showAlert('Failed to save phone number. Please try again.', 'Error', 'error');
@@ -241,44 +245,78 @@ export default function ProfileScreen() {
         <View style={[styles.card, phoneIncomplete && styles.cardIncomplete]}>
           <View style={styles.cardLabelRow}>
             <Text style={styles.cardLabel}>Phone Number</Text>
-            {phoneVerified ? (
+            {phoneVerified && !editingPhone ? (
               <View style={styles.verifiedChip}>
                 <Icon name="verified" size={12} color="#16a34a" />
                 <Text style={styles.verifiedChipText}>Verified</Text>
               </View>
-            ) : phone.trim() ? (
+            ) : !phoneVerified && phone.trim() && !editingPhone ? (
               <View style={styles.unverifiedChip}>
                 <Icon name="info-outline" size={12} color="#92400e" />
                 <Text style={styles.unverifiedChipText}>Not verified</Text>
               </View>
             ) : null}
           </View>
-          <View style={styles.fieldRow}>
-            <PhoneInput
-              value={phone}
-              onChange={setPhone}
-              editable={!savingPhone}
-              style={styles.phoneInput}
-            />
-            <TouchableOpacity
-              style={[styles.saveBtn, { backgroundColor: primaryColor }, savingPhone && styles.saveBtnDisabled]}
-              onPress={handleSavePhone}
-              disabled={savingPhone}
-            >
-              {savingPhone
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Icon name="check" size={18} color="#fff" />}
-            </TouchableOpacity>
-          </View>
-          {!phoneVerified && phone.trim() ? (
-            <TouchableOpacity
-              style={[styles.verifyBtn, { borderColor: primaryColor }]}
-              onPress={() => navigation.navigate('PhoneVerification', { phone: phone.trim() })}
-            >
-              <Icon name="verified-user" size={15} color={primaryColor} />
-              <Text style={[styles.verifyBtnText, { color: primaryColor }]}>Verify this number →</Text>
-            </TouchableOpacity>
-          ) : null}
+
+          {phoneVerified && !editingPhone ? (
+            // Locked display
+            <View style={styles.lockedPhoneRow}>
+              <Text style={styles.lockedPhoneText}>{phone}</Text>
+              <TouchableOpacity
+                style={[styles.changePhoneBtn, { borderColor: primaryColor }]}
+                onPress={() => {
+                  verifiedPhoneSnapshot.current = phone;
+                  setEditingPhone(true);
+                }}
+              >
+                <Text style={[styles.changePhoneBtnText, { color: primaryColor }]}>Change</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            // Editable
+            <>
+              <View style={styles.fieldRow}>
+                <PhoneInput
+                  value={phone}
+                  onChange={setPhone}
+                  editable={!savingPhone}
+                  style={styles.phoneInput}
+                />
+                <TouchableOpacity
+                  style={[styles.saveBtn, { backgroundColor: primaryColor }, savingPhone && styles.saveBtnDisabled]}
+                  onPress={handleSavePhone}
+                  disabled={savingPhone}
+                >
+                  {savingPhone
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Icon name="check" size={18} color="#fff" />}
+                </TouchableOpacity>
+              </View>
+              {editingPhone && (
+                <>
+                  <Text style={styles.changePhoneNote}>
+                    Saving a different number will remove verification — you'll need to verify again.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => { setPhone(verifiedPhoneSnapshot.current); setEditingPhone(false); }}
+                    style={styles.cancelEditPhone}
+                  >
+                    <Text style={styles.cancelEditPhoneText}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+              {!phoneVerified && phone.trim() && !editingPhone ? (
+                <TouchableOpacity
+                  style={[styles.verifyBtn, { borderColor: primaryColor }]}
+                  onPress={() => navigation.navigate('PhoneVerification', { phone: phone.trim() })}
+                >
+                  <Icon name="verified-user" size={15} color={primaryColor} />
+                  <Text style={[styles.verifyBtnText, { color: primaryColor }]}>Verify this number →</Text>
+                </TouchableOpacity>
+              ) : null}
+            </>
+          )}
+
           <Text style={styles.fieldNote}>Used for notifications and driver contact. Not shared publicly.</Text>
         </View>
 
@@ -503,6 +541,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9ca3af',
     lineHeight: 17,
+  },
+  lockedPhoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    marginBottom: 4,
+  },
+  lockedPhoneText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#111827',
+    flex: 1,
+  },
+  changePhoneBtn: {
+    borderWidth: 1.5,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  changePhoneBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  changePhoneNote: {
+    fontSize: 12,
+    color: '#92400e',
+    backgroundColor: '#fffbeb',
+    borderRadius: 8,
+    padding: 10,
+    lineHeight: 17,
+    marginBottom: 6,
+  },
+  cancelEditPhone: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    marginBottom: 4,
+  },
+  cancelEditPhoneText: {
+    fontSize: 13,
+    color: '#9ca3af',
+    fontWeight: '500',
   },
   changePasswordRow: {
     flexDirection: 'row',
