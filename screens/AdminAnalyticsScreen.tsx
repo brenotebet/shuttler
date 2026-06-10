@@ -13,6 +13,11 @@ import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showToast } from '../src/components/Toast';
 import { SHUTTLER_API_URL } from '../config';
 import { cardShadow, spacing } from '../src/styles/common';
+import {
+  busiestHours,
+  computeServicePerformance,
+  RequestRecord,
+} from '../src/utils/analyticsMetrics';
 import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import AppButton from '../components/AppButton';
@@ -38,14 +43,34 @@ interface OrgInsight {
   generatedAt: any;
 }
 
-function InsightsSection() {
+function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
   const { org } = useOrg();
   const { primaryColor } = useOrgTheme();
   const [weekly, setWeekly] = useState<OrgInsight | null>(null);
   const [monthly, setMonthly] = useState<OrgInsight | null>(null);
+  const [satisfaction, setSatisfaction] = useState<FeedbackSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState<'weekly' | 'monthly' | null>(null);
   const [hasBoardingData, setHasBoardingData] = useState(false);
+
+  const hasAnalytics = !!(org?.dataAddonActive || org?.entitlements?.dataApi);
+
+  // Headline satisfaction is free for every org — riders volunteered it.
+  useEffect(() => {
+    if (!org) return;
+    (async () => {
+      try {
+        const token = await getBearerToken();
+        const res = await fetch(`${SHUTTLER_API_URL}/analytics/feedback-summary?days=30`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) { setSatisfaction(null); return; }
+        setSatisfaction(await res.json());
+      } catch {
+        setSatisfaction(null);
+      }
+    })();
+  }, [org?.orgId]);
 
   const load = useCallback(async () => {
     if (!org) return;
@@ -176,6 +201,56 @@ function InsightsSection() {
       </Text>
       {renderCard('weekly', weekly)}
       {renderCard('monthly', monthly)}
+
+      {/* Rider satisfaction headline — free for every org */}
+      {satisfaction && satisfaction.ratingCount > 0 && (
+        <View style={s.card}>
+          <View style={s.cardHeader}>
+            <Text style={s.cardTitle}>Rider Satisfaction</Text>
+            <Text style={s.cardDate}>Last 30 days</Text>
+          </View>
+          <View style={a.ratingHeader}>
+            <Text style={[a.ratingValue, { color: primaryColor }]}>{satisfaction.avgRating}</Text>
+            <View>
+              <View style={a.starsRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Icon
+                    key={star}
+                    name={star <= Math.round(satisfaction.avgRating ?? 0) ? 'star' : 'star-border'}
+                    size={16}
+                    color="#f59e0b"
+                  />
+                ))}
+              </View>
+              <Text style={a.ratingMeta}>
+                {satisfaction.ratingCount} rating{satisfaction.ratingCount !== 1 ? 's' : ''} from riders
+              </Text>
+            </View>
+          </View>
+          {satisfaction.limited && (
+            <TouchableOpacity onPress={onGoToAnalytics}>
+              <Text style={[s.satisfactionUpsell, { color: primaryColor }]}>
+                See per-question scores and rider comments with Data Analytics →
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Free data export — orgs always own their data */}
+      {!hasAnalytics && (
+        <View style={s.card}>
+          <View style={s.cardHeader}>
+            <Text style={s.cardTitle}>Export Your Data</Text>
+            <Text style={s.cardDate}>Last 90 days</Text>
+          </View>
+          <ExportButtons
+            days={90}
+            periodLabel="last 90 days"
+            hint="Included with every plan — your data is always yours. Data Analytics extends exports to a full year."
+          />
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -189,6 +264,84 @@ interface BoardingCount {
   stopName: string;
   count: number;
   createdAt: any;
+}
+
+interface StopRequestDoc {
+  id: string;
+  status: string;
+  createdAt: any;
+  arrivedAt: any;
+  stop?: { name?: string };
+  cancelledReason?: string | null;
+}
+
+interface FeedbackSummary {
+  responseCount: number;
+  avgRating: number | null;
+  ratingCount: number;
+  /** true when the org isn't entitled — headline only, no breakdowns */
+  limited?: boolean;
+  byQuestion: { question: string; avgRating: number; count: number }[];
+  recentComments: { question: string; answer: string; date: string }[];
+}
+
+// ---- Shared export buttons (backend-served CSV) ----
+
+function ExportButtons({ days, periodLabel, hint }: { days: number; periodLabel: string; hint: string }) {
+  const { org } = useOrg();
+  const { primaryColor } = useOrgTheme();
+  const [exporting, setExporting] = useState<'boardings' | 'requests' | null>(null);
+
+  const run = async (type: 'boardings' | 'requests') => {
+    if (exporting) return;
+    setExporting(type);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/export/csv?type=${type}&days=${days}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? body?.error ?? 'Export failed');
+      }
+      const csv = await res.text();
+      await Share.share({
+        message: csv,
+        title: `${org?.name ?? 'Shuttler'} — ${type === 'boardings' ? 'Boardings' : 'Stop Requests'} (${periodLabel})`,
+      });
+    } catch (e: any) {
+      showToast(e?.message ?? 'Export failed. Please try again.', 'error');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  return (
+    <>
+      <View style={a.exportRow}>
+        {(['boardings', 'requests'] as const).map((type) => (
+          <TouchableOpacity
+            key={type}
+            style={[a.exportBtn, { borderColor: primaryColor }]}
+            onPress={() => run(type)}
+            disabled={exporting !== null}
+          >
+            {exporting === type ? (
+              <ActivityIndicator size="small" color={primaryColor} />
+            ) : (
+              <>
+                <Icon name={type === 'boardings' ? 'directions-bus' : 'list-alt'} size={16} color={primaryColor} />
+                <Text style={[a.exportBtnText, { color: primaryColor }]}>
+                  {type === 'boardings' ? 'Boardings CSV' : 'Requests CSV'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={a.exportHint}>{hint}</Text>
+    </>
+  );
 }
 
 type Period = '7d' | '30d' | '90d' | 'all';
@@ -236,13 +389,15 @@ function HBarChart({
   );
 }
 
-function TrendBadge({ pct }: { pct: number | null }) {
+function TrendBadge({ pct, invert = false }: { pct: number | null; invert?: boolean }) {
   if (pct === null) return null;
   const up = pct >= 0;
+  // For metrics where lower is better (e.g. wait time), invert the coloring.
+  const good = invert ? !up : up;
   return (
-    <View style={[a.trendBadge, { backgroundColor: up ? '#dcfce7' : '#fee2e2' }]}>
-      <Icon name={up ? 'arrow-upward' : 'arrow-downward'} size={11} color={up ? '#16a34a' : '#dc2626'} />
-      <Text style={[a.trendText, { color: up ? '#16a34a' : '#dc2626' }]}>
+    <View style={[a.trendBadge, { backgroundColor: good ? '#dcfce7' : '#fee2e2' }]}>
+      <Icon name={up ? 'arrow-upward' : 'arrow-downward'} size={11} color={good ? '#16a34a' : '#dc2626'} />
+      <Text style={[a.trendText, { color: good ? '#16a34a' : '#dc2626' }]}>
         {Math.abs(pct)}% vs prev. period
       </Text>
     </View>
@@ -253,6 +408,8 @@ function AnalyticsSection() {
   const { org, refreshOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
   const [records, setRecords] = useState<BoardingCount[]>([]);
+  const [requests, setRequests] = useState<StopRequestDoc[]>([]);
+  const [feedback, setFeedback] = useState<FeedbackSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [driverNames, setDriverNames] = useState<Record<string, string>>({});
@@ -262,6 +419,9 @@ function AnalyticsSection() {
   const [showAddonDetail, setShowAddonDetail] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const baselineAddon = useRef(org?.dataAddonActive);
+
+  // Enterprise plans include analytics without the add-on purchase.
+  const hasAnalytics = !!(org?.dataAddonActive || org?.entitlements?.dataApi);
 
   // Show confirmation the moment the webhook updates Firestore
   useEffect(() => {
@@ -310,13 +470,16 @@ function AnalyticsSection() {
   }, [org, refreshOrg]);
 
   useEffect(() => {
-    if (!org?.dataAddonActive) return;
+    if (!hasAnalytics || !org) return;
     const load = async () => {
       try {
         setIsLoading(true);
-        const q = query(collection(db, 'orgs', org.orgId, 'boardingCounts'), orderBy('createdAt', 'desc'));
-        const snap = await getDocs(q);
-        setRecords(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardingCount, 'id'>) })));
+        const [boardingSnap, requestSnap] = await Promise.all([
+          getDocs(query(collection(db, 'orgs', org.orgId, 'boardingCounts'), orderBy('createdAt', 'desc'))),
+          getDocs(query(collection(db, 'orgs', org.orgId, 'stopRequests'), orderBy('createdAt', 'desc'))),
+        ]);
+        setRecords(boardingSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardingCount, 'id'>) })));
+        setRequests(requestSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StopRequestDoc, 'id'>) })));
       } catch (e: any) {
         setError(e.message ?? 'Failed to load analytics');
       } finally {
@@ -324,7 +487,26 @@ function AnalyticsSection() {
       }
     };
     load();
-  }, [org?.orgId, org?.dataAddonActive]);
+  }, [org?.orgId, hasAnalytics]);
+
+  // Rider satisfaction aggregates come from the backend — the feedback
+  // collection itself is never readable client-side.
+  useEffect(() => {
+    if (!hasAnalytics || !org) return;
+    const days = PERIOD_OPTIONS.find((p) => p.value === period)?.days ?? 365;
+    (async () => {
+      try {
+        const token = await getBearerToken();
+        const res = await fetch(`${SHUTTLER_API_URL}/analytics/feedback-summary?days=${days}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) { setFeedback(null); return; }
+        setFeedback(await res.json());
+      } catch {
+        setFeedback(null);
+      }
+    })();
+  }, [org?.orgId, hasAnalytics, period]);
 
   useEffect(() => {
     if (!org || records.length === 0) return;
@@ -343,7 +525,7 @@ function AnalyticsSection() {
   }, [records, org?.orgId]);
 
   // ── Upsell gate ──
-  if (!org?.dataAddonActive) {
+  if (!hasAnalytics) {
     return (
       <>
         <View style={s.upsellContainer}>
@@ -352,7 +534,8 @@ function AnalyticsSection() {
           </View>
           <Text style={s.upsellTitle}>Unlock Data Analytics</Text>
           <Text style={s.upsellBody}>
-            See exactly how your shuttle is performing — trends, charts, and driver stats all in one place.
+            How long do riders wait? When do you need more buses? Are riders happy?
+            Get the answers — wait times, demand patterns, and satisfaction in one dashboard.
           </Text>
           <View style={s.priceBox}>
             <Text style={[s.price, { color: primaryColor }]}>$49<Text style={s.priceSub}>/mo</Text></Text>
@@ -382,15 +565,16 @@ function AnalyticsSection() {
             </View>
             <Text style={s.detailName}>Data Analytics</Text>
             <Text style={[s.detailPrice, { color: primaryColor }]}>$49 / mo</Text>
-            <Text style={s.detailTagline}>Your complete boarding data — visualized, filterable, and exportable.</Text>
+            <Text style={s.detailTagline}>Wait times, demand patterns, and rider satisfaction — the numbers that run your shuttle.</Text>
             <View style={s.detailDivider} />
             {[
-              { icon: 'history', text: 'Full boarding history, all time' },
-              { icon: 'trending-up', text: 'Trend analysis vs previous periods (7D / 30D / 90D)' },
-              { icon: 'place', text: 'Stop-by-stop ridership bar charts' },
-              { icon: 'people', text: 'Per-driver performance breakdown' },
-              { icon: 'calendar-today', text: 'Weekday ridership patterns' },
-              { icon: 'share', text: 'CSV export for reports and records' },
+              { icon: 'timer', text: 'Rider wait times — average, trend, and per stop' },
+              { icon: 'fact-check', text: 'Fulfillment rate & why requests get cancelled' },
+              { icon: 'schedule', text: 'Busiest hours — know when to add buses' },
+              { icon: 'sentiment-satisfied', text: 'Rider satisfaction scores and comments' },
+              { icon: 'trending-up', text: 'Boarding trends vs previous periods (7D / 30D / 90D)' },
+              { icon: 'place', text: 'Stop-by-stop and per-driver breakdowns' },
+              { icon: 'share', text: 'Extends your free 90-day CSV exports to a full year' },
             ].map(({ icon, text }) => (
               <View key={text} style={s.detailFeatureRow}>
                 <View style={[s.detailFeatureIcon, { backgroundColor: `${primaryColor}12` }]}>
@@ -417,7 +601,8 @@ function AnalyticsSection() {
           </View>
           <Text style={s.confirmTitle}>Analytics Unlocked!</Text>
           <Text style={s.confirmBody}>
-            Your full boarding history is now live. Use the period filter to spot trends, compare drivers, and export your data.
+            Wait times, busiest hours, rider satisfaction, and your full boarding history are now live.
+            Use the period filter to spot trends and export everything as CSV.
           </Text>
           <TouchableOpacity
             style={[s.confirmBtn, { backgroundColor: primaryColor }]}
@@ -485,6 +670,30 @@ function AnalyticsSection() {
   // Order Mon–Sun
   const weekdayData = [1, 2, 3, 4, 5, 6, 0].map((i) => ({ label: DAY_LABELS[i], value: cur.days[i] }));
 
+  // ── Service performance (from stop requests) ──
+  const toRequestRecord = (r: StopRequestDoc): RequestRecord => ({
+    status: r.status,
+    createdAtMs: r.createdAt?.toDate?.()?.getTime?.() ?? null,
+    arrivedAtMs: r.arrivedAt?.toDate?.()?.getTime?.() ?? null,
+    stopName: r.stop?.name ?? 'Unknown stop',
+    cancelledReason: r.cancelledReason ?? null,
+  });
+  const reqTs = (r: StopRequestDoc) => r.createdAt?.toDate?.()?.getTime?.() ?? 0;
+  const reqFiltered = (opt.days ? requests.filter((r) => reqTs(r) >= cutoffMs) : requests).map(toRequestRecord);
+  const reqPrev = (opt.days ? requests.filter((r) => reqTs(r) >= prevCutoffMs && reqTs(r) < cutoffMs) : []).map(toRequestRecord);
+
+  const perf = computeServicePerformance(reqFiltered);
+  const prevPerf = computeServicePerformance(reqPrev);
+  const waitTrendPct: number | null =
+    opt.days && perf.avgWaitMin !== null && prevPerf.avgWaitMin !== null && prevPerf.avgWaitMin > 0
+      ? Math.round(((perf.avgWaitMin - prevPerf.avgWaitMin) / prevPerf.avgWaitMin) * 100)
+      : null;
+
+  const topHours = busiestHours(
+    filtered.map((r) => ({ createdAtMs: ts(r) || null, count: r.count ?? 0 })),
+  );
+  const slowestStops = perf.waitByStop.slice(0, 6);
+
   // Grouped recent activity
   const todayStr = new Date().toDateString();
   const yesterdayStr = new Date(now - 86_400_000).toDateString();
@@ -500,23 +709,6 @@ function AnalyticsSection() {
     seenLabels.get(label)!.push(r);
   });
 
-  // CSV export
-  const handleExport = async () => {
-    const header = 'Date,Stop,Driver,Boardings\n';
-    const rows = filtered.map((r) => {
-      const date = r.createdAt?.toDate?.()?.toISOString?.()?.slice(0, 10) ?? '';
-      const stop = `"${(r.stopName ?? r.stopId ?? '').replace(/"/g, '""')}"`;
-      const driver = `"${(driverNames[r.driverUid] ?? r.driverUid ?? '').replace(/"/g, '""')}"`;
-      return `${date},${stop},${driver},${r.count ?? 0}`;
-    }).join('\n');
-    try {
-      await Share.share({
-        message: header + rows,
-        title: `${org?.name ?? 'Shuttler'} — Boarding Data`,
-      });
-    } catch { /* dismissed */ }
-  };
-
   return (
     <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
 
@@ -525,7 +717,7 @@ function AnalyticsSection() {
         <View style={[a.welcomeBanner, { borderColor: `${primaryColor}30`, backgroundColor: `${primaryColor}08` }]}>
           <View style={{ flex: 1 }}>
             <Text style={[a.welcomeTitle, { color: primaryColor }]}>Analytics Unlocked 🎉</Text>
-            <Text style={a.welcomeBody}>Your full boarding history is here. Use the period filter to spot trends and the export button to share data with your team.</Text>
+            <Text style={a.welcomeBody}>Wait times, busiest hours, and rider satisfaction are now live alongside your full boarding history. Use the period filter to spot trends and the export buttons to share data with your team.</Text>
           </View>
           <TouchableOpacity onPress={() => setShowWelcome(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <Icon name="close" size={18} color="#9ca3af" />
@@ -570,6 +762,117 @@ function AnalyticsSection() {
           </View>
         </View>
       </View>
+
+      {/* Service Performance — from stop requests */}
+      {perf.totalRequests > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Service Performance</Text>
+          <View style={[a.chartCard, cardShadow]}>
+            <View style={a.heroStatsRow}>
+              <View style={a.heroStat}>
+                <Text style={[a.heroStatValue, { color: primaryColor }]}>
+                  {perf.avgWaitMin !== null ? `${perf.avgWaitMin}m` : '—'}
+                </Text>
+                <Text style={a.heroStatLabel}>Avg Wait</Text>
+              </View>
+              <View style={a.heroStatDivider} />
+              <View style={a.heroStat}>
+                <Text style={[a.heroStatValue, { color: primaryColor }]}>
+                  {perf.fulfillmentPct !== null ? `${perf.fulfillmentPct}%` : '—'}
+                </Text>
+                <Text style={a.heroStatLabel}>Fulfilled</Text>
+              </View>
+              <View style={a.heroStatDivider} />
+              <View style={a.heroStat}>
+                <Text style={[a.heroStatValue, { color: primaryColor }]}>{perf.totalRequests}</Text>
+                <Text style={a.heroStatLabel}>Requests</Text>
+              </View>
+            </View>
+            {waitTrendPct !== null && (
+              <View style={a.perfTrendRow}>
+                <Text style={a.perfTrendLabel}>Wait time</Text>
+                <TrendBadge pct={waitTrendPct} invert />
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* Wait time by stop — slowest first */}
+      {slowestStops.length > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Avg Wait by Stop (min)</Text>
+          <View style={[a.chartCard, cardShadow]}>
+            <HBarChart items={slowestStops} color={primaryColor} />
+          </View>
+        </View>
+      )}
+
+      {/* Busiest hours — staffing signal */}
+      {topHours.length > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Busiest Hours</Text>
+          <View style={[a.chartCard, cardShadow]}>
+            <HBarChart items={topHours} color={primaryColor} />
+          </View>
+        </View>
+      )}
+
+      {/* Cancellation reasons */}
+      {perf.cancelReasons.length > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Cancelled Requests</Text>
+          <View style={s.listCard}>
+            {perf.cancelReasons.map((r, i) => (
+              <View key={r.label} style={[s.listRow, i > 0 && s.listRowBorder]}>
+                <Text style={s.listLabel}>{r.label}</Text>
+                <Text style={s.listValue}>{r.value}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Rider satisfaction — aggregated server-side */}
+      {feedback && feedback.ratingCount > 0 && (
+        <View style={a.section}>
+          <Text style={s.sectionTitle}>Rider Satisfaction</Text>
+          <View style={[a.chartCard, cardShadow]}>
+            <View style={a.ratingHeader}>
+              <Text style={[a.ratingValue, { color: primaryColor }]}>{feedback.avgRating}</Text>
+              <View>
+                <View style={a.starsRow}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Icon
+                      key={star}
+                      name={star <= Math.round(feedback.avgRating ?? 0) ? 'star' : 'star-border'}
+                      size={16}
+                      color="#f59e0b"
+                    />
+                  ))}
+                </View>
+                <Text style={a.ratingMeta}>
+                  {feedback.ratingCount} rating{feedback.ratingCount !== 1 ? 's' : ''} this period
+                </Text>
+              </View>
+            </View>
+            {feedback.byQuestion.map((q) => (
+              <View key={q.question} style={a.questionRow}>
+                <Text style={a.questionText} numberOfLines={2}>{q.question}</Text>
+                <Text style={[a.questionRating, { color: primaryColor }]}>{q.avgRating} ★</Text>
+              </View>
+            ))}
+            {feedback.recentComments.length > 0 && (
+              <>
+                <View style={a.commentsDivider} />
+                {feedback.recentComments.map((c, i) => (
+                  <Text key={i} style={a.commentText}>"{c.answer}"</Text>
+                ))}
+              </>
+            )}
+          </View>
+        </View>
+      )}
 
       {/* Busiest Stops */}
       {topStops.length > 0 && (
@@ -625,10 +928,14 @@ function AnalyticsSection() {
       )}
 
       {/* Export */}
-      <TouchableOpacity style={[a.exportBtn, { borderColor: primaryColor }]} onPress={handleExport}>
-        <Icon name="share" size={16} color={primaryColor} />
-        <Text style={[a.exportBtnText, { color: primaryColor }]}>Export CSV</Text>
-      </TouchableOpacity>
+      <View style={a.section}>
+        <Text style={s.sectionTitle}>Export Data</Text>
+        <ExportButtons
+          days={opt.days ?? 365}
+          periodLabel={opt.label}
+          hint="Exports match the selected period. Requests include wait times and cancellation reasons."
+        />
+      </View>
 
     </ScrollView>
   );
@@ -665,7 +972,7 @@ export default function AdminAnalyticsScreen() {
       </View>
 
       <View style={{ flex: 1 }}>
-        {activeTab === 'insights' && <InsightsSection />}
+        {activeTab === 'insights' && <InsightsSection onGoToAnalytics={() => setActiveTab('analytics')} />}
         {activeTab === 'analytics' && <AnalyticsSection />}
       </View>
     </ScreenContainer>
@@ -712,6 +1019,7 @@ const s = StyleSheet.create({
   },
   generateBtnText: { fontSize: 14, fontWeight: '600' },
   generateBtnDisabled: { borderColor: '#e5e7eb' },
+  satisfactionUpsell: { fontSize: 13, fontWeight: '600' },
   // Analytics
   summaryRow: { flexDirection: 'row', gap: 10 },
   summaryCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center', gap: 4, ...cardShadow },
@@ -917,8 +1225,79 @@ const a = StyleSheet.create({
     letterSpacing: 0.6,
     marginBottom: 4,
   },
+  // Service performance
+  perfTrendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  perfTrendLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  // Rider satisfaction
+  ratingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+  },
+  ratingValue: {
+    fontSize: 36,
+    fontWeight: '800',
+  },
+  starsRow: {
+    flexDirection: 'row',
+    gap: 1,
+  },
+  ratingMeta: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  questionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  questionText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#374151',
+  },
+  questionRating: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  commentsDivider: {
+    height: 1,
+    backgroundColor: '#f3f4f6',
+    marginVertical: 10,
+  },
+  commentText: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontStyle: 'italic',
+    lineHeight: 19,
+    marginBottom: 8,
+  },
   // Export
+  exportRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   exportBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -926,11 +1305,16 @@ const a = StyleSheet.create({
     borderWidth: 1.5,
     borderRadius: 14,
     paddingVertical: 14,
-    marginTop: 8,
     backgroundColor: '#fff',
   },
   exportBtnText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
+  },
+  exportHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 16,
   },
 });

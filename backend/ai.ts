@@ -296,6 +296,25 @@ export async function handleAdminChat(
 
 // ---------- Weekly Digest ----------
 
+// Headline rider-satisfaction number for digests and insights. Riders take the
+// time to rate their pickups, so the aggregate is always surfaced to admins —
+// only the per-question breakdowns and comments are part of the paid add-on.
+async function avgRiderRating(orgId: string, daysBack: number): Promise<{ avg: number; n: number } | null> {
+  const since = new Date();
+  since.setDate(since.getDate() - daysBack);
+  const snap = await admin.firestore()
+    .collection('orgs').doc(orgId).collection('feedback')
+    .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(since))
+    .get();
+  let sum = 0;
+  let n = 0;
+  snap.docs.forEach((d) => {
+    const r = d.data().rating;
+    if (typeof r === 'number') { sum += r; n += 1; }
+  });
+  return n > 0 ? { avg: Math.round((sum / n) * 10) / 10, n } : null;
+}
+
 async function buildWeeklyStats(orgId: string): Promise<{
   orgName: string;
   adminEmail: string | null;
@@ -341,11 +360,14 @@ async function buildWeeklyStats(orgId: string): Promise<{
   const topStopEntry = Object.values(stopCounts).sort((a, b) => b.count - a.count)[0];
   const topStop = topStopEntry ? `${topStopEntry.name} (${topStopEntry.count} pickups)` : null;
 
+  const rating = await avgRiderRating(orgId, 7);
+
   const statsText = [
     `Organization: ${org.name ?? 'Unknown'}`,
     `Total boardings last 7 days: ${totalBoardings}`,
     `Active drivers last 7 days: ${driverSet.size}`,
     topStop ? `Top stop: ${topStop}` : null,
+    rating ? `Average rider rating last 7 days: ${rating.avg}/5 (${rating.n} ratings)` : null,
     `Stops configured: ${(org.stops ?? []).length}`,
     `Routes configured: ${(org.routes ?? []).length}`,
   ].filter(Boolean).join('\n');
@@ -415,11 +437,14 @@ async function buildPeriodStats(orgId: string, daysBack: number): Promise<{
   const topStopEntry = Object.values(stopCounts).sort((a, b) => b.count - a.count)[0];
   const topStop = topStopEntry ? `${topStopEntry.name} (${topStopEntry.count} pickups)` : null;
 
+  const rating = await avgRiderRating(orgId, daysBack);
+
   const statsText = [
     `Organization: ${org.name ?? 'Unknown'}`,
     `Total boardings last ${daysBack} days: ${totalBoardings}`,
     `Active drivers last ${daysBack} days: ${driverSet.size}`,
     topStop ? `Top stop: ${topStop}` : null,
+    rating ? `Average rider rating last ${daysBack} days: ${rating.avg}/5 (${rating.n} ratings)` : null,
     `Stops configured: ${(org.stops ?? []).length}`,
     `Routes configured: ${(org.routes ?? []).length}`,
   ].filter(Boolean).join('\n');

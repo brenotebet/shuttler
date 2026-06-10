@@ -2296,16 +2296,22 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
         .where('createdAt', '>=', sinceTs)
         .orderBy('createdAt', 'desc')
         .get();
-      rows = ['date,status,stop_name,cancelled_reason,student_uid'];
+      rows = ['date,time,status,stop_name,wait_minutes,cancelled_reason,student_uid'];
       snap.docs.forEach((d) => {
         const data = d.data();
-        const date = data.createdAt?.toDate?.()?.toISOString().slice(0, 10) ?? '';
+        const created = data.createdAt?.toDate?.();
+        const arrived = data.arrivedAt?.toDate?.();
+        const date = created?.toISOString().slice(0, 10) ?? '';
+        const time = created?.toISOString().slice(11, 16) ?? '';
         const status = data.status ?? '';
         const stop = (data.stop?.name ?? '').replace(/,/g, ' ');
+        const wait = created && arrived
+          ? Math.max(0, Math.round((arrived.getTime() - created.getTime()) / 60_000))
+          : '';
         const reason = data.cancelledReason ?? '';
         // Use uid only — no student names in export
         const uid = data.studentUid ?? '';
-        rows.push(`${date},${status},${stop},${reason},${uid}`);
+        rows.push(`${date},${time},${status},${stop},${wait},${reason},${uid}`);
       });
     } else {
       return res.status(400).json({ error: 'type must be boardings or requests' });
@@ -2318,6 +2324,90 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
   } catch (e: any) {
     console.error('[export/csv]', e?.message ?? e);
     return res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+/** GET /analytics/feedback-summary?days=30
+ *  Aggregated rider-feedback stats. Clients can never read the feedback
+ *  collection directly (rules deny it), so this endpoint returns aggregates
+ *  and anonymized comments only — individual rider identities never leave
+ *  the backend.
+ *
+ *  Riders volunteer this feedback, so the headline (avg rating + counts) is
+ *  available to every org. Per-question breakdowns and comments are part of
+ *  the Data Analytics add-on (`limited: true` marks the free payload).
+ */
+app.get('/analytics/feedback-summary', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  if (!orgId) return res.status(403).json({ error: 'No org associated with this account' });
+
+  const days = Math.min(Math.max(1, parseInt((req.query.days as string) || '30', 10) || 30), 365);
+
+  try {
+    const db = admin.firestore();
+
+    const memberDoc = await db.collection('orgs').doc(orgId).collection('users').doc(uid).get();
+    if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const orgDoc = await db.collection('orgs').doc(orgId).get();
+    const orgData = orgDoc.data() ?? {};
+    const entitled = !!(orgData.entitlements?.dataApi || orgData.dataAddonActive);
+
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const snap = await db.collection('orgs').doc(orgId).collection('feedback')
+      .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(since))
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    let ratingSum = 0;
+    let ratingCount = 0;
+    const byQuestion = new Map<string, { question: string; sum: number; n: number }>();
+    const recentComments: { question: string; answer: string; date: string }[] = [];
+
+    snap.docs.forEach((d) => {
+      const data = d.data();
+      const rating = typeof data.rating === 'number' ? data.rating : null;
+      const question: string = data.question ?? data.questionKey ?? 'Feedback';
+
+      if (rating !== null) {
+        ratingSum += rating;
+        ratingCount += 1;
+        const q = byQuestion.get(question) ?? { question, sum: 0, n: 0 };
+        q.sum += rating;
+        q.n += 1;
+        byQuestion.set(question, q);
+      }
+
+      const answer = typeof data.answer === 'string' ? data.answer.trim() : '';
+      if (answer && recentComments.length < 5) {
+        recentComments.push({
+          question,
+          answer: answer.slice(0, 280),
+          date: data.createdAt?.toDate?.()?.toISOString().slice(0, 10) ?? '',
+        });
+      }
+    });
+
+    return res.json({
+      days,
+      responseCount: snap.size,
+      avgRating: ratingCount > 0 ? Math.round((ratingSum / ratingCount) * 10) / 10 : null,
+      ratingCount,
+      limited: !entitled,
+      byQuestion: entitled
+        ? [...byQuestion.values()]
+            .map((q) => ({ question: q.question, avgRating: Math.round((q.sum / q.n) * 10) / 10, count: q.n }))
+            .sort((a, b) => b.count - a.count)
+        : [],
+      recentComments: entitled ? recentComments : [],
+    });
+  } catch (e: any) {
+    console.error('[analytics/feedback-summary]', e?.message ?? e);
+    return res.status(500).json({ error: 'Failed to load feedback summary' });
   }
 });
 
