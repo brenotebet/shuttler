@@ -1022,7 +1022,7 @@ export default function DriverScreen() {
     for (let m = 5; m <= breakSettings.maxMinutes; m += 5) breakDurationOptions.push(m);
   }
   const breakRowVisible = isSharing && (isOnBreak || canTakeBreak);
-  const headerHeight = (breakRowVisible ? 112 : 74) + insets.top;
+  const headerHeight = (breakRowVisible ? 112 : 74) + (isSharing ? 38 : 0) + insets.top;
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.root}>
