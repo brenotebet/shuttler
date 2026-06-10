@@ -3074,6 +3074,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#111',
+    flexShrink: 1,
   },
   memberEmail: {
     fontSize: 12,
