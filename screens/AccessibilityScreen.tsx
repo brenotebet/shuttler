@@ -7,7 +7,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAccessibility, type FontScale } from '../src/contexts/AccessibilityContext';
-import { cardShadow } from '../src/styles/common';
+import { cardShadow, spacing } from '../src/styles/common';
 
 const FONT_OPTIONS: { label: string; value: FontScale; hint: string }[] = [
   { label: 'Normal', value: 1, hint: 'Default text size' },
@@ -93,20 +93,21 @@ export default function AccessibilityScreen() {
 
 const s = StyleSheet.create({
   content: {
-    padding: 20,
+    paddingHorizontal: spacing.screenPadding,
+    paddingTop: spacing.item,
     paddingBottom: 48,
   },
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#6b7280',
+    color: '#9ca3af',
     textTransform: 'uppercase',
-    letterSpacing: 0.7,
+    letterSpacing: 0.8,
     marginBottom: 6,
   },
   sectionHint: {
     fontSize: 13,
-    color: '#9ca3af',
+    color: '#6b7280',
     marginBottom: 14,
     lineHeight: 18,
   },

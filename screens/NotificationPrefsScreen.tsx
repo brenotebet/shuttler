@@ -19,6 +19,7 @@ type NotifPrefs = {
   requestCancelled: boolean;
   requestCompleted: boolean;
   newRequest: boolean;
+  serviceAlerts: boolean;
 };
 
 const DEFAULTS: NotifPrefs = {
@@ -26,6 +27,7 @@ const DEFAULTS: NotifPrefs = {
   requestCancelled: true,
   requestCompleted: true,
   newRequest: true,
+  serviceAlerts: true,
 };
 
 export default function NotificationPrefsScreen() {
@@ -92,7 +94,7 @@ export default function NotificationPrefsScreen() {
       key: 'busArriving',
       icon: 'directions-bus',
       title: 'Bus Arriving',
-      desc: 'Notify me when the bus reaches my stop',
+      desc: 'Notify me when the bus is a few minutes away and when it reaches my stop',
     },
     {
       key: 'requestCompleted',
@@ -106,6 +108,12 @@ export default function NotificationPrefsScreen() {
       title: 'Request Cancelled',
       desc: 'Notify me when my stop request is cancelled',
     },
+    {
+      key: 'serviceAlerts',
+      icon: 'campaign',
+      title: 'Service Alerts',
+      desc: 'Notify me about delays, detours, and service notices',
+    },
   ];
 
   const driverRows: { key: keyof NotifPrefs; icon: string; title: string; desc: string }[] = [
@@ -114,6 +122,12 @@ export default function NotificationPrefsScreen() {
       icon: 'notifications-active',
       title: 'New Stop Request',
       desc: 'Notify me when a student requests a pickup',
+    },
+    {
+      key: 'serviceAlerts',
+      icon: 'campaign',
+      title: 'Service Alerts',
+      desc: 'Notify me about delays, detours, and service notices',
     },
   ];
 
@@ -192,7 +206,8 @@ export default function NotificationPrefsScreen() {
 const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   content: {
-    padding: spacing.section,
+    paddingHorizontal: spacing.screenPadding,
+    paddingTop: spacing.item,
     paddingBottom: spacing.section * 3,
   },
   sectionLabel: {

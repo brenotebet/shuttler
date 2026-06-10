@@ -218,6 +218,7 @@ const registerLimit = createRateLimiter(60_000, 5);
 const passwordResetLimit = createRateLimiter(60_000, 5);
 const orgCreateLimit = createRateLimiter(60_000, 3);
 const waitlistLimit = createRateLimiter(60_000, 3);
+const announcementLimit = createRateLimiter(60_000, 5);
 
 // ---------- Org helpers ----------
 
@@ -1826,6 +1827,54 @@ app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: R
   }
 });
 
+/** POST /notifications/bus-approaching
+ *  Called when the driver's bus crosses the approach radius for a requested stop
+ *  (a few minutes out). Gives the rider a heads-up to start walking.
+ */
+app.post('/notifications/bus-approaching', requireAuth, async (req: Request, res: Response) => {
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  const { studentUid, stopName, stopId, etaMinutes } = req.body as {
+    studentUid?: string;
+    stopName?: string;
+    stopId?: string;
+    etaMinutes?: number;
+  };
+  if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
+  if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+
+  try {
+    const userDoc = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').doc(studentUid)
+      .get();
+    const userData = userDoc.data();
+    const token = userData?.expoPushToken as string | undefined;
+    const busArrivingEnabled = userData?.notificationPrefs?.busArriving !== false;
+
+    if (token && busArrivingEnabled) {
+      const minutes = Number(etaMinutes);
+      const etaText = Number.isFinite(minutes) && minutes >= 1 && minutes <= 15
+        ? `about ${Math.round(minutes)} min`
+        : 'a few minutes';
+      await sendExpoPushNotifications(
+        [token],
+        'Bus On The Way!',
+        `Your bus is ${etaText} from ${stopName ?? 'your stop'} — time to head over.`,
+        {
+          type: 'bus_approaching',
+          orgId,
+          ...(stopId ? { stopId } : {}),
+          ...(stopName ? { stopName } : {}),
+        },
+      );
+    }
+
+    return res.json({ sent: token && busArrivingEnabled ? 1 : 0 });
+  } catch (e) {
+    console.error('[notifications] bus-approaching error:', e);
+    return res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
 /** POST /notifications/stop-request-cancelled
  *  Called when a student's stop request is cancelled (e.g. driver went offline).
  *  Sends a push notification to the student who made the request.
@@ -1891,6 +1940,127 @@ app.post('/notifications/stop-completed', requireAuth, async (req: Request, res:
   } catch (e) {
     console.error('[notifications] stop-completed error:', e);
     return res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
+// ---------- Service alerts ----------
+
+const ANNOUNCEMENT_SEVERITIES = ['info', 'warning', 'alert'] as const;
+
+/** POST /announcements
+ *  Admin or driver broadcasts a service alert (delay, detour, notice) to their org.
+ *  Writes the announcement doc and fans out a push to members who haven't
+ *  disabled the serviceAlerts notification pref. Riders see it as a live map banner.
+ */
+app.post('/announcements', requireAuth, async (req: Request, res: Response) => {
+  if (announcementLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
+  const uid = (req as any).uid as string;
+  // orgId comes from the verified token claim — never from the request body
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  if (!orgId) return res.status(403).json({ error: 'No org associated with this account' });
+
+  const { title, body, severity, durationMinutes } = req.body as {
+    title?: string;
+    body?: string;
+    severity?: string;
+    durationMinutes?: number;
+  };
+
+  const cleanTitle = String(title ?? '').trim().slice(0, 80);
+  const cleanBody = String(body ?? '').trim().slice(0, 300);
+  if (!cleanTitle) return res.status(400).json({ error: 'title is required' });
+  if (!ANNOUNCEMENT_SEVERITIES.includes(severity as any)) {
+    return res.status(400).json({ error: 'severity must be info, warning, or alert' });
+  }
+  const duration = Number(durationMinutes);
+  const hasDuration = Number.isFinite(duration) && duration >= 5 && duration <= 1440;
+
+  try {
+    // Verify membership and resolve role from Firestore (not from client)
+    const memberDoc = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').doc(uid).get();
+    const memberRole = memberDoc.data()?.role;
+    if (!memberDoc.exists || (memberRole !== 'admin' && memberRole !== 'driver')) {
+      return res.status(403).json({ error: 'Driver or admin access required' });
+    }
+
+    const expiresAt = hasDuration
+      ? admin.firestore.Timestamp.fromMillis(Date.now() + duration * 60_000)
+      : null;
+
+    const docRef = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('announcements')
+      .add({
+        title: cleanTitle,
+        body: cleanBody,
+        severity,
+        active: true,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdBy: uid,
+        createdByName: memberDoc.data()?.displayName ?? memberDoc.data()?.email ?? null,
+        expiresAt,
+      });
+
+    // Fan out to all org members (except the author) who haven't opted out.
+    const usersSnap = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').get();
+    const tokens: string[] = [];
+    usersSnap.forEach((d) => {
+      if (d.id === uid) return;
+      const data = d.data();
+      const serviceAlertsEnabled = data?.notificationPrefs?.serviceAlerts !== false;
+      if (data.expoPushToken && serviceAlertsEnabled) {
+        tokens.push(data.expoPushToken as string);
+      }
+    });
+
+    await sendExpoPushNotifications(
+      tokens,
+      severity === 'alert' ? `⚠️ ${cleanTitle}` : cleanTitle,
+      cleanBody || 'Tap to see the latest shuttle service update.',
+      { type: 'service_alert', orgId, announcementId: docRef.id },
+    );
+
+    return res.json({ id: docRef.id, sent: tokens.length });
+  } catch (e) {
+    console.error('[announcements] create error:', e);
+    return res.status(500).json({ error: 'Failed to post announcement' });
+  }
+});
+
+/** POST /announcements/:id/deactivate
+ *  Admin or driver clears an active service alert (e.g. detour resolved).
+ */
+app.post('/announcements/:id/deactivate', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  if (!orgId) return res.status(403).json({ error: 'No org associated with this account' });
+
+  try {
+    const memberDoc = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('users').doc(uid).get();
+    const memberRole = memberDoc.data()?.role;
+    if (!memberDoc.exists || (memberRole !== 'admin' && memberRole !== 'driver')) {
+      return res.status(403).json({ error: 'Driver or admin access required' });
+    }
+
+    const ref = admin.firestore()
+      .collection('orgs').doc(orgId).collection('announcements').doc(String(req.params.id));
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Announcement not found' });
+
+    await ref.update({
+      active: false,
+      deactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      deactivatedBy: uid,
+    });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[announcements] deactivate error:', e);
+    return res.status(500).json({ error: 'Failed to clear announcement' });
   }
 });
 

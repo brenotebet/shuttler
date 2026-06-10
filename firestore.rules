@@ -190,6 +190,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ---------- Service alerts / announcements ----------
+    // Created and cleared exclusively via the backend (Admin SDK), which
+    // enforces the driver/admin role check. Any member can read them
+    // (riders see active alerts as a banner on the live map).
+    match /orgs/{orgId}/announcements/{id} {
+      allow read: if isMember(orgId);
+      allow write: if false;
+    }
+
     // ---------- SAML handoff tokens ----------
     // Written and consumed exclusively by the backend (Admin SDK).
     // Clients never access these directly.
