@@ -29,6 +29,7 @@ import LegalScreen from '../screens/LegalScreen';
 import AccessibilityScreen from '../screens/AccessibilityScreen';
 import PhoneVerificationScreen from '../screens/PhoneVerificationScreen';
 import NotificationPrefsScreen from '../screens/NotificationPrefsScreen';
+import AnnouncementsScreen from '../screens/AnnouncementsScreen';
 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
@@ -60,6 +61,7 @@ export type RootStackParamList = {
   Accessibility: undefined;
   PhoneVerification: { phone?: string } | undefined;
   NotificationPrefs: undefined;
+  Announcements: undefined;
 
   SubscriptionExpired: undefined;
 };
@@ -210,6 +212,7 @@ export default function StackNavigator() {
             <Stack.Screen name="Legal" component={LegalScreen} />
             <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
             <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
+            <Stack.Screen name="Announcements" component={AnnouncementsScreen} />
             <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
           </Stack.Navigator>
         );
@@ -228,6 +231,7 @@ export default function StackNavigator() {
           <Stack.Screen name="Legal" component={LegalScreen} />
           <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
           <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
+          <Stack.Screen name="Announcements" component={AnnouncementsScreen} />
           <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
         </Stack.Navigator>
       );

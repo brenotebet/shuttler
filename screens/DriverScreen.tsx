@@ -30,7 +30,7 @@ import {
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
-import { notifyStudentArrived, notifyStudentCompleted, notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
+import { notifyStudentArrived, notifyStudentApproaching, notifyStudentCompleted, notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 import { BACKGROUND_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
@@ -53,6 +53,13 @@ function feetToMeters(feet: number) {
 
 const ARRIVE_RADIUS_M = feetToMeters(ARRIVE_RADIUS_FT);
 const EXIT_RADIUS_M = feetToMeters(EXIT_RADIUS_FT);
+// "Bus on the way" heads-up: fires once when the bus crosses ~0.5 mi from a
+// requested stop, so the rider has time to walk over before it arrives.
+const APPROACH_RADIUS_FT = 2600;
+const APPROACH_RADIUS_M = feetToMeters(APPROACH_RADIUS_FT);
+// Average shuttle pace including stops (~15 km/h) — only used for the rough
+// "about N min" estimate in the heads-up push, never shown as a precise ETA.
+const SHUTTLE_PACE_M_PER_MIN = 250;
 const NEAREST_STOP_RADIUS_FT = 300;
 const NEAREST_STOP_RADIUS_M = feetToMeters(NEAREST_STOP_RADIUS_FT);
 
@@ -129,6 +136,7 @@ export default function DriverScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak } = useLocationSharing();
+  const [occupancy, setOccupancy] = useState<'open' | 'filling' | 'full'>('open');
   const { driverId, loading } = useDriver();
   const { org } = useOrg();
   const { role: authRole } = useAuth();
@@ -185,10 +193,12 @@ export default function DriverScreen() {
         lastOutsideMs: number | null;
         servicedReady: boolean;
         arrivedAtWritten: boolean;
+        approachWritten: boolean;
       }
     >
   >({});
   const arrivalWritesInFlightRef = useRef<Set<string>>(new Set());
+  const approachWritesInFlightRef = useRef<Set<string>>(new Set());
   const completionWritesInFlightRef = useRef<Set<string>>(new Set());
   const expiryWritesInFlightRef = useRef<Set<string>>(new Set());
   const seenRequestIdsRef = useRef<Set<string>>(new Set());
@@ -529,6 +539,24 @@ export default function DriverScreen() {
     });
   }, [activeRequests]);
 
+  // Keep the seats selector in sync with the bus doc (e.g. after an app restart
+  // mid-shift, or when startSharing resets occupancy to 'open').
+  useEffect(() => {
+    if (!driverId || !orgId) return;
+    const unsub = onSnapshot(doc(db, 'orgs', orgId, 'buses', driverId), (snap) => {
+      const value = snap.data()?.occupancy;
+      if (value === 'open' || value === 'filling' || value === 'full') setOccupancy(value);
+    });
+    return () => unsub();
+  }, [driverId, orgId]);
+
+  const setBusOccupancy = useCallback((value: 'open' | 'filling' | 'full') => {
+    setOccupancy(value);
+    if (!driverId || !orgId) return;
+    setDoc(doc(db, 'orgs', orgId, 'buses', driverId), { occupancy: value }, { merge: true })
+      .catch((err) => console.error('Failed to update bus occupancy', err));
+  }, [driverId, orgId]);
+
   useEffect(() => {
     if (!isSharing || !driverId) return;
 
@@ -562,6 +590,40 @@ export default function DriverScreen() {
         console.error('Failed to set arrivedAt on stop request', err);
       } finally {
         arrivalWritesInFlightRef.current.delete(requestId);
+      }
+    };
+
+    const markApproachingIfNeeded = async (requestId: string, distanceM: number) => {
+      if (approachWritesInFlightRef.current.has(requestId)) return;
+      approachWritesInFlightRef.current.add(requestId);
+
+      try {
+        let studentUid: string | null = null;
+        let stopName: string | null = null;
+        let stopId: string | null = null;
+
+        await runTransaction(db, async (tx) => {
+          const ref = doc(db, 'orgs', orgId, 'stopRequests', requestId);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          const current = snap.data() as any;
+          if (!isActiveStopStatus(current?.status)) return;
+          if (isExpiredRequestAt(current, Date.now())) return;
+          if (current?.approachingAt || current?.arrivedAt) return;
+          studentUid = current.studentUid ?? null;
+          stopName = current.stop?.name ?? null;
+          stopId = current.stop?.id ?? current.stopId ?? null;
+          tx.update(ref, { approachingAt: serverTimestamp() });
+        });
+
+        if (studentUid) {
+          const etaMinutes = Math.max(1, Math.round(distanceM / SHUTTLE_PACE_M_PER_MIN));
+          void notifyStudentApproaching(orgId, studentUid, stopName ?? 'your stop', stopId ?? undefined, etaMinutes);
+        }
+      } catch (err) {
+        console.error('Failed to set approachingAt on stop request', err);
+      } finally {
+        approachWritesInFlightRef.current.delete(requestId);
       }
     };
 
@@ -646,8 +708,27 @@ export default function DriverScreen() {
 
         const state =
           proximityStateRef.current[req.id] ??
-          { arrivalStartMs: null, lastOutsideMs: null, servicedReady: false, arrivedAtWritten: Boolean(req?.arrivedAt) };
+          {
+            arrivalStartMs: null,
+            lastOutsideMs: null,
+            servicedReady: false,
+            arrivedAtWritten: Boolean(req?.arrivedAt),
+            approachWritten: Boolean(req?.approachingAt),
+          };
         let nextState = { ...state };
+
+        // Heads-up fires once per request, only outside the arrival radius
+        // (inside it the "Bus Arriving" notification covers the rider).
+        if (
+          !withinArrive
+          && distanceM <= APPROACH_RADIUS_M
+          && !nextState.approachWritten
+          && !req?.approachingAt
+          && !req?.arrivedAt
+        ) {
+          nextState.approachWritten = true;
+          void markApproachingIfNeeded(req.id, distanceM);
+        }
 
         if (withinArrive) {
           nextState.lastOutsideMs = null;
@@ -1089,6 +1170,34 @@ export default function DriverScreen() {
                 <Text style={[styles.breakButtonText, { color: primaryColor }]}>Take a Break</Text>
               </TouchableOpacity>
             ) : null}
+          </View>
+        )}
+
+        {/* Seats row — riders see this on the map, so they know before walking over */}
+        {isSharing && (
+          <View style={styles.occupancyRow}>
+            <Text style={styles.occupancyLabel}>Seats</Text>
+            {([
+              { value: 'open', label: 'Available', color: '#16a34a' },
+              { value: 'filling', label: 'Filling up', color: '#d97706' },
+              { value: 'full', label: 'Full', color: '#dc2626' },
+            ] as const).map((opt) => {
+              const selected = occupancy === opt.value;
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[
+                    styles.occupancyChip,
+                    selected && { backgroundColor: `${opt.color}18`, borderColor: opt.color },
+                  ]}
+                  onPress={() => setBusOccupancy(opt.value)}
+                >
+                  <Text style={[styles.occupancyChipText, selected && { color: opt.color, fontWeight: '700' }]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
       </View>
@@ -1729,6 +1838,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
     gap: 8,
+  },
+  occupancyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 8,
+  },
+  occupancyLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginRight: 2,
+  },
+  occupancyChip: {
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#fff',
+  },
+  occupancyChipText: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '600',
   },
   breakButton: {
     flexDirection: 'row',

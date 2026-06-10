@@ -312,6 +312,13 @@ export default function DriverMenuScreen() {
           onPress={() => navigation.navigate('AdminDriver')}
         />
 
+        <MenuItem
+          icon="campaign"
+          title="Service Alerts"
+          description="Post delays, detours, and notices to riders"
+          onPress={() => navigation.navigate('Announcements')}
+        />
+
         {role === 'admin' && (
           <View style={styles.sectionDivider}>
             <Text style={styles.sectionLabel}>Admin</Text>

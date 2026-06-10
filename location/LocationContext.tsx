@@ -253,7 +253,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         onBreak: false,
         lastSeen: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        ...(isSessionStart && { sessionStartAt: serverTimestamp() }),
+        // Each shift starts with seats available; the driver updates it as the bus fills.
+        ...(isSessionStart && { sessionStartAt: serverTimestamp(), occupancy: 'open' }),
       },
       { merge: true },
     );
