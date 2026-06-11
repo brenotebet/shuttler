@@ -32,6 +32,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     supportsTablet: true,
     config: {
       googleMapsApiKey,
+      usesNonExemptEncryption: false,
     },
     infoPlist: {
       NSLocationWhenInUseUsageDescription:
