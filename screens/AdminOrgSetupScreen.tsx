@@ -22,6 +22,7 @@ import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE, 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { showToast } from '../src/components/Toast';
+import { validateUserText } from '../src/utils/profanity';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
@@ -80,8 +81,13 @@ const COLOR_SWATCHES = [
 
 function ProfileTab() {
   const { org, refreshOrg } = useOrg();
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const isOwner = !!org?.ownerUid && org.ownerUid === user?.uid;
+  // Orgs created before ownerUid was introduced (and any org whose founder
+  // hasn't completed registration) won't have ownerUid set. In that case allow
+  // any org admin to delete — the backend enforces the identical rule
+  // (DELETE /orgs/:orgId only blocks when ownerUid is set AND mismatched).
+  const canDeleteOrg = isOwner || (role === 'admin' && !org?.ownerUid);
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [showDeleteOrg, setShowDeleteOrg] = useState(false);
   const [deletingOrg, setDeletingOrg] = useState(false);
@@ -140,6 +146,11 @@ function ProfileTab() {
 
   const handleSave = useCallback(async () => {
     if (!org) return;
+    const nameError = validateUserText(name, 'Organization name');
+    if (nameError) {
+      showToast(nameError, 'error');
+      return;
+    }
     const effectiveColor = customColor.match(/^#[0-9a-fA-F]{6}$/) ? customColor : primaryColor;
     setIsSaving(true);
     try {
@@ -233,7 +244,7 @@ function ProfileTab() {
       />
 
       {/* Danger Zone — org deletion (App Store Guideline 5.1.1) */}
-      {isOwner && (
+      {canDeleteOrg && (
         <View style={profileStyles.dangerZone}>
           <Text style={profileStyles.dangerTitle}>Danger Zone</Text>
           {!showDeleteOrg ? (
@@ -1018,6 +1029,11 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       showToast('Enter a stop name.', 'error');
       return;
     }
+    const stopNameError = validateUserText(pendingName, 'Stop name');
+    if (stopNameError) {
+      showToast(stopNameError, 'error');
+      return;
+    }
     if (!pendingCoords) {
       showToast('Tap the map or enter latitude and longitude.', 'error');
       return;
@@ -1093,6 +1109,11 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   // Route helpers
   const handleAddRoute = useCallback(() => {
     if (!newRouteName.trim()) return;
+    const routeNameError = validateUserText(newRouteName, 'Route name');
+    if (routeNameError) {
+      showToast(routeNameError, 'error');
+      return;
+    }
     if (routes.length >= planLimits.maxRoutes) {
       Alert.alert(
         'Route limit reached',

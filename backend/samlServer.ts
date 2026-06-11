@@ -29,6 +29,7 @@ import {
   startWeeklyDigestCron,
   startMonthlyDigestCron,
 } from './ai';
+import { containsProfanity } from './profanity';
 
 /**
  * Shuttler multi-tenant backend
@@ -729,6 +730,10 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
     });
   }
 
+  if (containsProfanity(orgName)) {
+    return res.status(400).json({ error: 'Organization name contains inappropriate language.' });
+  }
+
   // Basic email format check
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
     return res.status(400).json({ error: 'Invalid email address' });
@@ -842,6 +847,9 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
   const { orgSlug, email, password, displayName, phone, agreedToTerms } = req.body;
   if (!orgSlug || !email || !password) {
     return res.status(400).json({ error: 'orgSlug, email and password are required' });
+  }
+  if (displayName && containsProfanity(displayName)) {
+    return res.status(400).json({ error: 'Display name contains inappropriate language.' });
   }
 
   try {
@@ -2121,6 +2129,9 @@ app.post('/announcements', requireAuth, async (req: Request, res: Response) => {
   const cleanTitle = String(title ?? '').trim().slice(0, 80);
   const cleanBody = String(body ?? '').trim().slice(0, 300);
   if (!cleanTitle) return res.status(400).json({ error: 'title is required' });
+  if (containsProfanity(cleanTitle) || containsProfanity(cleanBody)) {
+    return res.status(400).json({ error: 'Announcement contains inappropriate language.' });
+  }
   if (!ANNOUNCEMENT_SEVERITIES.includes(severity as any)) {
     return res.status(400).json({ error: 'severity must be info, warning, or alert' });
   }

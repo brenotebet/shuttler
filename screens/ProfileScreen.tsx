@@ -16,6 +16,7 @@ import { useOrg } from '../src/org/OrgContext';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
+import { validateUserText } from '../src/utils/profanity';
 import { SHUTTLER_API_URL } from '../config';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
 import { spacing } from '../src/styles/common';
@@ -96,6 +97,11 @@ export default function ProfileScreen() {
   const handleSaveName = async () => {
     const trimmed = name.trim();
     if (!trimmed || !user?.uid || !orgId) return;
+    const nameError = validateUserText(trimmed, 'Display name');
+    if (nameError) {
+      showAlert(nameError, 'Invalid name', 'error');
+      return;
+    }
     setSavingName(true);
     try {
       if (auth.currentUser) {
