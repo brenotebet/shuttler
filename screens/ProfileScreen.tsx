@@ -200,7 +200,7 @@ export default function ProfileScreen() {
       // Auth user no longer exists — sign out locally to clear session state.
       await signOut(auth).catch(() => {});
     } catch {
-      showAlert('Failed to delete your account. Please try again or contact hello@shuttler.net.', 'Error', 'error');
+      showAlert('Failed to delete your account. Please try again or contact support@shuttler.net.', 'Error', 'error');
     } finally {
       setDeletingAccount(false);
     }

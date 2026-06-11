@@ -51,7 +51,7 @@ Background location (`UIBackgroundModes: location`) is used **only by drivers du
 
 - Privacy policy: https://shuttler.net/privacy
 - Terms: https://shuttler.net/terms
-- Support: hello@shuttler.net
+- Support: support@shuttler.net
 
 ---
 
