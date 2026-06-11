@@ -44,6 +44,8 @@ interface OrgContext {
   memberCounts: { admin: number; driver: number; student: number; parent: number };
   boardingSummary: { name: string; count: number }[];
   totalBoardings: number;
+  activeAlerts: { title: string; body: string; severity: string }[];
+  liveBuses: { occupancy: string | null; onBreak: boolean }[];
 }
 
 async function buildOrgContext(orgId: string): Promise<OrgContext> {
@@ -83,6 +85,34 @@ async function buildOrgContext(orgId: string): Promise<OrgContext> {
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
 
+  const alertsSnap = await db
+    .collection('orgs').doc(orgId).collection('announcements')
+    .where('active', '==', true)
+    .get();
+  const activeAlerts = alertsSnap.docs
+    .map((d) => d.data())
+    .filter((a) => !a.expiresAt || a.expiresAt.toMillis() > Date.now())
+    .slice(0, 5)
+    .map((a) => ({
+      title: a.title ?? '',
+      body: a.body ?? '',
+      severity: a.severity ?? 'info',
+    }));
+
+  const busesSnap = await db
+    .collection('orgs').doc(orgId).collection('buses')
+    .where('online', '==', true)
+    .get();
+  const fiveMinAgo = Date.now() - 5 * 60_000;
+  const liveBuses = busesSnap.docs
+    .map((d) => d.data())
+    // Stale "online" docs happen when a driver app dies mid-shift — skip them.
+    .filter((b) => (b.lastSeen?.toMillis?.() ?? 0) >= fiveMinAgo)
+    .map((b) => ({
+      occupancy: typeof b.occupancy === 'string' ? b.occupancy : null,
+      onBreak: b.onBreak === true,
+    }));
+
   return {
     name: org.name ?? 'Unknown',
     authMethod: org.authMethod ?? 'email',
@@ -92,7 +122,30 @@ async function buildOrgContext(orgId: string): Promise<OrgContext> {
     memberCounts,
     boardingSummary,
     totalBoardings,
+    activeAlerts,
+    liveBuses,
   };
+}
+
+function formatLiveStatusSection(ctx: OrgContext): string {
+  if (ctx.liveBuses.length === 0) {
+    return 'No buses are online right now. (This is normal outside service hours.)';
+  }
+  const occupancyLabel = (o: string | null) =>
+    o === 'full' ? 'full' : o === 'filling' ? 'filling up' : o === 'open' ? 'seats available' : 'occupancy unknown';
+  const lines = ctx.liveBuses.map(
+    (b, i) => `  - Bus ${i + 1}: online${b.onBreak ? ', on break' : ''}, ${occupancyLabel(b.occupancy)}`,
+  );
+  return `${ctx.liveBuses.length} bus(es) online right now:\n${lines.join('\n')}`;
+}
+
+function formatAlertsSection(ctx: OrgContext): string {
+  if (ctx.activeAlerts.length === 0) {
+    return 'No active service alerts — service is running normally as far as the system knows.';
+  }
+  return ctx.activeAlerts
+    .map((a) => `  - [${a.severity.toUpperCase()}] ${a.title}${a.body ? ` — ${a.body}` : ''}`)
+    .join('\n');
 }
 
 // ---------- System prompts ----------
@@ -135,11 +188,18 @@ Total pickups: ${ctx.totalBoardings}
 By stop:
 ${boardingsList}
 
+### Live Service Status (as of this message)
+${formatLiveStatusSection(ctx)}
+
+### Active Service Alerts
+${formatAlertsSection(ctx)}
+
 ## App how-to
 - Add/manage stops and routes: Org Setup → Stops tab
 - Invite users: Org Setup → Users tab → enter email + role → Send Invite
 - Assign driver routes: Org Setup → Users tab → tap driver → assign default route
 - Analytics: Dashboard tab — live driver activity and 7-day boarding trends
+- Post a service alert (delay, detour, notice): Menu → Service Alerts — riders see it on their map and get a push
 - Auth config: Org Setup → Auth tab (email/password or SAML SSO)
 - Billing: Org Setup → Billing tab — or contact support@shuttler.net
 
@@ -195,6 +255,12 @@ ${stopsList}
 ## Routes
 ${routesList}
 
+## Live Service Status (as of this message)
+${formatLiveStatusSection(ctx)}
+
+## Active Service Alerts
+${formatAlertsSection(ctx)}
+
 ${usageSection}
 
 Be concise and friendly. Use bullet points for steps.`;
@@ -229,6 +295,25 @@ export async function handleAdminChat(
 }
 
 // ---------- Weekly Digest ----------
+
+// Headline rider-satisfaction number for digests and insights. Riders take the
+// time to rate their pickups, so the aggregate is always surfaced to admins —
+// only the per-question breakdowns and comments are part of the paid add-on.
+async function avgRiderRating(orgId: string, daysBack: number): Promise<{ avg: number; n: number } | null> {
+  const since = new Date();
+  since.setDate(since.getDate() - daysBack);
+  const snap = await admin.firestore()
+    .collection('orgs').doc(orgId).collection('feedback')
+    .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(since))
+    .get();
+  let sum = 0;
+  let n = 0;
+  snap.docs.forEach((d) => {
+    const r = d.data().rating;
+    if (typeof r === 'number') { sum += r; n += 1; }
+  });
+  return n > 0 ? { avg: Math.round((sum / n) * 10) / 10, n } : null;
+}
 
 async function buildWeeklyStats(orgId: string): Promise<{
   orgName: string;
@@ -275,11 +360,14 @@ async function buildWeeklyStats(orgId: string): Promise<{
   const topStopEntry = Object.values(stopCounts).sort((a, b) => b.count - a.count)[0];
   const topStop = topStopEntry ? `${topStopEntry.name} (${topStopEntry.count} pickups)` : null;
 
+  const rating = await avgRiderRating(orgId, 7);
+
   const statsText = [
     `Organization: ${org.name ?? 'Unknown'}`,
     `Total boardings last 7 days: ${totalBoardings}`,
     `Active drivers last 7 days: ${driverSet.size}`,
     topStop ? `Top stop: ${topStop}` : null,
+    rating ? `Average rider rating last 7 days: ${rating.avg}/5 (${rating.n} ratings)` : null,
     `Stops configured: ${(org.stops ?? []).length}`,
     `Routes configured: ${(org.routes ?? []).length}`,
   ].filter(Boolean).join('\n');
@@ -349,11 +437,14 @@ async function buildPeriodStats(orgId: string, daysBack: number): Promise<{
   const topStopEntry = Object.values(stopCounts).sort((a, b) => b.count - a.count)[0];
   const topStop = topStopEntry ? `${topStopEntry.name} (${topStopEntry.count} pickups)` : null;
 
+  const rating = await avgRiderRating(orgId, daysBack);
+
   const statsText = [
     `Organization: ${org.name ?? 'Unknown'}`,
     `Total boardings last ${daysBack} days: ${totalBoardings}`,
     `Active drivers last ${daysBack} days: ${driverSet.size}`,
     topStop ? `Top stop: ${topStop}` : null,
+    rating ? `Average rider rating last ${daysBack} days: ${rating.avg}/5 (${rating.n} ratings)` : null,
     `Stops configured: ${(org.stops ?? []).length}`,
     `Routes configured: ${(org.routes ?? []).length}`,
   ].filter(Boolean).join('\n');

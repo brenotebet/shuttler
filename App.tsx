@@ -99,9 +99,19 @@ function NotificationDeepLinker({ navigationRef }: { navigationRef: React.RefObj
         nav.navigate('DriverHome');
         break;
       case 'bus_arriving':
+      case 'bus_approaching':
         nav.navigate('StudentHome', data.stopId
           ? { screen: 'Map', params: { focusStopId: data.stopId, focusStopName: data.stopName } }
           : undefined);
+        break;
+      case 'service_alert':
+        // Riders land on the live map, where the alert banner is showing.
+        // Drivers/admins don't have StudentHome in their stack — send them home.
+        if (nav.getRootState()?.routeNames?.includes('StudentHome')) {
+          nav.navigate('StudentHome');
+        } else {
+          nav.navigate('DriverHome');
+        }
         break;
       case 'request_cancelled':
         nav.navigate('StudentHome');

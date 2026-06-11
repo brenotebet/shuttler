@@ -40,6 +40,22 @@ export async function notifyStudentArrived(
   }
 }
 
+/** Called when the driver's GPS first crosses a stop's approach radius (a few
+ *  minutes out) — gives the student a "head to your stop now" heads-up. */
+export async function notifyStudentApproaching(
+  orgId: string,
+  studentUid: string,
+  stopName: string,
+  stopId?: string,
+  etaMinutes?: number,
+): Promise<void> {
+  try {
+    await post('/notifications/bus-approaching', { orgId, studentUid, stopName, stopId, etaMinutes });
+  } catch {
+    // Non-critical
+  }
+}
+
 /** Called when a student's request is cancelled — notifies the student. */
 export async function notifyStudentRequestCancelled(
   orgId: string,

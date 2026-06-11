@@ -44,6 +44,7 @@ import { showToast } from '../src/components/Toast';
 import { notifyDriversNewRequest } from '../src/utils/pushNotifications';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
+import AnnouncementBanner from '../components/AnnouncementBanner';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -403,6 +404,7 @@ export default function MapScreen() {
       isFresh: boolean;
       secondsAgo: number;
       onBreak: boolean;
+      occupancy: 'open' | 'filling' | 'full' | null;
     };
   }>({});
 
@@ -840,6 +842,9 @@ export default function MapScreen() {
               online,
               routeId: typeof data.routeId === 'string' ? data.routeId : null,
               onBreak: data?.onBreak === true,
+              occupancy: data?.occupancy === 'open' || data?.occupancy === 'filling' || data?.occupancy === 'full'
+                ? data.occupancy
+                : null,
             };
           })
           .filter(Boolean)
@@ -862,6 +867,7 @@ export default function MapScreen() {
             isFresh: boolean;
             secondsAgo: number;
             onBreak: boolean;
+            occupancy: 'open' | 'filling' | 'full' | null;
           };
         } = {};
 
@@ -894,6 +900,7 @@ export default function MapScreen() {
             isFresh: secondsAgo < FRESHNESS_WINDOW_SECONDS,
             secondsAgo,
             onBreak: (bus as any).onBreak === true,
+            occupancy: (bus as any).occupancy ?? null,
           };
 
           if (!busRegions.current[id]) {
@@ -925,7 +932,8 @@ export default function MapScreen() {
             const p = prev[id];
             const n = newLocations[id];
             if (!p || p.latitude !== n.latitude || p.longitude !== n.longitude ||
-                p.isFresh !== n.isFresh || p.onBreak !== n.onBreak) return newLocations;
+                p.isFresh !== n.isFresh || p.onBreak !== n.onBreak ||
+                p.occupancy !== n.occupancy) return newLocations;
           }
           return prev; // nothing changed — keep same reference
         });
@@ -1759,6 +1767,7 @@ const handleRequest = async (entry: RequestableStop) => {
               ? topOverlay + 116  // pill (36) + gap (10) + search bar (50) + gap (20)
               : topOverlay + 60,  // search bar (50) + gap (10)
         }]}>
+          <AnnouncementBanner orgId={org?.orgId} style={{ marginBottom: 10 }} />
           {!serviceIsOpen ? (
             // Outside operating hours — show schedule
             <View style={styles.hoursCard}>
@@ -1977,6 +1986,19 @@ const handleRequest = async (entry: RequestableStop) => {
 
                         {selectedBusPopup?.nextStop ? (
                           <Text style={styles.busCloudMuted}>Next stop: {selectedBusPopup.nextStop}</Text>
+                        ) : null}
+
+                        {loc.occupancy ? (
+                          <Text style={[
+                            styles.busCloudOccupancy,
+                            loc.occupancy === 'open' && styles.busCloudOccupancyOpen,
+                            loc.occupancy === 'filling' && styles.busCloudOccupancyFilling,
+                            loc.occupancy === 'full' && styles.busCloudOccupancyFull,
+                          ]}>
+                            {loc.occupancy === 'open' ? 'Seats available'
+                              : loc.occupancy === 'filling' ? 'Filling up'
+                              : 'Bus full'}
+                          </Text>
                         ) : null}
                       </View>
 
@@ -2660,6 +2682,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 4,
   },
+  busCloudOccupancy: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  busCloudOccupancyOpen: { color: '#16a34a' },
+  busCloudOccupancyFilling: { color: '#d97706' },
+  busCloudOccupancyFull: { color: '#dc2626' },
   parentCtaCard: {
     position: 'absolute',
     left: 20,

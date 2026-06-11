@@ -223,14 +223,14 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   emptyText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: '#374151',
     marginTop: 12,
   },
   emptyHint: {
     fontSize: 14,
-    color: '#9ca3af',
+    color: '#6b7280',
     marginTop: 4,
     textAlign: 'center',
   },
