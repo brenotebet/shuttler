@@ -80,6 +80,11 @@ const COLOR_SWATCHES = [
 
 function ProfileTab() {
   const { org, refreshOrg } = useOrg();
+  const { user } = useAuth();
+  const isOwner = !!org?.ownerUid && org.ownerUid === user?.uid;
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
+  const [showDeleteOrg, setShowDeleteOrg] = useState(false);
+  const [deletingOrg, setDeletingOrg] = useState(false);
   const [name, setName] = useState(org?.name ?? '');
   const [logoUrl, setLogoUrl] = useState(org?.logoUrl ?? '');
   const [primaryColor, setPrimaryColor] = useState(org?.primaryColor ?? COLOR_SWATCHES[0]);
@@ -226,6 +231,99 @@ function ProfileTab() {
         style={styles.actionButton}
         color={activeColor}
       />
+
+      {/* Danger Zone — org deletion (App Store Guideline 5.1.1) */}
+      {isOwner && (
+        <View style={profileStyles.dangerZone}>
+          <Text style={profileStyles.dangerTitle}>Danger Zone</Text>
+          {!showDeleteOrg ? (
+            <TouchableOpacity
+              style={profileStyles.dangerBtn}
+              onPress={() => setShowDeleteOrg(true)}
+            >
+              <Icon name="delete-forever" size={18} color="#dc2626" />
+              <Text style={profileStyles.dangerBtnText}>Delete Organization…</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <Text style={profileStyles.dangerWarning}>
+                This permanently deletes your organization and everything in it:
+                all rider, driver, and admin accounts, routes, stops, ride history,
+                announcements, and analytics. Your Stripe subscription will be
+                cancelled immediately. This cannot be undone.
+              </Text>
+              <Text style={profileStyles.dangerWarning}>
+                Type the organization name ({org?.name}) to confirm:
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={deleteConfirmName}
+                onChangeText={setDeleteConfirmName}
+                placeholder={org?.name}
+                placeholderTextColor="#aaa"
+                autoCapitalize="none"
+              />
+              <View style={profileStyles.dangerActions}>
+                <TouchableOpacity
+                  onPress={() => { setShowDeleteOrg(false); setDeleteConfirmName(''); }}
+                  style={profileStyles.dangerCancel}
+                >
+                  <Text style={profileStyles.dangerCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={deletingOrg || deleteConfirmName.trim() !== org?.name}
+                  style={[
+                    profileStyles.dangerConfirm,
+                    (deletingOrg || deleteConfirmName.trim() !== org?.name) && { opacity: 0.4 },
+                  ]}
+                  onPress={() => {
+                    Alert.alert(
+                      'Delete organization?',
+                      'Last chance — this deletes all data and member accounts permanently.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete everything',
+                          style: 'destructive',
+                          onPress: async () => {
+                            if (!org) return;
+                            setDeletingOrg(true);
+                            try {
+                              const token = await getBearerToken();
+                              const res = await fetch(`${SHUTTLER_API_URL}/orgs/${org.orgId}`, {
+                                method: 'DELETE',
+                                headers: {
+                                  Authorization: `Bearer ${token}`,
+                                  'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({ confirmName: deleteConfirmName.trim() }),
+                              });
+                              const data = await res.json().catch(() => ({}));
+                              if (!res.ok) {
+                                showToast(data?.message ?? data?.error ?? 'Failed to delete organization.', 'error');
+                                return;
+                              }
+                              await signOut(auth).catch(() => {});
+                            } catch (e: any) {
+                              showToast(e?.message ?? 'Failed to delete organization.', 'error');
+                            } finally {
+                              setDeletingOrg(false);
+                            }
+                          },
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  {deletingOrg
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Text style={profileStyles.dangerConfirmText}>Delete Organization</Text>}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -250,6 +348,35 @@ const profileStyles = StyleSheet.create({
   swatchSelected: { borderWidth: 3, borderColor: '#111' },
   hexRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   hexPreview: { width: 36, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb' },
+  dangerZone: {
+    marginTop: 32,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    padding: 14,
+    backgroundColor: '#fef2f2',
+    gap: 10,
+  },
+  dangerTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#dc2626',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  dangerBtn: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dangerBtnText: { fontSize: 14, fontWeight: '600', color: '#dc2626' },
+  dangerWarning: { fontSize: 13, color: '#7f1d1d', lineHeight: 19 },
+  dangerActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, alignItems: 'center' },
+  dangerCancel: { paddingVertical: 10, paddingHorizontal: 12 },
+  dangerCancelText: { fontSize: 14, color: '#6b7280', fontWeight: '500' },
+  dangerConfirm: {
+    backgroundColor: '#dc2626',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+  },
+  dangerConfirmText: { fontSize: 14, fontWeight: '700', color: '#fff' },
 });
 
 // ---- Auth Settings Tab ----

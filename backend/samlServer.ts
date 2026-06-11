@@ -1088,6 +1088,155 @@ app.delete(
   },
 );
 
+// ---- Account deletion (App Store Guideline 5.1.1) ----
+//
+// Self-serve account deletion for any signed-in user. Removes the caller's
+// Firestore docs in their org and deletes the Firebase Auth user. Org owners
+// must delete (or transfer) their organization first so billing and member
+// data are never orphaned.
+
+app.delete('/account', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
+  const { orgId } = req.body as { orgId?: string };
+  try {
+    if (orgId) {
+      const orgRef = admin.firestore().collection('orgs').doc(orgId);
+      const orgDoc = await orgRef.get();
+      if (orgDoc.exists && orgDoc.data()?.ownerUid === uid) {
+        return res.status(409).json({
+          error: 'org_owner',
+          message: 'You own this organization. Delete the organization first (Org Setup → Danger Zone) or transfer ownership before deleting your account.',
+        });
+      }
+      const batch = admin.firestore().batch();
+      batch.delete(orgRef.collection('users').doc(uid));
+      batch.delete(orgRef.collection('publicUsers').doc(uid));
+      await batch.commit();
+
+      // Delete the user's stop requests so no orphaned PII remains.
+      const reqs = await orgRef.collection('stopRequests').where('studentUid', '==', uid).get();
+      if (!reqs.empty) {
+        const reqBatch = admin.firestore().batch();
+        reqs.docs.forEach((d) => reqBatch.delete(d.ref));
+        await reqBatch.commit();
+      }
+    }
+
+    // AI usage counters are keyed `${uid}_${date}` at the top level.
+    const usage = await admin.firestore().collection('assistantUsage')
+      .where(admin.firestore.FieldPath.documentId(), '>=', `${uid}_`)
+      .where(admin.firestore.FieldPath.documentId(), '<', `${uid}_`)
+      .get();
+    if (!usage.empty) {
+      const usageBatch = admin.firestore().batch();
+      usage.docs.forEach((d) => usageBatch.delete(d.ref));
+      await usageBatch.commit();
+    }
+
+    await admin.auth().deleteUser(uid);
+    return res.json({ deleted: true });
+  } catch (e) {
+    console.error('Delete account error:', e);
+    return res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
+// ---- Org deletion (App Store Guideline 5.1.1 — self-serve entity deletion) ----
+//
+// Only the org owner may delete the organization. Cancels the Stripe
+// subscription, purges all org subcollections, removes the slug lookup,
+// deletes all member Firebase Auth accounts (except the owner, whose own
+// account survives so they can create a new org), and finally the org doc.
+
+const ORG_SUBCOLLECTIONS = [
+  'users',
+  'publicUsers',
+  'buses',
+  'stopRequests',
+  'boardingCounts',
+  'announcements',
+  'insights',
+  'feedback',
+];
+
+async function deleteSubcollection(orgId: string, name: string) {
+  const collRef = admin.firestore().collection('orgs').doc(orgId).collection(name);
+  let snap;
+  do {
+    snap = await collRef.limit(400).get();
+    if (snap.empty) break;
+    const batch = admin.firestore().batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  } while (snap.docs.length === 400);
+}
+
+app.delete(
+  '/orgs/:orgId',
+  requireAuth,
+  requireOrgAdmin,
+  async (req: Request, res: Response) => {
+    const orgId = req.params.orgId as string;
+    const uid = (req as any).uid as string;
+    const { confirmName } = req.body as { confirmName?: string };
+    try {
+      const orgRef = admin.firestore().collection('orgs').doc(orgId);
+      const orgDoc = await orgRef.get();
+      if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
+      const org = orgDoc.data()!;
+
+      if (org.ownerUid && org.ownerUid !== uid) {
+        return res.status(403).json({ error: 'Only the organization owner can delete it.' });
+      }
+      if (!confirmName || confirmName.trim() !== org.name) {
+        return res.status(400).json({
+          error: 'confirm_mismatch',
+          message: 'Type the organization name exactly to confirm deletion.',
+        });
+      }
+
+      // 1. Cancel the Stripe subscription so no further charges occur.
+      if (org.stripeSubscriptionId) {
+        try {
+          await stripe.subscriptions.cancel(org.stripeSubscriptionId);
+        } catch (e: any) {
+          // Already-canceled subscriptions shouldn't block data deletion.
+          if (e?.code !== 'resource_missing') {
+            console.error('Stripe cancel failed during org deletion:', e);
+          }
+        }
+      }
+
+      // 2. Collect member uids before wiping the users subcollection.
+      const memberSnap = await orgRef.collection('users').get();
+      const memberUids = memberSnap.docs.map((d) => d.id).filter((id) => id !== uid);
+
+      // 3. Purge all subcollections.
+      for (const col of ORG_SUBCOLLECTIONS) {
+        await deleteSubcollection(orgId, col);
+      }
+
+      // 4. Remove slug lookup + org doc.
+      if (org.slug) {
+        await admin.firestore().collection('orgSlugs').doc(org.slug).delete().catch(() => {});
+      }
+      await orgRef.delete();
+
+      // 5. Delete member auth accounts (in chunks of 1000 per Admin SDK limit).
+      for (let i = 0; i < memberUids.length; i += 1000) {
+        await admin.auth().deleteUsers(memberUids.slice(i, i + 1000)).catch((e) =>
+          console.error('deleteUsers chunk failed during org deletion:', e),
+        );
+      }
+
+      return res.json({ deleted: true, membersRemoved: memberUids.length });
+    } catch (e) {
+      console.error('Delete org error:', e);
+      return res.status(500).json({ error: 'Failed to delete organization' });
+    }
+  },
+);
+
 // ---- Admin: save auth config ----
 
 app.post(
