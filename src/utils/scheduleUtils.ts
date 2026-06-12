@@ -42,6 +42,11 @@ function getDayAndMinutes(now: Date, timezone?: string): { key: keyof WeekSchedu
   };
 }
 
+// Today's weekday key resolved in the org's timezone (falls back to device time).
+export function getTodayKey(now: Date = new Date(), timezone?: string): keyof WeekSchedule {
+  return getDayAndMinutes(now, timezone).key;
+}
+
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;

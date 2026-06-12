@@ -12,7 +12,8 @@ import { useOrg } from '../src/org/OrgContext';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAuth } from '../src/auth/AuthProvider';
 import { spacing } from '../src/styles/common';
-import type { Route, WeekSchedule, DaySchedule } from '../src/org/OrgContext';
+import { isRouteActive, getTodayScheduleText, getTodayKey } from '../src/utils/scheduleUtils';
+import type { Route, WeekSchedule } from '../src/org/OrgContext';
 
 const DAY_KEYS: (keyof WeekSchedule)[] = [
   'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
@@ -21,9 +22,6 @@ const DAY_LABELS: Record<keyof WeekSchedule, string> = {
   monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed', thursday: 'Thu',
   friday: 'Fri', saturday: 'Sat', sunday: 'Sun',
 };
-const JS_DAY_TO_KEY: (keyof WeekSchedule)[] = [
-  'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday',
-];
 
 function fmt12h(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
@@ -32,34 +30,17 @@ function fmt12h(hhmm: string): string {
   return m === 0 ? `${hour} ${ampm}` : `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-function isCurrentlyOpen(schedule: WeekSchedule | undefined): boolean {
-  if (!schedule) return false;
-  const now = new Date();
-  const key = JS_DAY_TO_KEY[now.getDay()];
-  const day: DaySchedule = schedule[key];
-  if (!day?.isOpen) return false;
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const [oh, om] = day.open.split(':').map(Number);
-  const [ch, cm] = day.close.split(':').map(Number);
-  return nowMins >= oh * 60 + om && nowMins < ch * 60 + cm;
-}
-
-function getTodayHours(schedule: WeekSchedule | undefined): string {
-  if (!schedule) return 'No schedule';
-  const key = JS_DAY_TO_KEY[new Date().getDay()];
-  const day: DaySchedule = schedule[key];
-  if (!day?.isOpen) return 'Closed today';
-  return `Today: ${fmt12h(day.open)} – ${fmt12h(day.close)}`;
-}
-
-function RouteCard({ route, stops, primaryColor }: {
+function RouteCard({ route, stops, primaryColor, timezone }: {
   route: Route;
   stops: { id: string; name: string }[];
   primaryColor: string;
+  timezone?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const open = isCurrentlyOpen(route.schedule);
-  const todayHours = getTodayHours(route.schedule);
+  const open = isRouteActive(route, new Date(), timezone);
+  const todayHours = route.schedule
+    ? getTodayScheduleText(route, new Date(), timezone)
+    : 'No schedule';
   const routeStops = (route.stopIds ?? [])
     .map((id) => stops.find((s) => s.id === id))
     .filter(Boolean) as { id: string; name: string }[];
@@ -125,7 +106,7 @@ function RouteCard({ route, stops, primaryColor }: {
               <View style={styles.scheduleGrid}>
                 {DAY_KEYS.map((key) => {
                   const day = route.schedule![key];
-                  const isToday = JS_DAY_TO_KEY[new Date().getDay()] === key;
+                  const isToday = getTodayKey(new Date(), timezone) === key;
                   return (
                     <View
                       key={key}
@@ -176,8 +157,8 @@ export default function RoutesScreen() {
   const stops = org?.stops ?? [];
 
   const openCount = useMemo(
-    () => routes.filter((r) => isCurrentlyOpen(r.schedule)).length,
-    [routes],
+    () => routes.filter((r) => isRouteActive(r, new Date(), org?.timezone)).length,
+    [routes, org?.timezone],
   );
 
   if (routes.length === 0) {
@@ -233,6 +214,7 @@ export default function RoutesScreen() {
               route={route}
               stops={stops}
               primaryColor={primaryColor}
+              timezone={org?.timezone}
             />
           ))}
         </View>

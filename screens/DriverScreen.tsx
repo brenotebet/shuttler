@@ -164,6 +164,12 @@ export default function DriverScreen() {
   const [todayBoardedTotal, setTodayBoardedTotal] = useState(0);
   const [shiftStartMs, setShiftStartMs] = useState<number | null>(null);
   const [showShiftCard, setShowShiftCard] = useState(true);
+  const [expandedStopId, setExpandedStopId] = useState<string | null>(null);
+  // Fleet Overview is dispatcher info — expanded for admins, collapsed for drivers.
+  const [showFleetOverview, setShowFleetOverview] = useState(authRole === 'admin');
+  useEffect(() => {
+    if (authRole === 'admin') setShowFleetOverview(true);
+  }, [authRole]);
 
   type OtherBusRaw = { id: string; latitude: number; longitude: number; routeId: string | null; isFresh: boolean };
   const [otherBusesRaw, setOtherBusesRaw] = useState<OtherBusRaw[]>([]);
@@ -348,32 +354,18 @@ export default function DriverScreen() {
     return counts;
   }, [activeRequests]);
 
-  const oldestLatestByStopId = useMemo(() => {
-    const byStop: Record<string, { oldestMs: number | null; latestMs: number | null }> = {};
-
+  // Active requests grouped by stop, newest first — shown inline under Route Progress rows.
+  const requestsByStopId = useMemo(() => {
+    const byStop: Record<string, any[]> = {};
     for (const req of activeRequests) {
       const stopId = req?.stop?.id ?? req?.stopId;
-      const createdAtMs = req?.createdAt?.toMillis?.() ?? null;
-      if (!stopId || !createdAtMs) continue;
-
-      const existing = byStop[stopId] ?? { oldestMs: null, latestMs: null };
-      byStop[stopId] = {
-        oldestMs: existing.oldestMs === null ? createdAtMs : Math.min(existing.oldestMs, createdAtMs),
-        latestMs: existing.latestMs === null ? createdAtMs : Math.max(existing.latestMs, createdAtMs),
-      };
+      if (!stopId) continue;
+      (byStop[stopId] = byStop[stopId] ?? []).push(req);
     }
-
+    for (const list of Object.values(byStop)) {
+      list.sort((a, b) => (b?.createdAt?.toMillis?.() ?? 0) - (a?.createdAt?.toMillis?.() ?? 0));
+    }
     return byStop;
-  }, [activeRequests]);
-
-  const recentFeed = useMemo(() => {
-    return [...activeRequests]
-      .sort((a, b) => {
-        const ta = a?.createdAt?.toMillis?.() ?? 0;
-        const tb = b?.createdAt?.toMillis?.() ?? 0;
-        return tb - ta;
-      })
-      .slice(0, 30);
   }, [activeRequests]);
 
 
@@ -856,7 +848,7 @@ export default function DriverScreen() {
 
   // ✅ UPDATED: Load names from /publicUsers instead of /users
   useEffect(() => {
-    const missingUids = recentFeed
+    const missingUids = activeRequests
       .map((req) => req?.studentUid)
       .filter(
         (uid): uid is string =>
@@ -881,7 +873,7 @@ export default function DriverScreen() {
           userLookupInFlightRef.current.delete(uid);
         });
     });
-  }, [recentFeed, userNameByUid]);
+  }, [activeRequests, userNameByUid]);
 
   // Load first names for other drivers shown in the fleet overview tile
   useEffect(() => {
@@ -1012,8 +1004,6 @@ export default function DriverScreen() {
 
   if (loading || !driverId) return null;
 
-  const nearestStats = nearestStop ? oldestLatestByStopId[nearestStop.id] : undefined;
-  const nextStats = nextStop ? oldestLatestByStopId[nextStop.id] : undefined;
 
   const breakSettings = org?.breakSettings;
   const canTakeBreak = isSharing && !isOnBreak && breakSettings?.enabled === true && breaksTakenThisShift < (breakSettings?.breaksPerShift ?? 0);
@@ -1063,7 +1053,7 @@ export default function DriverScreen() {
             <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
             {activeRoute && (
               <Text style={styles.headerSubtitle}>
-                <Icon name="route" size={12} color="#6b7280" /> {activeRoute.name}
+                <Icon name="route" size={12} color="#6b7280" /> {activeRoute.name} · {routeOrderedStops.length} stop{routeOrderedStops.length !== 1 ? 's' : ''}
               </Text>
             )}
           </View>
@@ -1272,13 +1262,8 @@ export default function DriverScreen() {
           </Text>
           <Text style={styles.cardMeta}>Active requests: {nearestStop ? countsByStopId[nearestStop.id] ?? 0 : 0}</Text>
           <Text style={styles.cardMeta}>
-            {nearestStats?.oldestMs
-              ? `Oldest: ${formatTimeAgo(nearestStats.oldestMs)} • Latest: ${formatTimeAgo(nearestStats.latestMs ?? nearestStats.oldestMs)}`
-              : 'Oldest: — • Latest: —'}
+            Next: {nextStop ? `${nextStop.name} • ${countsByStopId[nextStop.id] ?? 0} request${(countsByStopId[nextStop.id] ?? 0) !== 1 ? 's' : ''}` : '—'}
           </Text>
-          {isSharing && totalBoardedSession > 0 && (
-            <Text style={styles.cardMeta}>Session total: {totalBoardedSession} students boarded</Text>
-          )}
 
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: primaryColor }, (!isSharing || !nearestStop) && styles.actionButtonDisabled]}
@@ -1301,10 +1286,96 @@ export default function DriverScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Next Stop</Text>
-          <Text style={[styles.cardMainValue, { color: primaryColor }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>{nextStop?.name ?? '—'}</Text>
-          <Text style={styles.cardMeta}>Active requests: {nextStop ? countsByStopId[nextStop.id] ?? 0 : 0}</Text>
-          <Text style={styles.cardMeta}>Latest: {nextStats?.latestMs ? formatTimeAgo(nextStats.latestMs) : '—'}</Text>
+          <Text style={styles.cardTitle}>Route Progress</Text>
+
+          {orgRoutes.length > 1 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.routePickerScroll}
+              contentContainerStyle={styles.routePickerContent}
+            >
+              {orgRoutes.map((route) => {
+                const isSelected = (selectedRouteId ?? orgRoutes[0]?.id) === route.id;
+                return (
+                  <TouchableOpacity
+                    key={route.id}
+                    style={[styles.routeChip, { borderColor: primaryColor }, isSelected && { backgroundColor: primaryColor }]}
+                    onPress={() => { manuallySelectedRoute.current = true; setSelectedRouteId(route.id); }}
+                  >
+                    <Text style={[styles.routeChipText, { color: primaryColor }, isSelected && styles.routeChipTextSelected]}>
+                      {route.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {activeRoute && orgRoutes.length === 1 && (
+            <Text style={styles.routeSingleName}>{activeRoute.name}</Text>
+          )}
+
+          {routeOrderedStops.length === 0 && (
+            <Text style={styles.emptyText}>No stops configured. Ask your admin to set up stops.</Text>
+          )}
+          {routeOrderedStops.map((stop, index) => {
+            const isCurrent = stop.id === nearestStop?.id;
+            const isNext = stop.id === nextStop?.id;
+            const stopRequests = requestsByStopId[stop.id] ?? [];
+            const isExpanded = expandedStopId === stop.id && stopRequests.length > 0;
+            return (
+              <View key={stop.id}>
+                <TouchableOpacity
+                  style={[styles.routeRow, isCurrent && styles.routeCurrent, isNext && styles.routeNext]}
+                  onPress={() => setExpandedStopId((prev) => (prev === stop.id ? null : stop.id))}
+                  disabled={stopRequests.length === 0}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.routeRowLeft}>
+                    <Text style={styles.routeIndex}>{index + 1}</Text>
+                    <View>
+                      <Text style={styles.routeName}>{stop.name}</Text>
+                      <Text style={styles.routeHint}>{isCurrent ? 'You are here' : isNext ? 'Next stop' : 'Upcoming'}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.routeRowRight}>
+                    <View style={[styles.badge, { backgroundColor: primaryColor }]}>
+                      <Text style={styles.badgeText}>{stopRequests.length}</Text>
+                    </View>
+                    {stopRequests.length > 0 && (
+                      <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={18} color="#9ca3af" />
+                    )}
+                  </View>
+                </TouchableOpacity>
+
+                {isExpanded && (
+                  <View style={styles.routeRequests}>
+                    {stopRequests.map((req) => {
+                      const createdAtMs = req?.createdAt?.toMillis?.() ?? Date.now();
+                      const displayName = req?.studentUid ? userNameByUid[req.studentUid] : null;
+                      const studentLabel = displayName ?? req?.studentEmail?.split('@')[0] ?? 'Student';
+                      return (
+                        <View key={req.id} style={styles.feedRow}>
+                          <View style={styles.feedRowInfo}>
+                            <Text style={styles.feedStudent}>{studentLabel}</Text>
+                            <Text style={styles.feedMeta}>Requested {formatTimeAgo(createdAtMs)}</Text>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.feedSkipBtn}
+                            onPress={() => handleSkipRequest(req.id, req.studentUid ?? null, stop.name)}
+                            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                          >
+                            <Text style={styles.feedSkipText}>Skip</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            );
+          })}
         </View>
 
         {isSharing && (
@@ -1352,8 +1423,20 @@ export default function DriverScreen() {
 
         {otherBusesDisplay.length > 0 && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Fleet Overview</Text>
-            {otherBusesDisplay.map((bus, idx) => (
+            <TouchableOpacity
+              style={styles.fleetHeader}
+              onPress={() => setShowFleetOverview((v) => !v)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cardTitle}>Fleet Overview</Text>
+              <View style={styles.routeRowRight}>
+                <Text style={styles.feedMeta}>
+                  {otherBusesDisplay.length} other bus{otherBusesDisplay.length !== 1 ? 'es' : ''} online
+                </Text>
+                <Icon name={showFleetOverview ? 'expand-less' : 'expand-more'} size={20} color="#9ca3af" />
+              </View>
+            </TouchableOpacity>
+            {showFleetOverview && otherBusesDisplay.map((bus, idx) => (
               <View
                 key={bus.id}
                 style={[
@@ -1384,93 +1467,6 @@ export default function DriverScreen() {
             ))}
           </View>
         )}
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Recent Requests Feed</Text>
-          <View style={styles.feedWrap}>
-            {recentFeed.length === 0 ? (
-              <Text style={styles.emptyText}>No active requests.</Text>
-            ) : (
-              recentFeed.map((req) => {
-                const stopName = req?.stop?.name ?? req?.stopId ?? 'Unknown stop';
-                const createdAtMs = req?.createdAt?.toMillis?.() ?? Date.now();
-                const displayName = req?.studentUid ? userNameByUid[req.studentUid] : null;
-                const studentLabel = displayName ?? req?.studentEmail?.split('@')[0] ?? 'Student';
-
-                return (
-                  <View key={req.id} style={styles.feedRow}>
-                    <View style={styles.feedRowInfo}>
-                      <Text style={styles.feedStop}>{stopName}</Text>
-                      <Text style={styles.feedMeta}>Requested {formatTimeAgo(createdAtMs)}</Text>
-                      <Text style={styles.feedStudent}>{studentLabel}</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.feedSkipBtn}
-                      onPress={() => handleSkipRequest(req.id, req.studentUid ?? null, stopName)}
-                      hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                    >
-                      <Text style={styles.feedSkipText}>Skip</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })
-            )}
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Route Progress</Text>
-
-          {orgRoutes.length > 1 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.routePickerScroll}
-              contentContainerStyle={styles.routePickerContent}
-            >
-              {orgRoutes.map((route) => {
-                const isSelected = (selectedRouteId ?? orgRoutes[0]?.id) === route.id;
-                return (
-                  <TouchableOpacity
-                    key={route.id}
-                    style={[styles.routeChip, { borderColor: primaryColor }, isSelected && { backgroundColor: primaryColor }]}
-                    onPress={() => { manuallySelectedRoute.current = true; setSelectedRouteId(route.id); }}
-                  >
-                    <Text style={[styles.routeChipText, { color: primaryColor }, isSelected && styles.routeChipTextSelected]}>
-                      {route.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          )}
-
-          {activeRoute && orgRoutes.length === 1 && (
-            <Text style={styles.routeSingleName}>{activeRoute.name}</Text>
-          )}
-
-          {routeOrderedStops.length === 0 && (
-            <Text style={styles.emptyText}>No stops configured. Ask your admin to set up stops.</Text>
-          )}
-          {routeOrderedStops.map((stop, index) => {
-            const isCurrent = stop.id === nearestStop?.id;
-            const isNext = stop.id === nextStop?.id;
-            return (
-              <View key={stop.id} style={[styles.routeRow, isCurrent && styles.routeCurrent, isNext && styles.routeNext]}>
-                <View style={styles.routeRowLeft}>
-                  <Text style={styles.routeIndex}>{index + 1}</Text>
-                  <View>
-                    <Text style={styles.routeName}>{stop.name}</Text>
-                    <Text style={styles.routeHint}>{isCurrent ? 'You are here' : isNext ? 'Next stop' : 'Upcoming'}</Text>
-                  </View>
-                </View>
-                <View style={[styles.badge, { backgroundColor: primaryColor }]}>
-                  <Text style={styles.badgeText}>{countsByStopId[stop.id] ?? 0}</Text>
-                </View>
-              </View>
-            );
-          })}
-        </View>
 
         {isSharing && !busOnline && <Text style={styles.onlineHint}>Waiting for fresh driver GPS ping…</Text>}
       </ScrollView>
@@ -1744,6 +1740,9 @@ const styles = StyleSheet.create({
   routeNext: { backgroundColor: '#f2fbf2' },
   routeName: { fontSize: 14, fontWeight: '600', color: '#222' },
   routeHint: { fontSize: 12, color: '#666', marginTop: 2 },
+  routeRowRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  routeRequests: { paddingLeft: 30, paddingBottom: 4 },
+  fleetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   badge: {
     minWidth: 28,
     height: 28,
