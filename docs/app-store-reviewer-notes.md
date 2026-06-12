@@ -36,7 +36,7 @@ Available from the admin/rider menu. It answers questions about the org's shuttl
 
 ### Billing
 
-Subscriptions are **B2B invoicing for organizations** handled via Stripe (permitted under Guideline 3.1.3(e) / 3.1.5 — services purchased by organizations, not consumer digital content). **Stripe is in test mode for the demo org** — no real charges are possible. There are no consumer-facing in-app purchases.
+Subscriptions are **sold to organizations (B2B), never to consumers** — riders always use the app free through their school or campus, and there are no consumer-facing in-app purchases. Billing is handled via Stripe per Guideline 3.1.3 (Enterprise Services: services purchased by organizations, not consumer digital content). When an org admin upgrades a plan, the Billing tab opens **Stripe Checkout in an external browser session** (external purchase, US storefront). **Stripe is in test mode for the demo org** — no real charges are possible.
 
 ### Account & organization deletion (Guideline 5.1.1)
 
