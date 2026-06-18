@@ -1071,7 +1071,7 @@ export default function DriverScreen() {
                 await stopSharing();
               } else {
                 // Check vehicle limit before going online
-                const limits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
+                const limits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
                 if (limits.maxVehicles !== Infinity) {
                   const busSnap = await getDocs(
                     query(

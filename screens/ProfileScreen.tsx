@@ -2,13 +2,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native'
 import { Text } from '../components/Text';
-import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import { auth, db } from '../firebase/firebaseconfig';
+import { SHUTTLER_API_URL } from '../config';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../src/auth/AuthProvider';
@@ -45,8 +46,11 @@ function formatPhone(raw: string): string {
 export default function ProfileScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user, displayName, role, orgId, phoneVerified } = useAuth();
-  const { org } = useOrg();
+  const { org, clearOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
+
+  const isOwner = !!user?.uid && org?.ownerUid === user.uid;
+  const [deleting, setDeleting] = useState(false);
 
   const [name, setName] = useState(displayName ?? '');
   const [phone, setPhone] = useState('');
@@ -168,6 +172,50 @@ export default function ProfileScreen() {
     } finally {
       setChangingPw(false);
     }
+  };
+
+  const confirmDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Not authenticated.');
+      const res = await fetch(`${SHUTTLER_API_URL}/account`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to delete account.');
+      // AuthProvider's onAuthStateChanged handler resets navigation to sign-in.
+      await clearOrg();
+      await signOut(auth);
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Failed to delete account. Please try again.', 'Error', 'error');
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    // Owners must wind down the org first — block here and point them to billing.
+    if (isOwner) {
+      Alert.alert(
+        'Delete your organization first',
+        'As the owner of this organization, cancel your subscription and delete the organization before your account can be removed.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Go to Billing', onPress: () => navigation.navigate('AdminOrgSetup', { initialTab: 'billing' }) },
+        ],
+      );
+      return;
+    }
+    Alert.alert(
+      'Delete Account?',
+      'This permanently deletes your account and personal data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: confirmDeleteAccount },
+      ],
+    );
   };
 
   const initials = getInitials(displayName, email);
@@ -375,6 +423,30 @@ export default function ProfileScreen() {
             )}
           </View>
         )}
+
+        {/* Danger zone — self-service account deletion (Apple requirement) */}
+        <View style={[styles.card, styles.dangerCard]}>
+          <Text style={styles.cardLabel}>Danger Zone</Text>
+          <Text style={styles.dangerHint}>
+            {isOwner
+              ? 'You own this organization. Cancel your subscription and delete the organization before deleting your account.'
+              : 'Permanently delete your account and personal data. This cannot be undone.'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.deleteBtn, deleting && styles.saveBtnDisabled]}
+            onPress={handleDeleteAccount}
+            disabled={deleting}
+          >
+            {deleting ? (
+              <ActivityIndicator size="small" color="#dc2626" />
+            ) : (
+              <>
+                <Icon name="delete-forever" size={18} color="#dc2626" />
+                <Text style={styles.deleteBtnText}>Delete Account</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </ScreenContainer>
   );
@@ -441,6 +513,31 @@ const styles = StyleSheet.create({
   },
   cardIncomplete: {
     borderColor: '#fcd34d',
+  },
+  dangerCard: {
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+  },
+  dangerHint: {
+    fontSize: 13,
+    color: '#6b7280',
+    lineHeight: 18,
+  },
+  deleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: '#dc2626',
+    borderRadius: 10,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+  },
+  deleteBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#dc2626',
   },
   cardLabelRow: {
     flexDirection: 'row',

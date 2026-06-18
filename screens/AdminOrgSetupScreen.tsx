@@ -732,7 +732,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   const { org, refreshOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
   const navigation = useNavigation<any>();
-  const planLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
+  const planLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
   const mapRef = useRef<MapView>(null);
   const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
   const [routes, _setRoutes] = useState<Route[]>(org?.routes ?? []);
@@ -2126,11 +2126,11 @@ const PLAN_DETAILS: Record<string, {
   },
   enterprise: {
     label: 'Enterprise',
-    price: 'Custom pricing',
+    price: 'From $499/mo',
     tagline: 'For large-scale deployments with custom requirements.',
     compareNote: 'Everything in Campus, plus:',
     features: [
-      { icon: 'directions-bus', text: 'Unlimited vehicles' },
+      { icon: 'directions-bus', text: '15 vehicles included, +$30/vehicle/mo beyond' },
       { icon: 'palette', text: 'Custom branding' },
       { icon: 'verified', text: 'SLA guarantee' },
       { icon: 'support-agent', text: 'Dedicated support manager' },
@@ -2446,7 +2446,7 @@ function BillingTab() {
     }
   }, [org?.subscriptionStatus, org?.subscriptionPlan, org?.dataAddonActive]);
 
-  const currentLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus);
+  const currentLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
   const isActive = org?.subscriptionStatus === 'active';
   const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
   const statusColor = isActive || isTrialing ? '#2e7d32' : '#e53935';
@@ -2543,8 +2543,8 @@ function BillingTab() {
       <View style={styles.planCard}>
         <View style={styles.planInfo}>
           <Text style={styles.planName}>Enterprise</Text>
-          <Text style={[styles.planPrice, { color: primaryColor }]}>Custom pricing</Text>
-          <Text style={styles.planDesc}>Unlimited vehicles · SSO · SLA · Custom branding</Text>
+          <Text style={[styles.planPrice, { color: primaryColor }]}>From $499/mo</Text>
+          <Text style={styles.planDesc}>15+ vehicles · SSO · SLA · Custom branding</Text>
           <TouchableOpacity onPress={() => setDetailPlan('enterprise')} style={styles.learnMoreBtn}>
             <Text style={[styles.learnMoreText, { color: primaryColor }]}>See what's included →</Text>
           </TouchableOpacity>
@@ -2618,9 +2618,11 @@ function BillingTab() {
         }
       />
 
-      {isActive && (
+      {/* Shown once the org has a Stripe customer (any plan ever subscribed),
+          so cancellation/invoices stay reachable even when past_due or canceled. */}
+      {!!org?.subscriptionPlan && (
         <AppButton
-          label={isLoading ? '…' : 'Manage Billing'}
+          label={isLoading ? '…' : 'Manage or Cancel Subscription'}
           onPress={openPortal}
           disabled={isLoading}
           style={[styles.actionButton, styles.secondaryButton]}

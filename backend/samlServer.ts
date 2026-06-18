@@ -1088,6 +1088,68 @@ app.delete(
   },
 );
 
+// ---- Self-service account deletion (Apple App Store 5.1.1(v) requirement) ----
+// A user deletes their own account: removes their Firestore membership, public
+// profile, and Firebase Auth identity. The org OWNER is blocked — they must
+// wind down the organization (cancel subscription, delete org) first so the
+// subscription and other members aren't orphaned.
+app.delete('/account', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
+  const { orgId } = req.body as { orgId?: string };
+
+  try {
+    if (orgId) {
+      const orgRef = admin.firestore().collection('orgs').doc(orgId);
+      const orgSnap = await orgRef.get();
+
+      if (orgSnap.exists && orgSnap.data()?.ownerUid === uid) {
+        return res.status(409).json({
+          error:
+            'As the organization owner, please cancel your subscription and delete your organization before deleting your account. Contact support@shuttler.net for help.',
+        });
+      }
+
+      // Scrub PII from the user's stop requests. Anonymize rather than delete so
+      // the org keeps aggregate ridership history (status/stop/timestamps remain).
+      const reqSnap = await orgRef
+        .collection('stopRequests')
+        .where('studentUid', '==', uid)
+        .get();
+      const reqDocs = reqSnap.docs;
+      for (let i = 0; i < reqDocs.length; i += 450) {
+        const scrubBatch = admin.firestore().batch();
+        for (const d of reqDocs.slice(i, i + 450)) {
+          scrubBatch.update(d.ref, {
+            studentUid: admin.firestore.FieldValue.delete(),
+            studentEmail: admin.firestore.FieldValue.delete(),
+            childName: admin.firestore.FieldValue.delete(),
+            childGrade: admin.firestore.FieldValue.delete(),
+          });
+        }
+        await scrubBatch.commit();
+      }
+
+      const batch = admin.firestore().batch();
+      batch.delete(orgRef.collection('users').doc(uid));
+      const pubRef = orgRef.collection('publicUsers').doc(uid);
+      const pubSnap = await pubRef.get();
+      if (pubSnap.exists) batch.delete(pubRef);
+      await batch.commit();
+    }
+
+    // Remove the auth identity last so a Firestore failure above doesn't strand
+    // the user without a login. Best-effort: a missing auth user is still success.
+    await admin.auth().deleteUser(uid).catch((e) => {
+      console.error('[delete account] auth deleteUser failed:', e);
+    });
+
+    return res.json({ deleted: true });
+  } catch (e) {
+    console.error('Delete account error:', e);
+    return res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 // ---- Admin: save auth config ----
 
 app.post(
@@ -1387,7 +1449,7 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
       const founderEmail: string | null = session.customer_details?.email ?? orgData.founderEmail ?? null;
       const orgName: string = orgData.name ?? orgId;
       const PLAN_LABELS: Record<string, string> = { starter: 'Starter', campus: 'Campus', enterprise: 'Enterprise' };
-      const PLAN_AMOUNTS: Record<string, string> = { starter: '$149', campus: '$299', enterprise: 'Custom' };
+      const PLAN_AMOUNTS: Record<string, string> = { starter: '$149', campus: '$299', enterprise: 'From $499' };
       if (founderEmail) {
         sendEmail({
           to: founderEmail,
@@ -1424,17 +1486,26 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
           await admin.firestore().collection('orgs').doc(orgId).update({
             subscriptionStatus: 'canceled',
             entitlements: computeEntitlements('starter', false),
+            limitOverrides: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
         }
       } else if (subType !== 'data_addon') {
         const updatedPlan = subscription.metadata?.plan ?? 'starter';
+        // Negotiated vehicle cap for Enterprise deals — set maxVehicles on the
+        // subscription's metadata in the Stripe dashboard. Absent/invalid metadata
+        // clears the override so the plan-tier default applies.
+        const maxVehicles = parseInt(subscription.metadata?.maxVehicles ?? '', 10);
+        const limitOverrides = Number.isInteger(maxVehicles) && maxVehicles > 0
+          ? { maxVehicles }
+          : admin.firestore.FieldValue.delete();
         const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
         const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
         await admin.firestore().collection('orgs').doc(orgId).update({
           subscriptionStatus: subscription.status,
           stripeSubscriptionId: subscription.id,
           subscriptionPlan: updatedPlan,
+          limitOverrides,
           entitlements: computeEntitlements(updatedPlan, dataAddonActive),
           currentPeriodEnd: (subscription as any).current_period_end
             ? new Date((subscription as any).current_period_end * 1000)

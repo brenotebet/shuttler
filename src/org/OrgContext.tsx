@@ -93,6 +93,9 @@ export type OrgConfig = {
   timezone?: string; // IANA timezone name, e.g. "America/Chicago"
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
+  // Negotiated per-org limits (Enterprise deals) — written by the Stripe webhook
+  // from subscription metadata; takes precedence over the plan-tier defaults.
+  limitOverrides?: { maxVehicles?: number; maxRoutes?: number; maxStops?: number };
   dataAddonActive?: boolean;
   entitlements?: OrgEntitlements;
   approved?: boolean;
@@ -261,6 +264,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               // Subscription
               subscriptionStatus: data.subscriptionStatus ?? prev.subscriptionStatus,
               subscriptionPlan: data.subscriptionPlan ?? prev.subscriptionPlan,
+              limitOverrides: data.limitOverrides ?? undefined,
               dataAddonActive: data.dataAddonActive ?? prev.dataAddonActive,
               approved: data.approved ?? prev.approved,
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
