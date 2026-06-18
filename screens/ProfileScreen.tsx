@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native'
 import { Text } from '../components/Text';
-import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
@@ -16,6 +16,8 @@ import { useOrg } from '../src/org/OrgContext';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
+import { validateUserText } from '../src/utils/profanity';
+import { SHUTTLER_API_URL } from '../config';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
 import { spacing } from '../src/styles/common';
 import PhoneInput from '../src/components/PhoneInput';
@@ -95,6 +97,11 @@ export default function ProfileScreen() {
   const handleSaveName = async () => {
     const trimmed = name.trim();
     if (!trimmed || !user?.uid || !orgId) return;
+    const nameError = validateUserText(trimmed, 'Display name');
+    if (nameError) {
+      showAlert(nameError, 'Invalid name', 'error');
+      return;
+    }
     setSavingName(true);
     try {
       if (auth.currentUser) {
@@ -168,6 +175,46 @@ export default function ProfileScreen() {
     } finally {
       setChangingPw(false);
     }
+  };
+
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
+  const performAccountDeletion = async () => {
+    setDeletingAccount(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/account`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ orgId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data?.error === 'org_owner') {
+        showAlert(data.message ?? 'Delete your organization first.', 'Cannot delete yet', 'error');
+        return;
+      }
+      if (!res.ok) throw new Error(data?.error ?? 'Failed');
+      // Auth user no longer exists — sign out locally to clear session state.
+      await signOut(auth).catch(() => {});
+    } catch {
+      showAlert('Failed to delete your account. Please try again or contact support@shuttler.net.', 'Error', 'error');
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account?',
+      'This permanently deletes your account, profile, and ride history. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: performAccountDeletion },
+      ],
+    );
   };
 
   const initials = getInitials(displayName, email);
@@ -375,6 +422,24 @@ export default function ProfileScreen() {
             )}
           </View>
         )}
+
+        {/* Delete account (App Store Guideline 5.1.1) */}
+        <View style={[styles.card, styles.dangerCard]}>
+          <Text style={styles.dangerLabel}>Danger Zone</Text>
+          <TouchableOpacity
+            style={styles.deleteAccountRow}
+            onPress={handleDeleteAccount}
+            disabled={deletingAccount}
+          >
+            {deletingAccount
+              ? <ActivityIndicator size="small" color="#dc2626" />
+              : <Icon name="delete-forever" size={20} color="#dc2626" />}
+            <Text style={styles.deleteAccountText}>Delete Account</Text>
+          </TouchableOpacity>
+          <Text style={styles.fieldNote}>
+            Permanently removes your account, profile, and ride history. Organization owners must delete their organization first.
+          </Text>
+        </View>
       </ScrollView>
     </ScreenContainer>
   );
@@ -607,5 +672,26 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#fff',
+  },
+  dangerCard: {
+    borderColor: '#fecaca',
+    marginTop: spacing.section,
+  },
+  dangerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#dc2626',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  deleteAccountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  deleteAccountText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#dc2626',
   },
 });
