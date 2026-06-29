@@ -1268,8 +1268,15 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
     console.error('Checkout session error:', e);
     // Surface actionable Stripe errors so misconfiguration is easy to spot
     const type: string = e?.type ?? '';
-    if (type === 'StripeAuthenticationError' || e?.message?.includes('API key')) {
+    const code: string = e?.code ?? e?.raw?.code ?? '';
+    const message: string = e?.message ?? '';
+    if (type === 'StripeAuthenticationError' || message.includes('API key')) {
       return res.status(500).json({ error: 'Payment service is misconfigured. Please contact support.' });
+    }
+    // Stored stripeCustomerId no longer exists in the active Stripe account
+    // (e.g. stale ID after a Stripe account migration).
+    if (code === 'resource_missing' || /no such customer/i.test(message)) {
+      return res.status(409).json({ error: 'Your billing record is out of date. Please contact support@shuttler.net to reconnect your subscription.' });
     }
     if (type === 'StripeInvalidRequestError') {
       return res.status(500).json({ error: 'Payment configuration error. Please contact support.' });
@@ -1302,8 +1309,23 @@ app.post('/billing/create-portal-session', requireAuth, async (req: Request, res
     });
 
     return res.json({ url: session.url });
-  } catch (e) {
+  } catch (e: any) {
     console.error('Portal session error:', e);
+    const type: string = e?.type ?? '';
+    const code: string = e?.code ?? e?.raw?.code ?? '';
+    const message: string = e?.message ?? '';
+    // Stored stripeCustomerId doesn't exist in the active Stripe account —
+    // typically a stale ID left over from a Stripe account migration.
+    if (code === 'resource_missing' || /no such customer/i.test(message)) {
+      return res.status(409).json({ error: 'Your billing record is out of date. Please contact support@shuttler.net to reconnect your subscription.' });
+    }
+    if (type === 'StripeAuthenticationError' || message.includes('API key')) {
+      return res.status(500).json({ error: 'Payment service is misconfigured. Please contact support.' });
+    }
+    // Customer Portal hasn't been activated in the Stripe Dashboard yet.
+    if (type === 'StripeInvalidRequestError' && /configuration/i.test(message)) {
+      return res.status(500).json({ error: 'The billing portal is not set up yet. Please contact support@shuttler.net.' });
+    }
     return res.status(500).json({ error: 'Failed to create portal session' });
   }
 });
@@ -1347,6 +1369,11 @@ app.post('/billing/create-addon-checkout-session', requireAuth, async (req: Requ
     return res.json({ url: session.url });
   } catch (e: any) {
     console.error('[billing/create-addon-checkout-session] error:', e);
+    const code: string = e?.code ?? e?.raw?.code ?? '';
+    const message: string = e?.message ?? '';
+    if (code === 'resource_missing' || /no such customer/i.test(message)) {
+      return res.status(409).json({ error: 'Your billing record is out of date. Please contact support@shuttler.net to reconnect your subscription.' });
+    }
     return res.status(500).json({ error: 'Failed to create checkout session' });
   }
 });
@@ -1483,9 +1510,13 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
           });
           console.log(`[webhook] data_addon deactivated for org ${orgId}`);
         } else {
+          // Preserve data access for an org that still pays for the add-on —
+          // the add-on is a separate subscription and isn't canceled here.
+          const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+          const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
           await admin.firestore().collection('orgs').doc(orgId).update({
             subscriptionStatus: 'canceled',
-            entitlements: computeEntitlements('starter', false),
+            entitlements: computeEntitlements('starter', dataAddonActive),
             limitOverrides: admin.firestore.FieldValue.delete(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });

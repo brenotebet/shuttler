@@ -2618,14 +2618,18 @@ function BillingTab() {
         }
       />
 
-      {/* Shown once the org has a Stripe customer (any plan ever subscribed),
-          so cancellation/invoices stay reachable even when past_due or canceled. */}
-      {!!org?.subscriptionPlan && (
+      {/* Shown once the org has a REAL Stripe subscription. A trial org has
+          subscriptionPlan defaulted to 'starter' but no Stripe customer yet, so
+          opening the portal would 500. After checkout the webhook moves status
+          off 'trialing' (active/past_due/canceled), keeping cancellation and
+          invoices reachable in all of those states. */}
+      {!isTrialing && !!org?.subscriptionStatus && (
         <AppButton
           label={isLoading ? '…' : 'Manage or Cancel Subscription'}
           onPress={openPortal}
           disabled={isLoading}
-          style={[styles.actionButton, styles.secondaryButton]}
+          variant="secondary"
+          style={styles.actionButton}
         />
       )}
     </ScrollView>
@@ -3189,9 +3193,6 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     marginTop: spacing.item,
-  },
-  secondaryButton: {
-    backgroundColor: '#f5f5f5',
   },
   radioRow: {
     flexDirection: 'row',
