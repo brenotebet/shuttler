@@ -32,12 +32,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     supportsTablet: true,
     config: {
       googleMapsApiKey,
+      usesNonExemptEncryption: false,
     },
     infoPlist: {
-      NSLocationWhenInUseUsageDescription: 'Allow Shuttler to access your location while using the app.',
+      NSLocationWhenInUseUsageDescription:
+        'Shuttler uses your location to show your position on the shuttle map and find your nearest stop.',
       NSLocationAlwaysAndWhenInUseUsageDescription:
-        'Allow Shuttler to access your location even when the app is in the background.',
-      NSCameraUsageDescription: 'Some features may require camera access.',
+        'Drivers share their location during an active shift so riders can track the shuttle in real time, including while the app is in the background.',
+      NSCameraUsageDescription:
+        'Shuttler uses the camera so org admins can take a photo to use as the organization logo.',
       NSPhotoLibraryUsageDescription: 'Allow Shuttler to access your photo library to upload an organization logo.',
       UIBackgroundModes: ['location', 'remote-notification'],
       ...(reversedIosClientId

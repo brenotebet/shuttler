@@ -22,6 +22,7 @@ import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE, 
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { showToast } from '../src/components/Toast';
+import { validateUserText } from '../src/utils/profanity';
 import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
@@ -135,6 +136,11 @@ function ProfileTab() {
 
   const handleSave = useCallback(async () => {
     if (!org) return;
+    const nameError = validateUserText(name, 'Organization name');
+    if (nameError) {
+      showToast(nameError, 'error');
+      return;
+    }
     const effectiveColor = customColor.match(/^#[0-9a-fA-F]{6}$/) ? customColor : primaryColor;
     setIsSaving(true);
     try {
@@ -891,6 +897,11 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       showToast('Enter a stop name.', 'error');
       return;
     }
+    const stopNameError = validateUserText(pendingName, 'Stop name');
+    if (stopNameError) {
+      showToast(stopNameError, 'error');
+      return;
+    }
     if (!pendingCoords) {
       showToast('Tap the map or enter latitude and longitude.', 'error');
       return;
@@ -966,6 +977,11 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   // Route helpers
   const handleAddRoute = useCallback(() => {
     if (!newRouteName.trim()) return;
+    const routeNameError = validateUserText(newRouteName, 'Route name');
+    if (routeNameError) {
+      showToast(routeNameError, 'error');
+      return;
+    }
     if (routes.length >= planLimits.maxRoutes) {
       Alert.alert(
         'Route limit reached',

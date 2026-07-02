@@ -17,6 +17,7 @@ import { useOrg } from '../src/org/OrgContext';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
+import { validateUserText } from '../src/utils/profanity';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
 import { spacing } from '../src/styles/common';
 import PhoneInput from '../src/components/PhoneInput';
@@ -99,6 +100,11 @@ export default function ProfileScreen() {
   const handleSaveName = async () => {
     const trimmed = name.trim();
     if (!trimmed || !user?.uid || !orgId) return;
+    const nameError = validateUserText(trimmed, 'Display name');
+    if (nameError) {
+      showAlert(nameError, 'Invalid name', 'error');
+      return;
+    }
     setSavingName(true);
     try {
       if (auth.currentUser) {
@@ -190,7 +196,7 @@ export default function ProfileScreen() {
       await clearOrg();
       await signOut(auth);
     } catch (e: any) {
-      showAlert(e?.message ?? 'Failed to delete account. Please try again.', 'Error', 'error');
+      showAlert(e?.message ?? 'Failed to delete your account. Please try again or contact support@shuttler.net.', 'Error', 'error');
       setDeleting(false);
     }
   };

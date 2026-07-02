@@ -75,9 +75,9 @@ export default function LegalScreen() {
           Email us at{' '}
           <Text
             style={[styles.footerLink, { color: primaryColor }]}
-            onPress={() => Linking.openURL('mailto:hello@shuttler.net')}
+            onPress={() => Linking.openURL('mailto:support@shuttler.net')}
           >
-            hello@shuttler.net
+            support@shuttler.net
           </Text>
         </Text>
       </View>

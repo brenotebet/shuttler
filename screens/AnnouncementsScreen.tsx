@@ -23,6 +23,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showToast } from '../src/components/Toast';
 import { showAlert } from '../src/utils/alerts';
+import { containsProfanity } from '../src/utils/profanity';
 import { spacing, borderRadius } from '../src/styles/common';
 import type { AnnouncementSeverity } from '../src/hooks/useAnnouncements';
 
@@ -88,6 +89,10 @@ export default function AnnouncementsScreen() {
 
   const post = async () => {
     if (!title.trim() || posting) return;
+    if (containsProfanity(title) || containsProfanity(body)) {
+      showAlert('This alert contains inappropriate language. Please revise it before posting.', 'Inappropriate content', 'error');
+      return;
+    }
     setPosting(true);
     try {
       const token = await auth.currentUser?.getIdToken();
