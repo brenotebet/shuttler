@@ -2312,9 +2312,11 @@ const detailStyles = StyleSheet.create({
 // ---- Billing Tab ----
 
 function BillingTab() {
-  const { org, refreshOrg } = useOrg();
+  const { org, refreshOrg, clearOrg } = useOrg();
+  const { user } = useAuth();
   const { primaryColor } = useOrgTheme();
   const [isLoading, setIsLoading] = useState(false);
+  const [isDeletingOrg, setIsDeletingOrg] = useState(false);
 
   const openCheckout = useCallback(
     async (plan: string) => {
@@ -2413,6 +2415,50 @@ function BillingTab() {
       setIsLoading(false);
     }
   }, [org, refreshOrg]);
+
+  const confirmDeleteOrg = useCallback(async () => {
+    if (!org) return;
+    setIsDeletingOrg(true);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/admin/orgs/${org.orgId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to delete organization.');
+      showToast('Organization deleted.', 'success');
+      // Back to org selection — the account itself still exists and can now be
+      // deleted from the Profile screen.
+      await clearOrg();
+    } catch (e: any) {
+      showToast(e?.message ?? 'Failed to delete organization.', 'error');
+      setIsDeletingOrg(false);
+    }
+  }, [org, clearOrg]);
+
+  const handleDeleteOrg = useCallback(() => {
+    Alert.alert(
+      'Delete Organization?',
+      'This permanently deletes your organization for every member — routes, stops, ridership history, and all accounts data. Any remaining subscription (including the Data Analytics add-on) is canceled immediately. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert(
+              'Are you absolutely sure?',
+              `"${org?.name ?? 'This organization'}" and all of its data will be gone forever.`,
+              [
+                { text: 'Keep my organization', style: 'cancel' },
+                { text: 'Delete forever', style: 'destructive', onPress: confirmDeleteOrg },
+              ],
+            ),
+        },
+      ],
+    );
+  }, [org?.name, confirmDeleteOrg]);
 
   const [detailPlan, setDetailPlan] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<'plan' | 'addon' | null>(null);
@@ -2632,6 +2678,33 @@ function BillingTab() {
           style={styles.actionButton}
         />
       )}
+
+      {/* Danger zone — only the org owner can wind down the organization.
+          This is the "delete the organization" step ProfileScreen points
+          owners to before they can delete their own account. */}
+      {!!org?.ownerUid && org.ownerUid === user?.uid && (
+        <View style={dangerStyles.card}>
+          <Text style={dangerStyles.label}>Danger Zone</Text>
+          <Text style={dangerStyles.hint}>
+            Permanently delete this organization for all members and cancel any remaining
+            subscription. This cannot be undone.
+          </Text>
+          <TouchableOpacity
+            style={[dangerStyles.deleteBtn, isDeletingOrg && { opacity: 0.5 }]}
+            onPress={handleDeleteOrg}
+            disabled={isDeletingOrg}
+          >
+            {isDeletingOrg ? (
+              <ActivityIndicator size="small" color="#dc2626" />
+            ) : (
+              <>
+                <Icon name="delete-forever" size={18} color="#dc2626" />
+                <Text style={dangerStyles.deleteBtnText}>Delete Organization</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
     </ScrollView>
 
     {/* Purchase confirmation sheet */}
@@ -2663,6 +2736,47 @@ function BillingTab() {
     </>
   );
 }
+
+// Mirrors the ProfileScreen danger-zone card so the two flows read as one.
+const dangerStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#fef2f2',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    padding: 16,
+    marginTop: 24,
+    gap: 10,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#dc2626',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  hint: {
+    fontSize: 13,
+    color: '#6b7280',
+    lineHeight: 18,
+  },
+  deleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: '#dc2626',
+    borderRadius: 10,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+  },
+  deleteBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#dc2626',
+  },
+});
 
 const confirmStyles = StyleSheet.create({
   sheet: {

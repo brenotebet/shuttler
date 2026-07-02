@@ -14,11 +14,18 @@
 // you are instead recreating the subscription directly in the new Stripe
 // Dashboard and will write the new IDs/status back yourself.
 //
+// It also clears dataAddonActive and entitlements: the add-on subscription
+// lives in the OLD account too, so leaving the flag set gives the org
+// analytics access with no billable subscription behind it — and nothing shows
+// up in the new account's billing portal to cancel. Pass --keep-addon if the
+// org's add-on will be recreated manually in the new account.
+//
 // Usage (run from the backend/ directory):
 //   node migrate-clear-stripe.js <orgId>                 # dry run, by org id
 //   node migrate-clear-stripe.js --slug <slug>           # dry run, by slug
 //   node migrate-clear-stripe.js <orgId> --commit        # apply the change
 //   node migrate-clear-stripe.js <orgId> --commit --keep-status
+//   node migrate-clear-stripe.js <orgId> --commit --keep-addon
 //
 // Dry run is the default — nothing is written until you pass --commit.
 
@@ -53,6 +60,7 @@ async function main() {
   const args = process.argv.slice(2);
   const commit = args.includes('--commit');
   const keepStatus = args.includes('--keep-status');
+  const keepAddon = args.includes('--keep-addon');
 
   const orgId = await resolveOrgId(args);
   const ref = db.collection('orgs').doc(orgId);
@@ -65,6 +73,7 @@ async function main() {
   console.log(`  stripeSubscriptionId: ${data.stripeSubscriptionId ?? '(none)'}`);
   console.log(`  subscriptionStatus:   ${data.subscriptionStatus ?? '(none)'}`);
   console.log(`  subscriptionPlan:     ${data.subscriptionPlan ?? '(none)'}`);
+  console.log(`  dataAddonActive:      ${data.dataAddonActive ?? '(none)'}`);
 
   const update = {
     stripeCustomerId: admin.firestore.FieldValue.delete(),
@@ -74,9 +83,17 @@ async function main() {
   if (!keepStatus) {
     update.subscriptionStatus = 'trialing';
   }
+  if (!keepAddon) {
+    // Deleting both fields locks the add-on again: every reader falls back to
+    // false (`entitlements?.dataApi ?? dataAddonActive ?? false`), and the next
+    // webhook event recomputes entitlements from live state.
+    update.dataAddonActive = admin.firestore.FieldValue.delete();
+    update.entitlements = admin.firestore.FieldValue.delete();
+  }
 
   console.log('\nWill clear stripeCustomerId + stripeSubscriptionId' +
-    (keepStatus ? ' (keeping subscriptionStatus).' : ' and reset subscriptionStatus → trialing.'));
+    (keepStatus ? ' (keeping subscriptionStatus)' : ', reset subscriptionStatus → trialing') +
+    (keepAddon ? ' (keeping data add-on).' : ', and clear dataAddonActive + entitlements.'));
 
   if (!commit) {
     console.log('\nDry run — no changes written. Re-run with --commit to apply.\n');

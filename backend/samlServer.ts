@@ -1150,6 +1150,75 @@ app.delete('/account', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+// ---- Owner: delete organization (wind-down) ----
+// Owner-only (stricter than requireOrgAdmin). Immediately cancels every
+// remaining Stripe subscription on the org's customer — including the data
+// add-on, which is a separate subscription — then recursively deletes the org
+// doc and all subcollections (users, publicUsers, stopRequests, routes,
+// announcements, feedback, boardingCounts, …) plus the orgSlugs mapping and
+// pending orgInvites. The Stripe customer is kept for invoice history.
+
+app.delete('/admin/orgs/:orgId', requireAuth, async (req: Request, res: Response) => {
+  const orgId = req.params.orgId as string;
+  const uid = (req as any).uid as string;
+
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const orgSnap = await orgRef.get();
+    if (!orgSnap.exists) return res.status(404).json({ error: 'Org not found' });
+    const org = orgSnap.data()!;
+
+    if (org.ownerUid !== uid) {
+      return res.status(403).json({ error: 'Only the organization owner can delete the organization.' });
+    }
+
+    // Cancel all remaining Stripe subscriptions immediately (main plan AND the
+    // data add-on). A stale customer from the old Stripe account is skipped —
+    // there is nothing to cancel in the active account.
+    if (org.stripeCustomerId) {
+      try {
+        const subs = await stripe.subscriptions.list({
+          customer: org.stripeCustomerId,
+          status: 'all',
+          limit: 100,
+        });
+        for (const sub of subs.data) {
+          if (sub.status !== 'canceled' && sub.status !== 'incomplete_expired') {
+            await stripe.subscriptions.cancel(sub.id);
+            console.log(`[delete org] canceled subscription ${sub.id} for org ${orgId}`);
+          }
+        }
+      } catch (e: any) {
+        const code: string = e?.code ?? e?.raw?.code ?? '';
+        if (code !== 'resource_missing' && !/no such customer/i.test(e?.message ?? '')) {
+          console.error('[delete org] Stripe cancel failed:', e);
+          return res.status(502).json({
+            error: 'Could not cancel the Stripe subscription. Nothing was deleted — please try again or contact support@shuttler.net.',
+          });
+        }
+      }
+    }
+
+    // Top-level docs that reference the org.
+    if (org.slug) {
+      await admin.firestore().collection('orgSlugs').doc(org.slug).delete();
+    }
+    const invites = await admin.firestore().collection('orgInvites').where('orgId', '==', orgId).get();
+    const inviteBatch = admin.firestore().batch();
+    invites.docs.forEach((d) => inviteBatch.delete(d.ref));
+    await inviteBatch.commit();
+
+    // The org doc and every subcollection under it.
+    await admin.firestore().recursiveDelete(orgRef);
+
+    console.log(`[delete org] org ${orgId} (${org.name ?? 'unnamed'}) deleted by owner ${uid}`);
+    return res.json({ deleted: true });
+  } catch (e) {
+    console.error('Delete org error:', e);
+    return res.status(500).json({ error: 'Failed to delete organization' });
+  }
+});
+
 // ---- Admin: save auth config ----
 
 app.post(
