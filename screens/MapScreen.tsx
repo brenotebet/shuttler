@@ -305,7 +305,6 @@ export default function MapScreen() {
   const [eta, setEta] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [stopsBefore, setStopsBefore] = useState<number | null>(null);
-  const [busOnline, setBusOnline] = useState<boolean>(false);
   const [busRouteIds, setBusRouteIds] = useState<Record<string, string | null>>({});
 
   type RequestableStop = {
@@ -407,6 +406,22 @@ export default function MapScreen() {
       occupancy: 'open' | 'filling' | 'full' | null;
     };
   }>({});
+
+  // Buses updated within FRESHNESS_WINDOW_SECONDS. Single source of truth for
+  // the "N buses online" chip, the "No buses online" banner, and the request
+  // gate — activeBusIds intentionally keeps stale-but-online buses so they can
+  // stay on the map dimmed, so it must not drive any of those. clockTick keeps
+  // this decaying even when a dead GPS feed stops producing snapshots.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const freshBusCount = useMemo(
+    () =>
+      Object.values(busLocations).filter(
+        (b) => (Date.now() - b.lastUpdated.getTime()) / 1000 < FRESHNESS_WINDOW_SECONDS,
+      ).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [busLocations, clockTick],
+  );
+  const busOnline = freshBusCount > 0;
 
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedStopKey, setSelectedStopKey] = useState<string | null>(null);
@@ -853,10 +868,7 @@ export default function MapScreen() {
             return { ...bus, secondsAgo };
           });
 
-        const freshBuses = buses.filter((bus: any) => bus.secondsAgo < FRESHNESS_WINDOW_SECONDS);
         const visibleBuses = buses; // all online buses; opacity reflects freshness
-
-        setBusOnline(freshBuses.length > 0);
 
         const newLocations: {
           [id: string]: {
@@ -1812,11 +1824,11 @@ const handleRequest = async (entry: RequestableStop) => {
                 : 'Tap "Request a stop" to pick your pickup, or tap a bus to see its ETA and next stop.'}
             />
           )}
-          {activeBusIds.length > 0 && (
+          {freshBusCount > 0 && (
             <View style={styles.busCountChip}>
               <View style={styles.busCountDot} />
               <Text style={styles.busCountText}>
-                {activeBusIds.length} bus{activeBusIds.length !== 1 ? 'es' : ''} online
+                {freshBusCount} bus{freshBusCount !== 1 ? 'es' : ''} online
               </Text>
             </View>
           )}
