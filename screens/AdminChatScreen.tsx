@@ -42,8 +42,10 @@ const SUGGESTED_RIDER = [
 // The model replies in light markdown; the bubble is a plain <Text>, so render
 // **bold** spans as nested bold Text instead of showing literal asterisks.
 function renderInlineBold(content: string): React.ReactNode {
-  const parts = content.split(/\*\*(.+?)\*\*/g);
-  if (parts.length === 1) return content;
+  // Render "# Heading" lines as bold text rather than literal hash marks.
+  const normalized = content.replace(/^#{1,6}\s+(.+)$/gm, '**$1**');
+  const parts = normalized.split(/\*\*(.+?)\*\*/g);
+  if (parts.length === 1) return normalized;
   return parts.map((part, i) =>
     i % 2 === 1 ? (
       <Text key={i} style={{ fontWeight: '700' }}>
