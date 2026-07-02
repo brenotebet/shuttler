@@ -2511,6 +2511,7 @@ function BillingTab() {
   const currentLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
   const isActive = org?.subscriptionStatus === 'active';
   const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
+  const dataUnlocked = org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false;
   const statusColor = isActive || isTrialing ? '#2e7d32' : '#e53935';
   const isApproved = org?.approved === true;
 
@@ -2621,7 +2622,6 @@ function BillingTab() {
       {/* Data Add-on */}
       <Text style={[styles.sectionLabel, { marginTop: 8 }]}>Add-ons</Text>
       {(() => {
-        const dataUnlocked = org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false;
         return (
           <View style={[styles.planCard, dataUnlocked && styles.planCardActive, dataUnlocked && { borderColor: primaryColor }]}>
             <View style={styles.planInfo}>
@@ -2676,16 +2676,16 @@ function BillingTab() {
           isLoading || !isApproved ||
           (detailPlan !== 'data_addon' && detailPlan !== 'enterprise' &&
             org?.subscriptionPlan === detailPlan && isActive) ||
-          (detailPlan === 'data_addon' && (org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false))
+          (detailPlan === 'data_addon' && dataUnlocked)
         }
       />
 
-      {/* Shown once the org has a REAL Stripe subscription. A trial org has
-          subscriptionPlan defaulted to 'starter' but no Stripe customer yet, so
-          opening the portal would 500. After checkout the webhook moves status
-          off 'trialing' (active/past_due/canceled), keeping cancellation and
-          invoices reachable in all of those states. */}
-      {!isTrialing && !!org?.subscriptionStatus && (
+      {/* Shown once the org has anything to manage in Stripe. A plain trial org
+          has no Stripe customer yet, so opening the portal would 500 — but any
+          checkout (plan OR the data add-on) creates one. The add-on is a separate
+          subscription that doesn't move subscriptionStatus off 'trialing', so it
+          must keep the portal reachable on its own for cancellation. */}
+      {(!isTrialing || dataUnlocked) && !!org?.subscriptionStatus && (
         <AppButton
           label={isLoading ? '…' : 'Manage or Cancel Subscription'}
           onPress={openPortal}
