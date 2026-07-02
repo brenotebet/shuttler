@@ -49,17 +49,17 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Some features may require camera access.</string>
+    <string>Shuttler uses the camera so org admins can take a photo to use as the organization logo.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Allow Shuttler to access your location even when the app is in the background.</string>
+    <string>Drivers share their location during an active shift so riders can track the shuttle in real time, including while the app is in the background.</string>
     <key>NSLocationAlwaysUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
+    <string>Drivers share their location during an active shift so riders can track the shuttle in real time, including while the app is in the background.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Allow Shuttler to access your location while using the app.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
+    <string>Shuttler uses your location to show your position on the shuttle map and find your nearest stop.</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Allow Shuttler to access your photo library to upload an organization logo.</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>RCTNewArchEnabled</key>
     <true/>
     <key>UIBackgroundModes</key>
