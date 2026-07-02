@@ -1564,7 +1564,9 @@ const handleRequest = async (entry: RequestableStop) => {
   const { stop: selectedStop, routeId: entryRouteId } = entry;
 
   // Block requests from users who aren't physically near a stop.
-  if (stops.length > 0) {
+  // Orgs can opt out via requireStopProximity: false (demo/review orgs where
+  // testers are nowhere near the campus).
+  if (stops.length > 0 && org?.requireStopProximity !== false) {
     if (!userLocRef.current) {
       showAlert(
         'Your location isn\'t available yet. Make sure GPS is enabled and wait a moment, then try again.',

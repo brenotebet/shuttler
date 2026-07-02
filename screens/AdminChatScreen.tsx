@@ -39,6 +39,22 @@ const SUGGESTED_RIDER = [
   'How do I cancel a request?',
 ];
 
+// The model replies in light markdown; the bubble is a plain <Text>, so render
+// **bold** spans as nested bold Text instead of showing literal asterisks.
+function renderInlineBold(content: string): React.ReactNode {
+  const parts = content.split(/\*\*(.+?)\*\*/g);
+  if (parts.length === 1) return content;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <Text key={i} style={{ fontWeight: '700' }}>
+        {part}
+      </Text>
+    ) : (
+      part
+    ),
+  );
+}
+
 function getSuggested(role: string | null): string[] {
   if (role === 'admin') return SUGGESTED_ADMIN;
   if (role === 'driver') return SUGGESTED_DRIVER;
@@ -121,7 +137,7 @@ export default function AdminChatScreen() {
             : styles.bubbleAssistant,
         ]}>
           <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant]}>
-            {item.content}
+            {renderInlineBold(item.content)}
           </Text>
         </View>
       </View>

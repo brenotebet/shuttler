@@ -99,6 +99,9 @@ export type OrgConfig = {
   dataAddonActive?: boolean;
   entitlements?: OrgEntitlements;
   approved?: boolean;
+  // When false, riders may request a stop from anywhere (demo/review orgs).
+  // Defaults to true: riders must be within 400 m of a stop.
+  requireStopProximity?: boolean;
   reviewStatus?: 'pending' | 'approved' | 'rejected';
   rejectionReason?: string | null;
   breakSettings?: BreakSettings;
@@ -267,6 +270,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               limitOverrides: data.limitOverrides ?? undefined,
               dataAddonActive: data.dataAddonActive ?? prev.dataAddonActive,
               approved: data.approved ?? prev.approved,
+              requireStopProximity: data.requireStopProximity ?? prev.requireStopProximity,
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
               rejectionReason: data.rejectionReason ?? prev.rejectionReason ?? null,
               breakSettings: data.breakSettings ?? prev.breakSettings,

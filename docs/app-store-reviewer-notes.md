@@ -24,6 +24,8 @@ Sign in with the email option, select "Shuttler Demo" in the org selector. The d
 
 Real-time bus positions come from drivers' phones during active shifts in physical deployments. To see live movement during review, log in as the **driver** account and start a shift — the bus position will appear on the rider's map. (We can also run a GPS simulator on request; the seeded data includes historical positions.)
 
+Riders normally must be within 400 m of a stop to request a pickup. **The demo organization has this proximity check disabled** so you can exercise the full request flow from anywhere.
+
 ### Navigating roles
 
 - **Rider view:** map with live shuttles, stop request flow, announcements.
