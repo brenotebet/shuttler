@@ -34,7 +34,7 @@ import { notifyStudentArrived, notifyStudentApproaching, notifyStudentCompleted,
 import { BACKGROUND_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
-import { getPlanLimits } from '../src/constants/planLimits';
+import { getPlanLimits, planFor } from '../src/constants/planLimits';
 import { useOrg, Stop } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
 import { useAuth } from '../src/auth/AuthProvider';
@@ -1088,9 +1088,13 @@ export default function DriverScreen() {
                     return (now - tsMs) / 1000 < STALE_WINDOW_SECONDS;
                   }).length;
                   if (otherOnline >= limits.maxVehicles) {
+                    const next = planFor('maxVehicles', otherOnline + 1); // buses already online + this one
                     Alert.alert(
                       'Vehicle limit reached',
-                      `Your ${limits.label} plan allows up to ${limits.maxVehicles} vehicles online at once. Upgrade your plan to put more vehicles on the road.`,
+                      `Your ${limits.label} plan allows up to ${limits.maxVehicles} vehicles online at once. ` +
+                        (next
+                          ? `You need the ${next.label} plan (${next.price}) or higher to put more vehicles on the road.`
+                          : 'Contact us about an Enterprise plan sized for your fleet.'),
                       [
                         {
                           text: 'Manage Billing',

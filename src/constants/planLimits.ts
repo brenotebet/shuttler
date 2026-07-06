@@ -51,6 +51,21 @@ export function getPlanLimits(
   };
 }
 
+/**
+ * Cheapest paid plan that allows at least `needed` of the resource, or null
+ * when even the Enterprise base doesn't (→ point the user at sales instead).
+ * Used by limit-reached alerts to name the specific plan to buy.
+ */
+export function planFor(
+  resource: 'maxVehicles' | 'maxRoutes' | 'maxStops',
+  needed: number,
+): PlanLimits | null {
+  for (const key of ['starter', 'campus', 'enterprise'] as PlanKey[]) {
+    if (PLAN_LIMITS[key][resource] >= needed) return PLAN_LIMITS[key];
+  }
+  return null;
+}
+
 /** Human-readable vehicle limit string. */
 export function vehicleLimitText(limits: PlanLimits): string {
   return limits.maxVehicles === Infinity ? 'Unlimited vehicles' : `Up to ${limits.maxVehicles} vehicles`;

@@ -420,13 +420,21 @@ function AnalyticsSection() {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const baselineAddon = useRef(org?.dataAddonActive);
 
+  // iOS can't present a Modal while the Stripe browser sheet is up — the
+  // half-presented Modal blocks the sheet's dismissal and then eats every
+  // touch on the screen. Queue the confirmation if the webhook beats the
+  // success redirect and show it only after the browser is gone.
+  const browserOpenRef = useRef(false);
+  const pendingConfirmationRef = useRef(false);
+
   // Enterprise plans include analytics without the add-on purchase.
   const hasAnalytics = !!(org?.dataAddonActive || org?.entitlements?.dataApi);
 
   // Show confirmation the moment the webhook updates Firestore
   useEffect(() => {
     if (org?.dataAddonActive && !baselineAddon.current) {
-      setShowConfirmation(true);
+      if (browserOpenRef.current) pendingConfirmationRef.current = true;
+      else setShowConfirmation(true);
       baselineAddon.current = true;
     }
   }, [org?.dataAddonActive]);
@@ -455,16 +463,32 @@ function AnalyticsSection() {
       });
       const { url, error: err } = await res.json();
       if (err) throw new Error(err);
+      browserOpenRef.current = true;
       const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      browserOpenRef.current = false;
+
+      let confirmed = false;
+      if (pendingConfirmationRef.current) {
+        pendingConfirmationRef.current = false;
+        confirmed = true;
+        // Let the browser sheet finish its dismissal animation first —
+        // presenting a Modal mid-dismissal hits the same iOS bug.
+        setTimeout(() => setShowConfirmation(true), 500);
+      }
+
       const redirectedUrl = (result as any).url as string | undefined;
       if (result.type === 'success' && redirectedUrl?.includes('session_id=')) {
+        if (!confirmed) showToast('Payment received — activating your add-on…', 'success');
         void refreshOrg();
         setTimeout(() => void refreshOrg(), 3000);
         setTimeout(() => void refreshOrg(), 7000);
+      } else if (result.type === 'success' && !confirmed) {
+        showToast("Checkout canceled — you haven't been charged.", 'info');
       }
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to open billing.', 'error');
     } finally {
+      browserOpenRef.current = false;
       setIsUpgrading(false);
     }
   }, [org, refreshOrg]);

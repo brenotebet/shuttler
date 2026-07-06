@@ -27,7 +27,7 @@ import { SHUTTLER_API_URL } from '../config';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
-import { getPlanLimits, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
+import { getPlanLimits, planFor, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import BottomSheet from '../components/BottomSheet';
@@ -907,11 +907,15 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       return;
     }
     if (stops.length >= planLimits.maxStops) {
+      const next = planFor('maxStops', stops.length + 1);
       Alert.alert(
         'Stop limit reached',
-        `Your ${planLimits.label} plan includes ${stopLimitText(planLimits)}. Upgrade your plan to add more stops.`,
+        `Your ${planLimits.label} plan includes ${stopLimitText(planLimits)}. ` +
+          (next
+            ? `You need the ${next.label} plan (${next.price}) or higher for ${stopLimitText(next).toLowerCase()}.`
+            : 'Contact us about an Enterprise plan sized for your service.'),
         [
-          { text: 'Manage Billing', onPress: onGoToBilling },
+          { text: 'View Plans', onPress: onGoToBilling },
           { text: 'OK', style: 'cancel' },
         ],
       );
@@ -975,6 +979,21 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   }, [org, stops, routes, timezone, mapCenter, refreshOrg, navigation]);
 
   // Route helpers
+  const showRouteLimitAlert = useCallback(() => {
+    const next = planFor('maxRoutes', routes.length + 1);
+    Alert.alert(
+      'Route limit reached',
+      `Your ${planLimits.label} plan includes ${routeLimitText(planLimits)}. ` +
+        (next
+          ? `You need the ${next.label} plan (${next.price}) or higher for ${routeLimitText(next).toLowerCase()}.`
+          : 'Contact us about an Enterprise plan sized for your service.'),
+      [
+        { text: 'View Plans', onPress: onGoToBilling },
+        { text: 'OK', style: 'cancel' },
+      ],
+    );
+  }, [routes.length, planLimits, onGoToBilling]);
+
   const handleAddRoute = useCallback(() => {
     if (!newRouteName.trim()) return;
     const routeNameError = validateUserText(newRouteName, 'Route name');
@@ -983,14 +1002,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       return;
     }
     if (routes.length >= planLimits.maxRoutes) {
-      Alert.alert(
-        'Route limit reached',
-        `Your ${planLimits.label} plan includes ${routeLimitText(planLimits)}. Upgrade your plan to add more routes.`,
-        [
-          { text: 'Manage Billing', onPress: onGoToBilling },
-          { text: 'OK', style: 'cancel' },
-        ],
-      );
+      showRouteLimitAlert();
       return;
     }
     setRoutes((prev) => [
@@ -999,7 +1011,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
     ]);
     setNewRouteName('');
     setShowRouteForm(false);
-  }, [newRouteName, routes.length, planLimits]);
+  }, [newRouteName, routes.length, planLimits, showRouteLimitAlert]);
 
   const handleDeleteRoute = useCallback((routeId: string) => {
     Alert.alert('Delete route', 'Remove this route?', [
@@ -1302,14 +1314,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
           <TouchableOpacity
             onPress={() => {
               if (routes.length >= planLimits.maxRoutes) {
-                Alert.alert(
-                  'Route limit reached',
-                  `Your ${planLimits.label} plan includes ${routeLimitText(planLimits)}. Upgrade your plan to add more routes.`,
-                  [
-                    { text: 'Manage Billing', onPress: onGoToBilling },
-                    { text: 'OK', style: 'cancel' },
-                  ],
-                );
+                showRouteLimitAlert();
                 return;
               }
               setShowRouteForm(true);
@@ -2333,6 +2338,32 @@ function BillingTab() {
   const { primaryColor } = useOrgTheme();
   const [isLoading, setIsLoading] = useState(false);
   const [isDeletingOrg, setIsDeletingOrg] = useState(false);
+  const [confirmation, setConfirmation] = useState<'plan' | 'addon' | null>(null);
+
+  // iOS can't present a Modal while the Stripe browser sheet is up — the
+  // half-presented Modal blocks the sheet's dismissal and then eats every
+  // touch on the tab. Queue confirmations that arrive mid-checkout (the
+  // webhook usually beats Stripe's success redirect) and show them only
+  // after the browser is gone.
+  const browserOpenRef = useRef(false);
+  const pendingConfirmationRef = useRef<'plan' | 'addon' | null>(null);
+
+  const showOrQueueConfirmation = useCallback((kind: 'plan' | 'addon') => {
+    if (browserOpenRef.current) pendingConfirmationRef.current = kind;
+    else setConfirmation(kind);
+  }, []);
+
+  // Returns true if a queued confirmation is about to be shown.
+  const finishBrowserSession = useCallback(() => {
+    browserOpenRef.current = false;
+    const pending = pendingConfirmationRef.current;
+    if (!pending) return false;
+    pendingConfirmationRef.current = null;
+    // Let the browser sheet finish its dismissal animation first —
+    // presenting a Modal mid-dismissal hits the same iOS bug.
+    setTimeout(() => setConfirmation(pending), 500);
+    return true;
+  }, []);
 
   const openCheckout = useCallback(
     async (plan: string) => {
@@ -2348,7 +2379,9 @@ function BillingTab() {
         const { url, error } = await res.json();
         if (error) throw new Error(error);
 
+        browserOpenRef.current = true;
         const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+        const confirmed = finishBrowserSession();
 
         // Browser closed (no redirect) — user dismissed without touching Stripe.
         if (result.type !== 'success') return;
@@ -2356,21 +2389,26 @@ function BillingTab() {
         // Stripe cancel button redirects to cancel_url (shuttler://billing, no session_id).
         // Stripe success redirects to success_url (shuttler://billing?session_id=...).
         const redirectedUrl = (result as any).url as string | undefined;
-        if (!redirectedUrl?.includes('session_id=')) return;
+        if (!redirectedUrl?.includes('session_id=')) {
+          if (!confirmed) showToast("Checkout canceled — you haven't been charged.", 'info');
+          return;
+        }
 
         // Payment confirmed — unlock the UI immediately.
         // The Firestore live listener fires the confirmation sheet as soon as
         // the webhook updates the org doc. Background polls are a safety net.
+        if (!confirmed) showToast('Payment received — activating your plan…', 'success');
         void refreshOrg();
         setTimeout(() => void refreshOrg(), 3000);
         setTimeout(() => void refreshOrg(), 7000);
       } catch (e: any) {
         showToast(e?.message ?? 'Failed to open billing.', 'error');
       } finally {
+        browserOpenRef.current = false;
         setIsLoading(false);  // unblocks immediately — no more 10s freeze
       }
     },
-    [org, refreshOrg],
+    [org, refreshOrg, finishBrowserSession],
   );
 
   const openAddonCheckout = useCallback(async () => {
@@ -2386,21 +2424,28 @@ function BillingTab() {
       const { url, error } = await res.json();
       if (error) throw new Error(error);
 
+      browserOpenRef.current = true;
       const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      const confirmed = finishBrowserSession();
 
       if (result.type !== 'success') return;
       const redirectedUrl = (result as any).url as string | undefined;
-      if (!redirectedUrl?.includes('session_id=')) return;
+      if (!redirectedUrl?.includes('session_id=')) {
+        if (!confirmed) showToast("Checkout canceled — you haven't been charged.", 'info');
+        return;
+      }
 
+      if (!confirmed) showToast('Payment received — activating your add-on…', 'success');
       void refreshOrg();
       setTimeout(() => void refreshOrg(), 3000);
       setTimeout(() => void refreshOrg(), 7000);
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to open billing.', 'error');
     } finally {
+      browserOpenRef.current = false;
       setIsLoading(false);
     }
-  }, [org, refreshOrg]);
+  }, [org, refreshOrg, finishBrowserSession]);
 
   const openPortal = useCallback(async () => {
     if (!org) return;
@@ -2415,7 +2460,9 @@ function BillingTab() {
       const { url, error } = await res.json();
       if (error) throw new Error(error);
 
+      browserOpenRef.current = true;
       const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      finishBrowserSession();
 
       // Browser closed without redirect — user opened portal and dismissed immediately.
       if (result.type !== 'success') return;
@@ -2428,9 +2475,10 @@ function BillingTab() {
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to open billing portal.', 'error');
     } finally {
+      browserOpenRef.current = false;
       setIsLoading(false);
     }
-  }, [org, refreshOrg]);
+  }, [org, refreshOrg, finishBrowserSession]);
 
   const confirmDeleteOrg = useCallback(async () => {
     if (!org) return;
@@ -2477,7 +2525,6 @@ function BillingTab() {
   }, [org?.name, confirmDeleteOrg]);
 
   const [detailPlan, setDetailPlan] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<'plan' | 'addon' | null>(null);
   const navigation = useNavigation<any>();
 
   // Capture baseline so we only celebrate changes that happen this session
@@ -2497,13 +2544,13 @@ function BillingTab() {
     const planChanged = !!org.subscriptionPlan && org.subscriptionPlan !== baselinePlan.current;
 
     if (wentActive || planChanged) {
-      setConfirmation('plan');
+      showOrQueueConfirmation('plan');
       baselineStatus.current = org.subscriptionStatus;
       baselinePlan.current   = org.subscriptionPlan;
     }
 
     if (org.dataAddonActive && !baselineAddon.current) {
-      setConfirmation('addon');
+      showOrQueueConfirmation('addon');
       baselineAddon.current = true;
     }
   }, [org?.subscriptionStatus, org?.subscriptionPlan, org?.dataAddonActive]);
@@ -2733,7 +2780,7 @@ function BillingTab() {
       </Text>
       <Text style={confirmStyles.body}>
         {confirmation === 'addon'
-          ? 'Your full boarding history, trend charts, driver stats, and CSV export are now available.'
+          ? 'Your full boarding history, trend charts, driver stats, and CSV export are now available. Find them anytime under Menu > Analytics.'
           : `Your subscription is active. You now have access to ${vehicleLimitText(currentLimits).toLowerCase()} and ${routeLimitText(currentLimits).toLowerCase()}.`}
       </Text>
       {confirmation === 'addon' && (
