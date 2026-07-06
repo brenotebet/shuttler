@@ -146,7 +146,6 @@ export async function listWaitlist(): Promise<WaitlistEntry[]> {
 export type FeedbackEntry = {
   id: string;
   orgId: string | null;
-  studentUid: string | null;
   requestId: string | null;
   questionKey: string | null;
   question: string | null;

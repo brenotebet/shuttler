@@ -220,6 +220,7 @@ const passwordResetLimit = createRateLimiter(60_000, 5);
 const orgCreateLimit = createRateLimiter(60_000, 3);
 const waitlistLimit = createRateLimiter(60_000, 3);
 const announcementLimit = createRateLimiter(60_000, 5);
+const superAdminLimit = createRateLimiter(60_000, 30);
 
 // ---------- Org helpers ----------
 
@@ -324,17 +325,25 @@ async function requireOrgAdmin(req: Request, res: Response, next: Function) {
 
 
 async function requireSuperAdmin(req: Request, res: Response, next: Function) {
+  if (superAdminLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing authorization header' });
   }
   try {
-    const decoded = await admin.auth().verifyIdToken(header.slice(7));
+    // checkRevoked: disabling the account or revoking sessions locks the
+    // panel out immediately instead of after the 1h token TTL.
+    const decoded = await admin.auth().verifyIdToken(header.slice(7), true);
     const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS ?? '')
       .split(',')
       .map((s: string) => s.trim())
       .filter(Boolean);
-    const isSuperAdmin = decoded.superAdmin === true || superAdminEmails.includes(decoded.email ?? '');
+    // Email fallback only counts for verified emails — otherwise registering
+    // the configured address on any unverified-signup path would grant access.
+    const isSuperAdmin = decoded.superAdmin === true ||
+      (decoded.email_verified === true && superAdminEmails.includes(decoded.email ?? ''));
     if (!isSuperAdmin) {
       return res.status(403).json({ error: 'Super admin access required' });
     }
@@ -373,6 +382,10 @@ function computeEntitlements(plan: string, dataAddonActive: boolean) {
 // ---------- Express app ----------
 
 const app = express();
+
+// Railway terminates TLS one proxy hop in front of us — without this, req.ip
+// is the proxy's address and every per-IP rate limiter shares one bucket.
+app.set('trust proxy', 1);
 
 Sentry.setupExpressErrorHandler(app);
 
@@ -1697,7 +1710,8 @@ app.get('/super-admin/feedback', requireSuperAdmin, async (_req: Request, res: R
       return {
         id: d.id,
         orgId,
-        studentUid: data.studentUid ?? null,
+        // studentUid intentionally omitted — the panel never shows it, so
+        // don't ship rider identifiers to the browser at all.
         requestId: data.requestId ?? null,
         questionKey: data.questionKey ?? null,
         question: data.question ?? null,
