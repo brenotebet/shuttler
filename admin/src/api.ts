@@ -55,6 +55,94 @@ export async function rejectOrg(orgId: string, reason: string): Promise<void> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
+export type LimitOverrides = {
+  maxVehicles?: number;
+  maxRoutes?: number;
+  maxStops?: number;
+};
+
+export type OrgSummary = {
+  orgId: string;
+  name: string | null;
+  slug: string | null;
+  approved: boolean;
+  reviewStatus: string | null;
+  founderEmail: string | null;
+  subscriptionPlan: string | null;
+  subscriptionStatus: string | null;
+  dataAddonActive: boolean;
+  limitOverrides: LimitOverrides | null;
+  currentPeriodEnd: string | null;
+  trialEndsAt: string | null;
+  createdAt: string | null;
+  busesOnline: number;
+  lastBusSeenAt: string | null;
+  requests24h: number;
+};
+
+export async function listOrgs(): Promise<OrgSummary[]> {
+  const res = await fetch(`${API}/super-admin/orgs`, {
+    headers: { Authorization: `Bearer ${await token()}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.orgs ?? [];
+}
+
+export async function setOrgLimits(orgId: string, overrides: LimitOverrides): Promise<void> {
+  const res = await fetch(`${API}/super-admin/orgs/${orgId}/limits`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${await token()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(overrides),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function setDataAddon(orgId: string, active: boolean): Promise<void> {
+  const res = await fetch(`${API}/super-admin/orgs/${orgId}/data-addon`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${await token()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ active }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function extendTrial(orgId: string, days: number): Promise<string> {
+  const res = await fetch(`${API}/super-admin/orgs/${orgId}/extend-trial`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${await token()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ days }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.trialEndsAt;
+}
+
+export type WaitlistEntry = {
+  id: string;
+  email: string | null;
+  source: string | null;
+  submittedAt: string | null;
+};
+
+export async function listWaitlist(): Promise<WaitlistEntry[]> {
+  const res = await fetch(`${API}/super-admin/waitlist`, {
+    headers: { Authorization: `Bearer ${await token()}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.entries ?? [];
+}
+
 export type FeedbackEntry = {
   id: string;
   orgId: string | null;

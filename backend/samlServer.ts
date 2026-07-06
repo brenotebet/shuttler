@@ -1840,6 +1840,208 @@ app.post('/super-admin/org-applications/:orgId/reject', requireSuperAdmin, async
   }
 });
 
+// ---- Super-admin: orgs overview ----
+
+// Mirrors the app's online-bus freshness window (STALE_WINDOW_SECONDS).
+const BUS_STALE_WINDOW_SECONDS = 180;
+
+app.get('/super-admin/orgs', requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const orgsSnap = await admin.firestore().collection('orgs').get();
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const orgs = await Promise.all(orgsSnap.docs.map(async (d) => {
+      const data = d.data();
+
+      // Ops health — best-effort; an org with no subcollections just reads empty.
+      let busesOnline = 0;
+      let lastBusSeenAt: string | null = null;
+      let requests24h = 0;
+      try {
+        const [busSnap, reqCount] = await Promise.all([
+          d.ref.collection('buses').where('online', '==', true).get(),
+          d.ref.collection('stopRequests').where('createdAt', '>=', since).count().get(),
+        ]);
+        const now = Date.now();
+        let lastSeenMs = 0;
+        for (const bus of busSnap.docs) {
+          const b = bus.data();
+          const tsMs = b?.updatedAt?.toMillis?.() ?? b?.lastSeen?.toMillis?.() ?? null;
+          if (tsMs === null) continue;
+          if (tsMs > lastSeenMs) lastSeenMs = tsMs;
+          if ((now - tsMs) / 1000 < BUS_STALE_WINDOW_SECONDS) busesOnline += 1;
+        }
+        if (lastSeenMs > 0) lastBusSeenAt = new Date(lastSeenMs).toISOString();
+        requests24h = reqCount.data().count;
+      } catch (opsErr) {
+        console.warn(`[super-admin/orgs] ops stats failed for ${d.id}:`, opsErr);
+      }
+
+      return {
+        orgId: d.id,
+        name: data.name ?? null,
+        slug: data.slug ?? null,
+        approved: data.approved ?? false,
+        reviewStatus: data.reviewStatus ?? null,
+        founderEmail: data.founderEmail ?? null,
+        subscriptionPlan: data.subscriptionPlan ?? null,
+        subscriptionStatus: data.subscriptionStatus ?? null,
+        dataAddonActive: data.dataAddonActive ?? false,
+        limitOverrides: data.limitOverrides ?? null,
+        currentPeriodEnd: data.currentPeriodEnd?.toDate?.()?.toISOString() ?? null,
+        trialEndsAt: data.trialEndsAt?.toDate?.()?.toISOString() ?? null,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
+        busesOnline,
+        lastBusSeenAt,
+        requests24h,
+      };
+    }));
+
+    orgs.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+    return res.json({ orgs });
+  } catch (e) {
+    console.error('[super-admin/orgs] error:', e);
+    return res.status(500).json({ error: 'Failed to list orgs' });
+  }
+});
+
+// ---- Super-admin: org support actions ----
+
+// Every mutating support action is recorded so there's a paper trail of who
+// changed a production org and why — Firestore console edits leave none.
+async function writeAdminAudit(req: Request, action: string, orgId: string, details: Record<string, unknown>) {
+  try {
+    await admin.firestore().collection('adminAuditLog').add({
+      action,
+      orgId,
+      details,
+      actorUid: (req as any).uid ?? null,
+      actorEmail: (req as any).claims?.email ?? null,
+      at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.error('[super-admin] audit log write failed:', e);
+  }
+}
+
+// Set or clear negotiated limit overrides. NOTE: for orgs with an active
+// subscription, Stripe subscription metadata is the durable source — the
+// webhook re-stamps limitOverrides on every subscription event, so set the
+// metadata there too or this override will be clobbered.
+app.post('/super-admin/orgs/:orgId/limits', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  const parse = (v: unknown): number | null => {
+    const n = typeof v === 'string' ? parseInt(v, 10) : v;
+    return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : null;
+  };
+  const maxVehicles = parse(req.body?.maxVehicles);
+  const maxRoutes = parse(req.body?.maxRoutes);
+  const maxStops = parse(req.body?.maxStops);
+  const overrides: Record<string, number> = {};
+  if (maxVehicles) overrides.maxVehicles = maxVehicles;
+  if (maxRoutes) overrides.maxRoutes = maxRoutes;
+  if (maxStops) overrides.maxStops = maxStops;
+
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    if (!(await orgRef.get()).exists) return res.status(404).json({ error: 'Org not found' });
+
+    await orgRef.update({
+      limitOverrides: Object.keys(overrides).length > 0
+        ? overrides
+        : admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await writeAdminAudit(req, 'set-limit-overrides', orgId, { overrides });
+    return res.json({ orgId, limitOverrides: Object.keys(overrides).length > 0 ? overrides : null });
+  } catch (e) {
+    console.error('[super-admin] set limits error:', e);
+    return res.status(500).json({ error: 'Failed to set limit overrides' });
+  }
+});
+
+// Comp (or revoke) the data add-on without a Stripe subscription — keeps
+// entitlements consistent via computeEntitlements, unlike a console edit.
+app.post('/super-admin/orgs/:orgId/data-addon', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  const active = req.body?.active === true;
+
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const orgSnap = await orgRef.get();
+    if (!orgSnap.exists) return res.status(404).json({ error: 'Org not found' });
+
+    const plan = orgSnap.data()?.subscriptionPlan ?? 'starter';
+    await orgRef.update({
+      dataAddonActive: active,
+      entitlements: computeEntitlements(plan, active),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await writeAdminAudit(req, active ? 'comp-data-addon' : 'revoke-data-addon', orgId, { active });
+    return res.json({ orgId, dataAddonActive: active });
+  } catch (e) {
+    console.error('[super-admin] data-addon error:', e);
+    return res.status(500).json({ error: 'Failed to update data add-on' });
+  }
+});
+
+// Extend a trial by N days (from today or from the current expiry, whichever
+// is later), so an expired trial comes back to life too.
+app.post('/super-admin/orgs/:orgId/extend-trial', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  const days = parseInt(String(req.body?.days ?? '14'), 10);
+  if (!Number.isInteger(days) || days < 1 || days > 90) {
+    return res.status(400).json({ error: 'days must be between 1 and 90' });
+  }
+
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const orgSnap = await orgRef.get();
+    if (!orgSnap.exists) return res.status(404).json({ error: 'Org not found' });
+
+    const currentEnd = orgSnap.data()?.trialEndsAt?.toMillis?.() ?? 0;
+    const base = Math.max(currentEnd, Date.now());
+    const newEnd = new Date(base + days * 24 * 60 * 60 * 1000);
+
+    await orgRef.update({
+      trialEndsAt: newEnd,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await writeAdminAudit(req, 'extend-trial', orgId, { days, trialEndsAt: newEnd.toISOString() });
+    return res.json({ orgId, trialEndsAt: newEnd.toISOString() });
+  } catch (e) {
+    console.error('[super-admin] extend-trial error:', e);
+    return res.status(500).json({ error: 'Failed to extend trial' });
+  }
+});
+
+// ---- Super-admin: waitlist ----
+
+app.get('/super-admin/waitlist', requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const snap = await admin.firestore()
+      .collection('waitlist')
+      .orderBy('submittedAt', 'desc')
+      .limit(500)
+      .get();
+
+    const entries = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        email: data.email ?? null,
+        source: data.source ?? null,
+        submittedAt: data.submittedAt?.toDate?.()?.toISOString() ?? null,
+      };
+    });
+
+    return res.json({ entries });
+  } catch (e) {
+    console.error('[super-admin/waitlist] error:', e);
+    return res.status(500).json({ error: 'Failed to load waitlist' });
+  }
+});
+
 // ---- Internal: create new org ----
 
 app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) => {
