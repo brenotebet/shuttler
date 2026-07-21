@@ -4,7 +4,6 @@ import { ActivityIndicator, ScrollView, Share, StyleSheet, TouchableOpacity, Vie
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomSheet from '../components/BottomSheet';
-import * as WebBrowser from 'expo-web-browser';
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
@@ -22,6 +21,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useExternalCheckout } from '../src/hooks/useExternalCheckout';
 
 const ANALYTICS_WELCOME_KEY = 'shuttler_analytics_welcomed';
 
@@ -426,6 +426,7 @@ function AnalyticsSection() {
   // success redirect and show it only after the browser is gone.
   const browserOpenRef = useRef(false);
   const pendingConfirmationRef = useRef(false);
+  const openExternalCheckout = useExternalCheckout('shuttler://billing');
 
   // Enterprise plans include analytics without the add-on purchase.
   const hasAnalytics = !!(org?.dataAddonActive || org?.entitlements?.dataApi);
@@ -464,7 +465,10 @@ function AnalyticsSection() {
       const { url, error: err } = await res.json();
       if (err) throw new Error(err);
       browserOpenRef.current = true;
-      const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      const result = await openExternalCheckout(
+        url,
+        "You'll complete your add-on purchase on shuttler.net in Safari, then return to Shuttler automatically.",
+      );
       browserOpenRef.current = false;
 
       let confirmed = false;
@@ -491,7 +495,7 @@ function AnalyticsSection() {
       browserOpenRef.current = false;
       setIsUpgrading(false);
     }
-  }, [org, refreshOrg]);
+  }, [org, refreshOrg, openExternalCheckout]);
 
   useEffect(() => {
     if (!hasAnalytics || !org) return;

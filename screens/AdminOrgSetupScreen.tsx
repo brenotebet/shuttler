@@ -21,6 +21,7 @@ import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE, BreakSettings } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+import { useExternalCheckout } from '../src/hooks/useExternalCheckout';
 import { showToast } from '../src/components/Toast';
 import { validateUserText } from '../src/utils/profanity';
 import { SHUTTLER_API_URL } from '../config';
@@ -2353,6 +2354,8 @@ function BillingTab() {
     else setConfirmation(kind);
   }, []);
 
+  const openExternalCheckout = useExternalCheckout('shuttler://billing');
+
   // Returns true if a queued confirmation is about to be shown.
   const finishBrowserSession = useCallback(() => {
     browserOpenRef.current = false;
@@ -2380,7 +2383,10 @@ function BillingTab() {
         if (error) throw new Error(error);
 
         browserOpenRef.current = true;
-        const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+        const result = await openExternalCheckout(
+          url,
+          "You'll complete your plan upgrade on shuttler.net in Safari, then return to Shuttler automatically.",
+        );
         const confirmed = finishBrowserSession();
 
         // Browser closed (no redirect) — user dismissed without touching Stripe.
@@ -2408,7 +2414,7 @@ function BillingTab() {
         setIsLoading(false);  // unblocks immediately — no more 10s freeze
       }
     },
-    [org, refreshOrg, finishBrowserSession],
+    [org, refreshOrg, finishBrowserSession, openExternalCheckout],
   );
 
   const openAddonCheckout = useCallback(async () => {
@@ -2425,7 +2431,10 @@ function BillingTab() {
       if (error) throw new Error(error);
 
       browserOpenRef.current = true;
-      const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      const result = await openExternalCheckout(
+        url,
+        "You'll complete your add-on purchase on shuttler.net in Safari, then return to Shuttler automatically.",
+      );
       const confirmed = finishBrowserSession();
 
       if (result.type !== 'success') return;
@@ -2445,7 +2454,7 @@ function BillingTab() {
       browserOpenRef.current = false;
       setIsLoading(false);
     }
-  }, [org, refreshOrg, finishBrowserSession]);
+  }, [org, refreshOrg, finishBrowserSession, openExternalCheckout]);
 
   const openPortal = useCallback(async () => {
     if (!org) return;
@@ -2461,7 +2470,10 @@ function BillingTab() {
       if (error) throw new Error(error);
 
       browserOpenRef.current = true;
-      const result = await WebBrowser.openAuthSessionAsync(url, 'shuttler://billing');
+      const result = await openExternalCheckout(
+        url,
+        "You'll manage your subscription on shuttler.net in Safari, then return to Shuttler automatically.",
+      );
       finishBrowserSession();
 
       // Browser closed without redirect — user opened portal and dismissed immediately.
@@ -2478,7 +2490,7 @@ function BillingTab() {
       browserOpenRef.current = false;
       setIsLoading(false);
     }
-  }, [org, refreshOrg, finishBrowserSession]);
+  }, [org, refreshOrg, finishBrowserSession, openExternalCheckout]);
 
   const confirmDeleteOrg = useCallback(async () => {
     if (!org) return;
