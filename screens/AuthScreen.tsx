@@ -35,6 +35,7 @@ import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import PhoneInput, { isValidE164 } from '../src/components/PhoneInput';
+import { PASSWORD_RULES } from '../src/utils/passwordPolicy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Auth'>;
 type RouteT = RouteProp<RootStackParamList, 'Auth'>;
@@ -118,14 +119,6 @@ type FieldErrors = Partial<Record<
   'firstName' | 'lastName' | 'phone' | 'email' | 'password' | 'confirmPassword',
   string
 >>;
-
-const PASSWORD_RULES = [
-  { key: 'length',    label: 'At least 8 characters',        test: (p: string) => p.length >= 8 },
-  { key: 'upper',     label: 'One uppercase letter (A–Z)',    test: (p: string) => /[A-Z]/.test(p) },
-  { key: 'lower',     label: 'One lowercase letter (a–z)',    test: (p: string) => /[a-z]/.test(p) },
-  { key: 'number',    label: 'One number (0–9)',              test: (p: string) => /\d/.test(p) },
-  { key: 'special',   label: 'One special character (!@#…)',  test: (p: string) => /[^A-Za-z0-9]/.test(p) },
-];
 
 const STRENGTH_LABELS = ['', 'Weak', 'Fair', 'Good', 'Strong', 'Very strong'];
 const STRENGTH_COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#eab308', '#22c55e', '#16a34a'];
@@ -538,8 +531,12 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmed }),
       });
-      // Always show success — the endpoint never reveals whether the email exists
-      if (res.ok || res.status < 500) {
+      if (res.status === 429) {
+        setFormError('Too many reset requests. Please wait a minute and try again.');
+        return;
+      }
+      // Success is generic — the endpoint never reveals whether the email exists
+      if (res.ok) {
         showToast(`If an account exists for ${trimmed}, a reset link has been sent.`, 'success');
       } else {
         throw new Error(`Server error ${res.status}`);
@@ -710,52 +707,65 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
         </TouchableOpacity>
       )}
 
-      {GOOGLE_WEB_CLIENT_ID ? (
-        <>
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or</Text>
-            <View style={styles.dividerLine} />
-          </View>
+      {(() => {
+        // Apple availability must never depend on the Google config — if the
+        // Google client ID is missing from a build, hiding Apple with it would
+        // violate App Review guideline 4.8 (Sign in with Apple parity).
+        const appleAvailable = Platform.OS === 'ios' && Constants.appOwnership !== 'expo';
+        const googleAvailable = !!GOOGLE_WEB_CLIENT_ID;
+        if (!appleAvailable && !googleAvailable) return null;
+        const providerNames = [googleAvailable && 'Google', appleAvailable && 'Apple']
+          .filter(Boolean)
+          .join(' and ');
+        return (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
-          <Text style={styles.socialHint}>
-            Google{Platform.OS === 'ios' && Constants.appOwnership !== 'expo' ? ' and Apple' : ''} sign-in creates your account automatically — no separate sign-up needed.
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.socialButton, isSocialLoading && styles.socialButtonDisabled]}
-            onPress={() => { setFormError(null); promptGoogleAsync(); }}
-            disabled={isSocialLoading}
-            activeOpacity={0.8}
-          >
-            <Icon name="login" size={18} color="#4285F4" />
-            <Text style={styles.socialButtonText}>Continue with Google</Text>
-          </TouchableOpacity>
-
-          {Platform.OS === 'ios' && Constants.appOwnership !== 'expo' && (
-            <TouchableOpacity
-              style={[styles.socialButton, styles.appleButton, isSocialLoading && styles.socialButtonDisabled]}
-              onPress={handleAppleSignIn}
-              disabled={isSocialLoading}
-              activeOpacity={0.8}
-            >
-              <Icon name="apple" size={18} color="#fff" />
-              <Text style={[styles.socialButtonText, styles.appleButtonText]}>Continue with Apple</Text>
-            </TouchableOpacity>
-          )}
-
-          <Text style={styles.socialDisclaimer}>
-            By continuing with Google{Platform.OS === 'ios' && Constants.appOwnership !== 'expo' ? ' or Apple' : ''}, you agree to our{' '}
-            <Text style={{ color: primaryColor }} onPress={() => Linking.openURL('https://shuttler.net/terms')}>
-              Terms
+            <Text style={styles.socialHint}>
+              {providerNames} sign-in creates your account automatically — no separate sign-up needed.
             </Text>
-            {' & '}
-            <Text style={{ color: primaryColor }} onPress={() => Linking.openURL('https://shuttler.net/privacy')}>
-              Privacy Policy
+
+            {googleAvailable && (
+              <TouchableOpacity
+                style={[styles.socialButton, isSocialLoading && styles.socialButtonDisabled]}
+                onPress={() => { setFormError(null); promptGoogleAsync(); }}
+                disabled={isSocialLoading}
+                activeOpacity={0.8}
+              >
+                <Icon name="login" size={18} color="#4285F4" />
+                <Text style={styles.socialButtonText}>Continue with Google</Text>
+              </TouchableOpacity>
+            )}
+
+            {appleAvailable && (
+              <TouchableOpacity
+                style={[styles.socialButton, styles.appleButton, isSocialLoading && styles.socialButtonDisabled]}
+                onPress={handleAppleSignIn}
+                disabled={isSocialLoading}
+                activeOpacity={0.8}
+              >
+                <Icon name="apple" size={18} color="#fff" />
+                <Text style={[styles.socialButtonText, styles.appleButtonText]}>Continue with Apple</Text>
+              </TouchableOpacity>
+            )}
+
+            <Text style={styles.socialDisclaimer}>
+              By continuing with {providerNames.replace(' and ', ' or ')}, you agree to our{' '}
+              <Text style={{ color: primaryColor }} onPress={() => Linking.openURL('https://shuttler.net/terms')}>
+                Terms
+              </Text>
+              {' & '}
+              <Text style={{ color: primaryColor }} onPress={() => Linking.openURL('https://shuttler.net/privacy')}>
+                Privacy Policy
+              </Text>
             </Text>
-          </Text>
-        </>
-      ) : null}
+          </>
+        );
+      })()}
     </View>
   );
 }
@@ -898,10 +908,13 @@ export default function AuthScreen() {
   const { initialEmail } = route.params;
   const [adminOverride, setAdminOverride] = React.useState(false);
 
-  if (!org) {
-    navigation.replace('OrgSelector');
-    return null;
-  }
+  // Navigating during render is a React anti-pattern (and can double-fire) —
+  // redirect from an effect instead and render nothing in the meantime.
+  useEffect(() => {
+    if (!org) navigation.replace('OrgSelector');
+  }, [org, navigation]);
+
+  if (!org) return null;
 
   const renderContent = () => {
     // Admin escape hatch: when org uses phone auth, admins still need to sign in

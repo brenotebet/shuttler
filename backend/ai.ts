@@ -48,18 +48,31 @@ interface OrgContext {
   liveBuses: { occupancy: string | null; onBreak: boolean }[];
 }
 
+// Building the context costs several Firestore queries; chat sessions send a
+// message every few seconds, so a short-lived cache keeps latency and read
+// billing down. 45s is well inside the 5-minute bus-freshness window, so the
+// live-status section stays acceptably current.
+const ORG_CONTEXT_TTL_MS = 45_000;
+const orgContextCache = new Map<string, { ctx: OrgContext; cachedAt: number }>();
+
 async function buildOrgContext(orgId: string): Promise<OrgContext> {
+  const cached = orgContextCache.get(orgId);
+  if (cached && Date.now() - cached.cachedAt < ORG_CONTEXT_TTL_MS) return cached.ctx;
+
   const db = admin.firestore();
 
   const orgDoc = await db.collection('orgs').doc(orgId).get();
   const org = orgDoc.data() ?? {};
 
-  const usersSnap = await db.collection('orgs').doc(orgId).collection('users').get();
+  // Aggregate counts instead of downloading every user doc — member lists can
+  // reach thousands of docs for a campus-size org.
+  const usersCol = db.collection('orgs').doc(orgId).collection('users');
+  const roles = ['admin', 'driver', 'student', 'parent'] as const;
+  const countSnaps = await Promise.all(
+    roles.map((role) => usersCol.where('role', '==', role).count().get()),
+  );
   const memberCounts = { admin: 0, driver: 0, student: 0, parent: 0 };
-  usersSnap.docs.forEach((d) => {
-    const role = d.data().role as keyof typeof memberCounts;
-    if (role in memberCounts) memberCounts[role]++;
-  });
+  roles.forEach((role, i) => { memberCounts[role] = countSnaps[i].data().count; });
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -113,7 +126,7 @@ async function buildOrgContext(orgId: string): Promise<OrgContext> {
       onBreak: b.onBreak === true,
     }));
 
-  return {
+  const ctx: OrgContext = {
     name: org.name ?? 'Unknown',
     authMethod: org.authMethod ?? 'email',
     subscriptionStatus: org.subscriptionStatus ?? 'unknown',
@@ -125,6 +138,8 @@ async function buildOrgContext(orgId: string): Promise<OrgContext> {
     activeAlerts,
     liveBuses,
   };
+  orgContextCache.set(orgId, { ctx, cachedAt: Date.now() });
+  return ctx;
 }
 
 function formatLiveStatusSection(ctx: OrgContext): string {
@@ -313,74 +328,6 @@ async function avgRiderRating(orgId: string, daysBack: number): Promise<{ avg: n
     if (typeof r === 'number') { sum += r; n += 1; }
   });
   return n > 0 ? { avg: Math.round((sum / n) * 10) / 10, n } : null;
-}
-
-async function buildWeeklyStats(orgId: string): Promise<{
-  orgName: string;
-  adminEmail: string | null;
-  adminName: string | null;
-  totalBoardings: number;
-  activeDrivers: number;
-  topStop: string | null;
-  statsText: string;
-}> {
-  const db = admin.firestore();
-  const orgDoc = await db.collection('orgs').doc(orgId).get();
-  const org = orgDoc.data() ?? {};
-
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-  const adminSnap = await db.collection('orgs').doc(orgId).collection('users')
-    .where('role', '==', 'admin')
-    .limit(1)
-    .get();
-  const adminData = adminSnap.docs[0]?.data();
-
-  const boardingsSnap = await db
-    .collection('orgs').doc(orgId).collection('boardingCounts')
-    .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
-    .get();
-
-  const stopCounts: Record<string, { name: string; count: number }> = {};
-  const driverSet = new Set<string>();
-  let totalBoardings = 0;
-
-  boardingsSnap.docs.forEach((d) => {
-    const data = d.data();
-    const stopId = data.stopId ?? data.stop?.id ?? 'unknown';
-    const stopName = data.stopName ?? data.stop?.name ?? 'Unknown';
-    const count = data.count ?? 0;
-    if (!stopCounts[stopId]) stopCounts[stopId] = { name: stopName, count: 0 };
-    stopCounts[stopId].count += count;
-    totalBoardings += count;
-    if (data.driverUid) driverSet.add(data.driverUid);
-  });
-
-  const topStopEntry = Object.values(stopCounts).sort((a, b) => b.count - a.count)[0];
-  const topStop = topStopEntry ? `${topStopEntry.name} (${topStopEntry.count} pickups)` : null;
-
-  const rating = await avgRiderRating(orgId, 7);
-
-  const statsText = [
-    `Organization: ${org.name ?? 'Unknown'}`,
-    `Total boardings last 7 days: ${totalBoardings}`,
-    `Active drivers last 7 days: ${driverSet.size}`,
-    topStop ? `Top stop: ${topStop}` : null,
-    rating ? `Average rider rating last 7 days: ${rating.avg}/5 (${rating.n} ratings)` : null,
-    `Stops configured: ${(org.stops ?? []).length}`,
-    `Routes configured: ${(org.routes ?? []).length}`,
-  ].filter(Boolean).join('\n');
-
-  return {
-    orgName: org.name ?? 'Unknown',
-    adminEmail: adminData?.email ?? null,
-    adminName: adminData?.displayName ?? null,
-    totalBoardings,
-    activeDrivers: driverSet.size,
-    topStop,
-    statsText,
-  };
 }
 
 async function generateDigestNarrative(statsText: string): Promise<string> {

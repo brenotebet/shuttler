@@ -209,8 +209,8 @@ export function orgApplicationReceivedTemplate(opts: {
     </p>
     ${infoBox('While you wait', `
       <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">
-        Your account is on a <strong>free trial</strong> &mdash; you can already sign in to the
-        app and explore the dashboard. Paid features unlock once approved.
+        We review every request by hand, so there&rsquo;s nothing to sign in to yet.
+        Once approved, we&rsquo;ll email you a link to set your password and get started.
       </p>
     `, '#fefce8', '#fde68a', '#92400e')}
     <p style="margin:0;font-size:13px;color:#9ca3af;line-height:1.6;">
@@ -244,6 +244,7 @@ export function orgRejectedTemplate(opts: {
 export function orgApprovedTemplate(opts: {
   contactName: string;
   orgName: string;
+  setPasswordUrl?: string | null;
 }): string {
   const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
   return layout(`
@@ -252,15 +253,18 @@ export function orgApprovedTemplate(opts: {
     </h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
       Hi ${firstName}, great news &mdash; <strong>${opts.orgName}</strong> has been approved on
-      Shuttler. Your account is fully active and ready for your riders.
+      Shuttler. One last step: set a password for your admin account below.
     </p>
     ${infoBox('Next steps', `
       <ul style="margin:0;padding:0 0 0 18px;font-size:14px;color:#374151;line-height:2.1;">
-        <li>Open the admin dashboard and configure your stops &amp; routes</li>
+        <li>Set your password and sign in</li>
+        <li>Configure your stops &amp; routes</li>
         <li>Add your drivers and assign their default routes</li>
         <li>Share your org sign-in link with riders</li>
       </ul>
     `)}
+    ${opts.setPasswordUrl ? ctaButton('Set My Password', opts.setPasswordUrl) : ''}
+    ${opts.setPasswordUrl ? fallbackLink(opts.setPasswordUrl) : ''}
     <p style="margin:0;font-size:13px;color:#9ca3af;line-height:1.6;">
       Need setup help? Reply to this email anytime.
     </p>

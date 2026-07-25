@@ -1316,9 +1316,20 @@ app.patch(
 
 // ---- Billing ----
 
+// The client only ever sends 'shuttler://billing' as returnUrl, but it's
+// client-supplied and gets embedded directly into Stripe's success/cancel/
+// return URLs — whitelist the scheme so a tampered request can't redirect a
+// completed checkout session to an arbitrary URL.
+function isAllowedReturnUrl(url: unknown): url is string {
+  return typeof url === 'string' && url.startsWith('shuttler://');
+}
+
 app.post('/billing/create-checkout-session', requireAuth, async (req: Request, res: Response) => {
   const { orgId, plan, returnUrl } = req.body;
   const uid = (req as any).uid as string;
+  if (!isAllowedReturnUrl(returnUrl)) {
+    return res.status(400).json({ error: 'Invalid returnUrl' });
+  }
 
   try {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
@@ -1378,6 +1389,9 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
 app.post('/billing/create-portal-session', requireAuth, async (req: Request, res: Response) => {
   const { orgId, returnUrl } = req.body;
   const uid = (req as any).uid as string;
+  if (!isAllowedReturnUrl(returnUrl)) {
+    return res.status(400).json({ error: 'Invalid returnUrl' });
+  }
 
   try {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
@@ -1423,6 +1437,9 @@ app.post('/billing/create-portal-session', requireAuth, async (req: Request, res
 app.post('/billing/create-addon-checkout-session', requireAuth, async (req: Request, res: Response) => {
   const { orgId, returnUrl } = req.body;
   const uid = (req as any).uid as string;
+  if (!isAllowedReturnUrl(returnUrl)) {
+    return res.status(400).json({ error: 'Invalid returnUrl' });
+  }
 
   try {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
@@ -1776,17 +1793,52 @@ app.get('/super-admin/org-applications', requireSuperAdmin, async (_req: Request
 app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, async (req: Request, res: Response) => {
   const { orgId } = req.params as { orgId: string };
   try {
-    // Fetch application doc for email + name before writing
+    // Fetch application doc for contact details before writing
     const appSnap = await admin.firestore().collection('orgApplications').doc(orgId).get();
     const appData = appSnap.exists ? appSnap.data()! : {};
     const founderEmail: string | null = appData.contactEmail ?? appData.founderEmail ?? null;
     const firstName: string = appData.contactFirstName ?? 'there';
+    const lastName: string = appData.contactLastName ?? '';
+    const phone: string | null = appData.contactPhone ?? null;
     const orgName: string = appData.orgName ?? appData.name ?? orgId;
 
+    if (!founderEmail) {
+      return res.status(400).json({ error: 'Application has no contact email on file' });
+    }
+
+    // No account exists yet for a pending application (Guideline 3.1.1 — org
+    // creation is request-only until a human approves it). Provision the
+    // founder's admin login now, same createUser-or-recover pattern as
+    // /auth/email/register, then send a Firebase password-reset link so they
+    // can set a password and sign in for the first time.
+    let authUser: admin.auth.UserRecord;
+    try {
+      authUser = await admin.auth().getUserByEmail(founderEmail);
+    } catch (lookupErr: any) {
+      if (lookupErr?.code !== 'auth/user-not-found') throw lookupErr;
+      authUser = await admin.auth().createUser({
+        email: founderEmail,
+        displayName: `${firstName} ${lastName}`.trim(),
+      });
+    }
+    await admin.auth().setCustomUserClaims(authUser.uid, { orgId });
+
     const batch = admin.firestore().batch();
+    batch.set(admin.firestore().collection('orgs').doc(orgId).collection('users').doc(authUser.uid), {
+      uid: authUser.uid,
+      orgId,
+      email: founderEmail,
+      displayName: `${firstName} ${lastName}`.trim() || null,
+      phone,
+      role: 'admin',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
     batch.update(admin.firestore().collection('orgs').doc(orgId), {
       approved: true,
       reviewStatus: 'approved',
+      adminUids: admin.firestore.FieldValue.arrayUnion(authUser.uid),
+      ownerUid: authUser.uid,
+      founderEmail: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
@@ -1794,18 +1846,20 @@ app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, asyn
       approvedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     await batch.commit();
-    console.log(`[super-admin] Approved org ${orgId}`);
+    console.log(`[super-admin] Approved org ${orgId}, provisioned admin uid=${authUser.uid}`);
 
-    // Notify the founder — fire and forget
-    if (founderEmail) {
-      sendEmail({
-        to: founderEmail,
-        subject: `${orgName} has been approved on Shuttler 🎉`,
-        html: orgApprovedTemplate({ contactName: firstName, orgName }),
-      }).catch((err) => console.error('[super-admin] approve email failed:', err));
-    }
+    // Notify the founder with a link to set their password — fire and forget
+    const setPasswordUrl = await admin.auth().generatePasswordResetLink(founderEmail).catch((err) => {
+      console.error('[super-admin] generatePasswordResetLink failed:', err);
+      return null;
+    });
+    sendEmail({
+      to: founderEmail,
+      subject: `${orgName} has been approved on Shuttler 🎉`,
+      html: orgApprovedTemplate({ contactName: firstName, orgName, setPasswordUrl }),
+    }).catch((err) => console.error('[super-admin] approve email failed:', err));
 
-    return res.json({ orgId, approved: true });
+    return res.json({ orgId, approved: true, uid: authUser.uid });
   } catch (e) {
     console.error('[super-admin] approve error:', e);
     return res.status(500).json({ error: 'Failed to approve org' });
@@ -2148,6 +2202,24 @@ async function sendExpoPushNotifications(
   }
 }
 
+/** Resolve the caller's role within their org. Rider-directed notification
+ *  endpoints are driver/admin-only — without this check any org member could
+ *  push fake "Bus Arriving" alerts to any other member. */
+async function getOrgRole(orgId: string, uid: string): Promise<string | null> {
+  const snap = await admin.firestore()
+    .collection('orgs').doc(orgId).collection('users').doc(uid).get();
+  return snap.exists ? ((snap.data() as any)?.role ?? null) : null;
+}
+
+async function requireDriverCaller(orgId: string, uid: string, res: Response): Promise<boolean> {
+  const role = await getOrgRole(orgId, uid);
+  if (role !== 'driver' && role !== 'admin') {
+    res.status(403).json({ error: 'Only drivers can send rider notifications' });
+    return false;
+  }
+  return true;
+}
+
 /** POST /notifications/stop-request-created
  *  Called when a student creates a stop request.
  *  Reads all driver/admin users in the org and sends them a push notification.
@@ -2192,6 +2264,7 @@ app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: R
   const { studentUid, stopName, stopId } = req.body as { studentUid?: string; stopName?: string; stopId?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
 
   try {
     const userDoc = await admin.firestore()
@@ -2236,6 +2309,7 @@ app.post('/notifications/bus-approaching', requireAuth, async (req: Request, res
   };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
 
   try {
     const userDoc = await admin.firestore()
@@ -2279,6 +2353,7 @@ app.post('/notifications/stop-request-cancelled', requireAuth, async (req: Reque
   const { studentUid, reason } = req.body as { studentUid?: string; reason?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
 
   try {
     const userDoc = await admin.firestore()
@@ -2313,6 +2388,7 @@ app.post('/notifications/stop-completed', requireAuth, async (req: Request, res:
   const { studentUid, stopName } = req.body as { studentUid?: string; stopName?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
 
   try {
     const userDoc = await admin.firestore()

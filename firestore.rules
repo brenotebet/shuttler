@@ -75,7 +75,7 @@ service cloud.firestore {
         && isAdmin(orgId)
         && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['stops', 'routes', 'mapCenter', 'mapBoundingBox', 'logoUrl',
-                      'primaryColor', 'name', 'updatedAt']);
+                      'primaryColor', 'name', 'timezone', 'updatedAt']);
 
       allow create, delete: if false;
     }
@@ -174,9 +174,16 @@ service cloud.firestore {
         )
         ||
         (
-          // Driver updates an active request (arrivedAt, completion, cancellation, driverUid).
+          // Driver updates an active request: arrival/approach heads-up,
+          // completion (direct or awaiting rider confirmation), cancellation,
+          // or claiming it (driverUid). Field-scoped so a driver can't rewrite
+          // studentUid, stop, orgId, etc. on someone else's request.
           isDriver(orgId)
           && resource.data.status in ['pending', 'accepted']
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'cancelledAt', 'cancelledReason', 'arrivedAt',
+                        'approachingAt', 'completedAt', 'completedReason',
+                        'driverUid', 'confirmationExpiresAtMs'])
         )
       );
 
@@ -188,6 +195,28 @@ service cloud.firestore {
       allow create: if signedIn() && isDriver(orgId) && orgIsActive(orgId);
       allow read: if signedIn() && (isAdmin(orgId) || isDriver(orgId));
       allow update, delete: if false;
+    }
+
+    // ---------- Driver shift sessions ----------
+    // Created when a driver starts sharing location, closed when they stop.
+    // Drivers manage only their own sessions; admins read all (dashboard stats).
+    match /orgs/{orgId}/driverSessions/{id} {
+      allow read: if signedIn()
+        && (isAdmin(orgId) || (isDriver(orgId) && resource.data.driverUid == request.auth.uid));
+
+      allow create: if signedIn()
+        && isDriver(orgId)
+        && request.resource.data.driverUid == request.auth.uid
+        && orgIsActive(orgId);
+
+      // Only the closing fields may change, and only on the driver's own session.
+      allow update: if signedIn()
+        && isDriver(orgId)
+        && resource.data.driverUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['endedAt', 'durationMs']);
+
+      allow delete: if false;
     }
 
     // ---------- Service alerts / announcements ----------
@@ -227,6 +256,17 @@ service cloud.firestore {
     // Written by members after a confirmed pickup; read only by backend (super-admin).
     match /orgs/{orgId}/feedback/{id} {
       allow create: if signedIn() && isMember(orgId) && orgIsActive(orgId);
+      allow read, update, delete: if false;
+    }
+
+    // ---------- Crash reports ----------
+    // Write-only crash log from the app's error boundary (Sentry is the primary
+    // reporter; this is the in-house fallback). Signed-in users only, create-only,
+    // and the payload must match the error-boundary shape.
+    match /crashes/{id} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(
+             ['message', 'stack', 'componentStack', 'platform', 'appVersion', 'timestamp']);
       allow read, update, delete: if false;
     }
 

@@ -180,7 +180,7 @@ export default function OrgSelectorScreen() {
           activeOpacity={0.8}
         >
           <Icon name="add-circle-outline" size={20} color={PRIMARY_COLOR} />
-          <Text style={styles.createOrgBtnText}>Create a new organization</Text>
+          <Text style={styles.createOrgBtnText}>Request access for your organization</Text>
         </TouchableOpacity>
       )}
     </ScreenContainer>

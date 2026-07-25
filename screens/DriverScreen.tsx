@@ -26,6 +26,7 @@ import {
   orderBy,
   runTransaction,
   increment,
+  Timestamp,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -799,16 +800,18 @@ export default function DriverScreen() {
   const refreshTodayBoardings = async () => {
     if (!driverId || !orgId) return;
     try {
-      const snap = await getDocs(
-        query(collection(db, 'orgs', orgId, 'boardingCounts'), where('driverUid', '==', driverId)),
-      );
       const midnight = new Date();
       midnight.setHours(0, 0, 0, 0);
-      const midnightMs = midnight.getTime();
+      const snap = await getDocs(
+        query(
+          collection(db, 'orgs', orgId, 'boardingCounts'),
+          where('driverUid', '==', driverId),
+          where('createdAt', '>=', Timestamp.fromDate(midnight)),
+        ),
+      );
       let total = 0;
       snap.docs.forEach((d) => {
-        const ms = d.data()?.createdAt?.toMillis?.() ?? 0;
-        if (ms >= midnightMs) total += d.data()?.count ?? 0;
+        total += d.data()?.count ?? 0;
       });
       setTodayBoardedTotal(total);
     } catch (e) {

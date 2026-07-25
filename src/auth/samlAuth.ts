@@ -63,7 +63,6 @@ async function exchangeAndSignIn(token: string) {
   }
 
   try {
-    console.log("Client Firebase Project:", auth.app.options.projectId);
     await signInWithCustomToken(auth, firebaseToken);
   } catch (error: any) {
     const code = typeof error?.code === 'string' ? error.code : '';

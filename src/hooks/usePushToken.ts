@@ -1,5 +1,9 @@
 // src/hooks/usePushToken.ts
-// Saves the device's Expo push token to the user's Firestore doc after authentication.
+// Requests notification permission and saves the device's Expo push token to
+// the user's Firestore doc, once the user is signed into an org. Running this
+// post-sign-in (rather than at cold app launch) means the permission prompt
+// appears with real context — "you're about to use live tracking" — instead
+// of blindly on first open, which App Review flags and users tend to decline.
 // Must be used inside AuthProvider.
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
@@ -16,7 +20,10 @@ export function usePushToken() {
 
     const registerToken = async () => {
       try {
-        const { status } = await Notifications.getPermissionsAsync();
+        let { status } = await Notifications.getPermissionsAsync();
+        if (status === 'undetermined') {
+          ({ status } = await Notifications.requestPermissionsAsync());
+        }
         if (status !== 'granted') return;
 
         const projectId =

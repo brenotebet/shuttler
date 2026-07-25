@@ -112,8 +112,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       doc(db, 'orgs', resolvedOrgId, 'users', uid),
       (snap) => {
         // Firestore fires twice: first with local cache, then with server data.
-        // Never grant access based on stale cache — only act on server-confirmed results.
-        if (snap.metadata.fromCache) return;
+        // A cached membership doc grants access provisionally (otherwise an
+        // offline cold start spins on the splash forever), but EVICTION always
+        // waits for a server-confirmed miss — a stale cache can never sign
+        // someone out, and a revoked member is evicted the moment the server
+        // snapshot arrives.
+        if (snap.metadata.fromCache) {
+          if (snap.exists()) {
+            setRole(normalizeRole(snap.data()?.role));
+            setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
+            setPhone(snap.data()?.phone ?? null);
+            setPhoneVerified(snap.data()?.phoneVerified === true);
+            setInitializing(false);
+          }
+          return;
+        }
 
         if (snap.exists()) {
           setRole(normalizeRole(snap.data()?.role));

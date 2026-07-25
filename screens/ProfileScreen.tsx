@@ -21,6 +21,7 @@ import { validateUserText } from '../src/utils/profanity';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
 import { spacing } from '../src/styles/common';
 import PhoneInput from '../src/components/PhoneInput';
+import { passwordPolicyErrors } from '../src/utils/passwordPolicy';
 
 function getInitials(name: string | null, email: string | null): string {
   if (name) {
@@ -155,8 +156,9 @@ export default function ProfileScreen() {
       showAlert('Passwords do not match.', 'Error', 'error');
       return;
     }
-    if (newPw.length < 6) {
-      showAlert('New password must be at least 6 characters.', 'Error', 'error');
+    const unmet = passwordPolicyErrors(newPw);
+    if (unmet.length > 0) {
+      showAlert(`Password must include: ${unmet.join(', ')}.`, 'Error', 'error');
       return;
     }
     if (!user?.email || !auth.currentUser) return;
@@ -400,7 +402,7 @@ export default function ProfileScreen() {
                   style={styles.input}
                   value={newPw}
                   onChangeText={setNewPw}
-                  placeholder="New password (min 6 characters)"
+                  placeholder="New password (8+ chars, upper/lower/number/symbol)"
                   placeholderTextColor="#9ca3af"
                   secureTextEntry
                 />

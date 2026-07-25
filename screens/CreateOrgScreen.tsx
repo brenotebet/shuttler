@@ -1,7 +1,10 @@
 // screens/CreateOrgScreen.tsx
 //
-// Self-serve org creation form. Collects org + contact details, calls
-// POST /orgs/create, then lands the founder on AuthScreen to register.
+// Org access request form. Collects org + contact details and calls
+// POST /orgs/create, which files a pending application for manual review —
+// no account or trial is created here. The founder is emailed a link to set
+// a password and sign in once a human approves the request (Guideline 3.1.1:
+// no self-serve business account registration in the app).
 
 import React, { useCallback, useState } from 'react';
 import { Alert, KeyboardAvoidingView, LayoutAnimation, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native'
@@ -9,8 +12,6 @@ import { Text } from '../components/Text';
 import * as Linking from 'expo-linking';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../firebase/firebaseconfig';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
@@ -18,8 +19,6 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { PRIMARY_COLOR } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { SHUTTLER_API_URL } from '../config';
-import { useOrg } from '../src/org/OrgContext';
-import type { OrgConfig } from '../src/org/OrgContext';
 import PhoneInput from '../src/components/PhoneInput';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CreateOrg'>;
@@ -156,7 +155,6 @@ const chipStyles = StyleSheet.create({
 
 export default function CreateOrgScreen() {
   const navigation = useNavigation<Nav>();
-  const { selectOrg } = useOrg();
 
   // Contact info
   const [firstName, setFirstName] = useState('');
@@ -174,11 +172,9 @@ export default function CreateOrgScreen() {
   const [heardAboutUs, setHeardAboutUs] = useState('');
   const [description, setDescription] = useState('');
 
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = useCallback(async () => {
     if (!firstName.trim() || !lastName.trim()) {
@@ -197,14 +193,6 @@ export default function CreateOrgScreen() {
       Alert.alert('Required', 'Please select an organization type.');
       return;
     }
-    if (password.length < 8) {
-      Alert.alert('Required', 'Password must be at least 8 characters.');
-      return;
-    }
-    if (password !== confirmPassword) {
-      Alert.alert('Required', 'Passwords do not match.');
-      return;
-    }
     if (!termsAccepted) {
       Alert.alert('Required', 'Please accept the Terms of Service and Privacy Policy to continue.');
       return;
@@ -212,7 +200,6 @@ export default function CreateOrgScreen() {
 
     setIsSubmitting(true);
     try {
-      // Step 1: create the org
       const orgRes = await fetch(`${SHUTTLER_API_URL}/orgs/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -232,39 +219,9 @@ export default function CreateOrgScreen() {
       });
 
       const orgData = await orgRes.json();
-      if (!orgRes.ok) throw new Error(orgData?.error ?? 'Failed to create organization');
-      const newOrg = orgData as OrgConfig & { slug: string };
+      if (!orgRes.ok) throw new Error(orgData?.error ?? 'Failed to submit request');
 
-      // Step 2: register the admin account in one shot
-      const regRes = await fetch(`${SHUTTLER_API_URL}/auth/email/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orgSlug: newOrg.slug,
-          email: email.trim().toLowerCase(),
-          password,
-          displayName: `${firstName.trim()} ${lastName.trim()}`,
-          phone: phone.trim() || undefined,
-          agreedToTerms: true,
-        }),
-      });
-
-      const regData = await regRes.json();
-      if (!regRes.ok) throw new Error(regData?.error ?? 'Failed to create admin account');
-
-      // Step 3: select org context then sign in — StackNavigator will route to admin setup
-      await selectOrg(newOrg);
-      await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
-
-      // Step 4: send branded verification email (fire-and-forget)
-      if (auth.currentUser) {
-        auth.currentUser.getIdToken().then((token) =>
-          fetch(`${SHUTTLER_API_URL}/auth/send-verification`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        ).catch(() => {});
-      }
+      setSubmitted(true);
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
     } finally {
@@ -274,9 +231,31 @@ export default function CreateOrgScreen() {
     firstName, lastName, email, phone,
     orgName, orgType, website,
     estimatedRiders, heardAboutUs, description,
-    password, confirmPassword, termsAccepted,
-    selectOrg,
+    termsAccepted,
   ]);
+
+  if (submitted) {
+    return (
+      <ScreenContainer>
+        <View style={styles.confirmWrap}>
+          <View style={styles.confirmIcon}>
+            <Icon name="check-circle" size={56} color={PRIMARY_COLOR} />
+          </View>
+          <Text style={styles.confirmTitle}>Request received</Text>
+          <Text style={styles.confirmBody}>
+            Thanks — we&apos;re reviewing your request for {orgName.trim() || 'your organization'}.
+            We&apos;ll email {email.trim()} within 1 business day with next steps and a link to set
+            your password.
+          </Text>
+          <AppButton
+            label="Back to sign in"
+            onPress={() => navigation.goBack()}
+            style={styles.submitBtn}
+          />
+        </View>
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer>
@@ -290,8 +269,8 @@ export default function CreateOrgScreen() {
             <Icon name="arrow-back" size={24} color={PRIMARY_COLOR} />
           </TouchableOpacity>
           <View style={styles.headerText}>
-            <Text style={styles.title}>Create Organisation</Text>
-            <Text style={styles.subtitle}>Start your free 14-day trial</Text>
+            <Text style={styles.title}>Request Organisation Access</Text>
+            <Text style={styles.subtitle}>Tell us about your organization</Text>
           </View>
         </View>
 
@@ -340,7 +319,8 @@ export default function CreateOrgScreen() {
             autoCorrect={false}
           />
           <Text style={styles.hint}>
-            Use the email you'll sign in with. You'll be set as admin automatically.
+            We'll email you here once your request is reviewed, with a link to set your
+            password and sign in as admin.
           </Text>
 
           <Text style={styles.label}>Phone (optional)</Text>
@@ -407,46 +387,13 @@ export default function CreateOrgScreen() {
             textAlignVertical="top"
           />
 
-          {/* ── Admin account password ── */}
-          <View style={styles.divider} />
-          <Text style={styles.sectionTitle}>Create your admin account</Text>
-          <Text style={styles.hint}>Set a password for the email above — you'll use it to sign in.</Text>
-
-          <Text style={styles.label}>Password *</Text>
-          <View style={styles.passwordRow}>
-            <TextInput
-              style={styles.passwordInput}
-              value={password}
-              onChangeText={setPassword}
-              placeholder="At least 8 characters"
-              placeholderTextColor="#aaa"
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TouchableOpacity onPress={() => setShowPassword((v) => !v)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-              <Icon name={showPassword ? 'visibility-off' : 'visibility'} size={20} color="#999" />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.label}>Confirm password *</Text>
-          <TextInput
-            style={styles.input}
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="Re-enter your password"
-            placeholderTextColor="#aaa"
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
           {/* ── Review notice ── */}
+          <View style={styles.divider} />
           <View style={styles.reviewNotice}>
             <Icon name="info-outline" size={18} color={PRIMARY_COLOR} style={{ marginTop: 1 }} />
             <Text style={styles.reviewNoticeText}>
-              Your trial starts immediately. Paid plans become available once our team reviews your
-              account — typically within 1 business day.
+              We review every request by hand — typically within 1 business day. Once approved,
+              we'll email you a link to set your password and sign in.
             </Text>
           </View>
 
@@ -479,7 +426,7 @@ export default function CreateOrgScreen() {
           </TouchableOpacity>
 
           <AppButton
-            label={isSubmitting ? 'Setting up…' : 'Start free trial'}
+            label={isSubmitting ? 'Submitting…' : 'Submit Request'}
             onPress={handleSubmit}
             disabled={isSubmitting || !termsAccepted}
             style={styles.submitBtn}
@@ -553,21 +500,27 @@ const styles = StyleSheet.create({
   phoneInput: {
     marginBottom: spacing.item,
   },
-  passwordRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: borderRadius.md,
-    paddingHorizontal: 12,
-    backgroundColor: '#fff',
-    marginBottom: spacing.item,
-  },
-  passwordInput: {
+  confirmWrap: {
     flex: 1,
-    paddingVertical: Platform.OS === 'ios' ? 11 : 8,
-    fontSize: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.section * 1.5,
+  },
+  confirmIcon: {
+    marginBottom: spacing.section,
+  },
+  confirmTitle: {
+    fontSize: 22,
+    fontWeight: '700',
     color: '#111',
+    marginBottom: 10,
+  },
+  confirmBody: {
+    fontSize: 15,
+    color: '#4b5563',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: spacing.section * 1.5,
   },
   textarea: {
     minHeight: 90,

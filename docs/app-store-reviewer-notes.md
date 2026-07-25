@@ -6,7 +6,7 @@ Paste the contents of the "Notes for Reviewer" section below into App Store Conn
 
 ## Notes for Reviewer
 
-Shuttler is a **B2B shuttle tracking platform** for universities, airports, and school districts. Organizations are onboarded under contract, so there is **no public self-signup by design** — users join through their organization (email invite, SSO, or phone verification).
+Shuttler is a **B2B shuttle tracking platform** for universities, airports, and school districts. Organizations are onboarded under contract, so there is **no public self-signup by design** — users join through their organization (email invite, SSO, or phone verification). The org selector does offer a "Request Organisation Access" form; submitting it only files a request for our team to review by hand — it does not create an account, org, or trial, and no billing is initiated. An admin account is provisioned only after manual approval, via an emailed link to set a password.
 
 ### Demo account
 
@@ -60,6 +60,7 @@ Background location (`UIBackgroundModes: location`) is used **only by drivers du
 ## Pre-submission reminders (internal, do not paste)
 
 1. Run `node scripts/create-demo-org.js --execute` before submitting; verify all four logins work on a device.
+1a. Sign out and back in on each demo account (fresh ID token) and send a real message in the AI Assistant before submitting — a stale token's cached org claims previously caused a silent 403 that showed as a generic error.
 2. Confirm Stripe test mode is active for the demo org.
 3. Confirm https://shuttler.net/privacy mentions: Firebase, Stripe, Anthropic, Sentry, location data, push tokens.
 4. App Store Connect → App Privacy answers must match `ios/Shuttler/PrivacyInfo.xcprivacy` (location, email, name, phone, payment info, device ID, product interaction, crash data — all "linked to user" except crash data, none used for tracking).

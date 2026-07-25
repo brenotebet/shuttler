@@ -30,7 +30,6 @@
     "@react-navigation/native-stack": "^7.3.13",
     "@sentry/node": "^10.46.0",
     "@sentry/react-native": "~7.2.0",
-    "@stripe/stripe-react-native": "0.50.3",
     "@xmldom/xmldom": "^0.8.6",
     "body-parser": "^2.2.1",
     "eas-cli": "^18.0.4",
@@ -67,7 +66,6 @@
     "react-navigation": "^5.0.0",
     "samlify": "^2.10.2",
     "stripe": "^17.7.0",
-    "stripe-cli": "^0.1.0",
     "xpath": "0.0.32"
   },
   "devDependencies": {

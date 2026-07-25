@@ -15,7 +15,6 @@ import { AuthProvider } from './src/auth/AuthProvider';
 import { OrgProvider } from './src/org/OrgContext';
 import { AccessibilityProvider } from './src/contexts/AccessibilityContext';
 import { usePushToken } from './src/hooks/usePushToken';
-import { StripeProvider } from '@stripe/stripe-react-native';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase/firebaseconfig';
 import * as Sentry from '@sentry/react-native';
@@ -53,15 +52,17 @@ class ErrorBoundary extends React.Component<
           Something went wrong
         </Text>
         <Text style={{ fontSize: 14, color: '#555', marginBottom: 16 }}>
-          The app ran into an unexpected error. Please restart.
+          The app ran into an unexpected error. Please restart. Our team has been notified.
         </Text>
-        <ScrollView style={{ maxHeight: 300, backgroundColor: '#f3f4f6', borderRadius: 8, padding: 12 }}>
-          <Text selectable style={{ fontFamily: 'Menlo', fontSize: 11, color: '#111' }}>
-            {this.state.error?.message}
-            {'\n\n'}
-            {this.state.error?.stack}
-          </Text>
-        </ScrollView>
+        {__DEV__ && (
+          <ScrollView style={{ maxHeight: 300, backgroundColor: '#f3f4f6', borderRadius: 8, padding: 12 }}>
+            <Text selectable style={{ fontFamily: 'Menlo', fontSize: 11, color: '#111' }}>
+              {this.state.error?.message}
+              {'\n\n'}
+              {this.state.error?.stack}
+            </Text>
+          </ScrollView>
+        )}
       </View>
     );
   }
@@ -128,46 +129,25 @@ function NotificationDeepLinker({ navigationRef }: { navigationRef: React.RefObj
 export default function App() {
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
 
-  useEffect(() => {
-    registerForPushNotificationsAsync();
-  }, []);
-
   return (
     <ErrorBoundary>
-      <StripeProvider publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ''}>
-        <SafeAreaProvider>
-          <AccessibilityProvider>
-          <OrgProvider>
-            <AuthProvider>
-              <PushTokenRegistrar />
-              <DriverProvider>
-                <LocationProvider>
-                  <NavigationContainer ref={navigationRef}>
-                    <StackNavigator />
-                    <NotificationDeepLinker navigationRef={navigationRef} />
-                  </NavigationContainer>
-                </LocationProvider>
-              </DriverProvider>
-            </AuthProvider>
-          </OrgProvider>
-          </AccessibilityProvider>
-        </SafeAreaProvider>
-      </StripeProvider>
+      <SafeAreaProvider>
+        <AccessibilityProvider>
+        <OrgProvider>
+          <AuthProvider>
+            <PushTokenRegistrar />
+            <DriverProvider>
+              <LocationProvider>
+                <NavigationContainer ref={navigationRef}>
+                  <StackNavigator />
+                  <NotificationDeepLinker navigationRef={navigationRef} />
+                </NavigationContainer>
+              </LocationProvider>
+            </DriverProvider>
+          </AuthProvider>
+        </OrgProvider>
+        </AccessibilityProvider>
+      </SafeAreaProvider>
     </ErrorBoundary>
   );
-}
-
-async function registerForPushNotificationsAsync() {
-  const { status } = await Notifications.requestPermissionsAsync();
-  if (status !== 'granted') return;
-
-  try {
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-    const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-    if (__DEV__) {
-      console.log('Push token:', token);
-    }
-  } catch {
-    // Push token registration is non-critical; ignore failures silently.
-  }
 }

@@ -96,6 +96,32 @@ describe('Expo push token validation', () => {
   });
 });
 
+// --- Caller authorization for rider-directed notifications ---
+// Mirrors requireDriverCaller/getOrgRole in backend/samlServer.ts: only a
+// driver or admin caller may trigger a push to another org member. Added
+// alongside the fix for a gap where any signed-in member (e.g. a student)
+// could POST /notifications/stop-arrived with any other member's UID.
+
+function isAuthorizedNotificationCaller(callerRole: string | null): boolean {
+  return callerRole === 'driver' || callerRole === 'admin';
+}
+
+describe('rider-notification caller authorization', () => {
+  it('allows drivers and admins', () => {
+    expect(isAuthorizedNotificationCaller('driver')).toBe(true);
+    expect(isAuthorizedNotificationCaller('admin')).toBe(true);
+  });
+
+  it('rejects students and parents', () => {
+    expect(isAuthorizedNotificationCaller('student')).toBe(false);
+    expect(isAuthorizedNotificationCaller('parent')).toBe(false);
+  });
+
+  it('rejects a caller with no membership doc', () => {
+    expect(isAuthorizedNotificationCaller(null)).toBe(false);
+  });
+});
+
 describe('Expo push batch sizing', () => {
   function chunkTokens(tokens: string[], batchSize: number): string[][] {
     const batches: string[][] = [];

@@ -86,36 +86,62 @@ export default function AdminChatScreen() {
 
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
 
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      const apiMessages = next.map((m) => ({ role: m.role, content: m.content }));
+    const apiMessages = next.map((m) => ({ role: m.role, content: m.content }));
+    const orgId = org?.orgId;
 
-      const orgId = org?.orgId;
-      if (!orgId) throw new Error('No org');
-
-      const res = await fetch(`${SHUTTLER_API_URL}/ai/admin-chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ orgId, messages: apiMessages }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.message ?? data?.error ?? 'Failed to get a response.');
+    const callChat = async (forceTokenRefresh: boolean) => {
+      const token = await auth.currentUser?.getIdToken(forceTokenRefresh);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      try {
+        const res = await fetch(`${SHUTTLER_API_URL}/ai/admin-chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ orgId, messages: apiMessages }),
+          signal: controller.signal,
+        });
+        const data = await res.json().catch(() => ({}));
+        return { res, data };
+      } finally {
+        clearTimeout(timeoutId);
       }
+    };
+
+    try {
+      if (!orgId) throw new Error('No organization selected. Try signing out and back in.');
+
+      let { res, data } = await callChat(false);
+
+      // A cached session token can carry stale org-membership claims; one forced
+      // refresh recovers from that without surfacing a confusing error.
+      if (res.status === 403) {
+        ({ res, data } = await callChat(true));
+      }
+
+      if (!res.ok) {
+        const message = res.status === 429
+          ? "You've reached today's question limit. Please try again tomorrow."
+          : data?.message ?? data?.error ?? 'The assistant hit an error. Please try again.';
+        throw new Error(message);
+      }
+
       const reply = data.reply?.trim() || 'Sorry, I couldn\'t get a response. Please try again.';
 
       setMessages((prev) => [
         ...prev,
         { id: (Date.now() + 1).toString(), role: 'assistant', content: reply },
       ]);
-    } catch {
+    } catch (err: any) {
+      console.error('[AdminChatScreen] send failed:', err);
+      const message = err?.name === 'AbortError'
+        ? 'The request timed out. Please check your connection and try again.'
+        : err?.message || 'Something went wrong. Please check your connection and try again.';
       setMessages((prev) => [
         ...prev,
-        { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Something went wrong. Please check your connection and try again.' },
+        { id: (Date.now() + 1).toString(), role: 'assistant', content: message },
       ]);
     } finally {
       setLoading(false);
@@ -162,7 +188,6 @@ export default function AdminChatScreen() {
           </TouchableOpacity>
           <View style={styles.headerText}>
             <Text style={styles.headerTitle}>AI Assistant</Text>
-            <Text style={styles.headerSub} numberOfLines={1}>{org?.name ?? 'Your org'}</Text>
           </View>
           <View style={[styles.aiBadgeLarge, { backgroundColor: primaryColor }]}>
             <Icon name="auto-awesome" size={16} color="#fff" />
@@ -275,7 +300,6 @@ const styles = StyleSheet.create({
   backBtn: { padding: 4 },
   headerText: { flex: 1 },
   headerTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  headerSub: { fontSize: 12, color: '#6b7280', marginTop: 1 },
   aiBadgeLarge: {
     width: 34,
     height: 34,

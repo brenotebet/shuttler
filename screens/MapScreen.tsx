@@ -608,6 +608,9 @@ export default function MapScreen() {
   const destinationStopId = request?.stop?.id ?? request?.stopId ?? null;
 
   const userLocRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  // Serializes handleRequest so two rapid taps (different stops before the
+  // first write commits) can't both pass the "no existing request" check.
+  const isRequestingStopRef = useRef(false);
 
   // Map padding so "fit" respects the bottom card
   const mapBottomPadding = insets.bottom + (request ? bottomCardHeight : 0) + 18;
@@ -771,7 +774,9 @@ export default function MapScreen() {
       }
 
       const sub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.BestForNavigation },
+        // Riders only need ~stop-radius accuracy for the proximity check —
+        // Balanced is a large battery saving over BestForNavigation here.
+        { accuracy: Location.Accuracy.Balanced },
         (pos) => {
           // Only store readings with acceptable accuracy to prevent a bad initial
           // fix from falsely triggering the "outside service area" boundary check.
@@ -1552,6 +1557,7 @@ export default function MapScreen() {
   };
 
 const handleRequest = async (entry: RequestableStop) => {
+  if (isRequestingStopRef.current) return;
   if (!busOnline) {
     showAlert('No buses are currently online. Please try again later.');
     return;
@@ -1601,6 +1607,7 @@ const handleRequest = async (entry: RequestableStop) => {
     }
   }
 
+  isRequestingStopRef.current = true;
   try {
     if (__DEV__) console.log('[handleRequest] auth.uid =', auth.currentUser?.uid, 'studentUid =', studentUid);
 
@@ -1666,14 +1673,14 @@ const handleRequest = async (entry: RequestableStop) => {
       err,
     });
 
-    const code = err?.code ?? '';
-    if (String(code).includes('failed-precondition')) {
-      showAlert('Firestore index missing for this query. Check console for index link.', 'Index required');
-    } else if (String(code).includes('permission-denied')) {
-      showAlert('Permission denied. Firestore rules blocked the operation.', 'Permission denied');
-    } else {
-      showAlert(err?.message ?? 'Error requesting stop', 'Error requesting stop');
-    }
+    // Keep infrastructure details out of user-facing copy — the code and
+    // message are already in the console/Sentry log above for diagnosis.
+    showAlert(
+      "We couldn't request your stop just now. Please try again in a moment — if it keeps happening, contact your administrator.",
+      'Request failed',
+    );
+  } finally {
+    isRequestingStopRef.current = false;
   }
 };
 

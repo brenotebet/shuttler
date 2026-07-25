@@ -6,7 +6,7 @@ import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { auth, db } from '../firebase/firebaseconfig';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CARD_BACKGROUND } from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
@@ -50,6 +50,9 @@ export default function StudentHistoryScreen() {
       where('studentUid', '==', watchUid),
       where('status', 'in', ['completed', 'cancelled']),
       orderBy('createdAt', 'desc'),
+      // A live listener over a rider's full history re-downloads everything
+      // on each change; 50 covers the screen comfortably.
+      limit(50),
     );
     const unsub = onSnapshot(
       q,

@@ -22,6 +22,7 @@ import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { isRouteActive } from '../src/utils/scheduleUtils';
 import { notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
+import { showAlert } from '../src/utils/alerts';
 
 type LocationContextType = {
   isSharing: boolean;
@@ -220,6 +221,9 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const [breaksTakenThisShift, setBreaksTakenThisShift] = useState(0);
   const breakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPausedRef = useRef(false);
+  // "Location Still On" reminder fires at most once per shift — one per
+  // backgrounding is noise for a driver who checks their phone often.
+  const notifiedStillOnRef = useRef(false);
   // Keep a stable ref to org.routes so the inactivity-check effect doesn't restart
   // its interval on every org snapshot (org?.routes is a new array reference each time).
   const orgRoutesRef = useRef(org?.routes ?? []);
@@ -336,8 +340,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     const onChange = (state: string) => {
       if (state === 'active' || state === 'inactive') return;
       if (!isSharing) return;
+      if (notifiedStillOnRef.current) return;
 
-      // Keep warning UX, but preserve sharing state.
+      // Keep warning UX, but preserve sharing state. Once per shift is enough.
+      notifiedStillOnRef.current = true;
       notifyStillOn();
     };
 
@@ -366,7 +372,14 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     await assertDriverRole(uid, orgId);
 
     const fg = await Location.requestForegroundPermissionsAsync();
-    if (fg.status !== 'granted') return;
+    if (fg.status !== 'granted') {
+      currentUid.current = null;
+      showAlert(
+        'Shuttler needs location access to share your position with riders. Enable Location for Shuttler in your device Settings, then try again.',
+        'Location Permission Denied',
+      );
+      return;
+    }
 
     // Request background permission so watchPositionAsync keeps running when app is backgrounded.
     // This is best-effort - sharing still works foreground-only if denied.
@@ -388,6 +401,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
         uid,
       });
       currentUid.current = null;
+      showAlert(
+        "Couldn't get a GPS fix to start your shift. Make sure Location Services are on and you have a clear view of the sky, then try again.",
+        'Failed to Start Shift',
+      );
       return; // don't start watch if we can't write
     }
 
@@ -426,6 +443,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     }
 
     lastActivityAt.current = Date.now();
+    notifiedStillOnRef.current = false;
 
     watchSub.current = await Location.watchPositionAsync(
       {

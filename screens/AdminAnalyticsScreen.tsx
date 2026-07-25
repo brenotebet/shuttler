@@ -4,7 +4,7 @@ import { ActivityIndicator, ScrollView, Share, StyleSheet, TouchableOpacity, Vie
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomSheet from '../components/BottomSheet';
-import { collection, doc, getDoc, getDocs, limit, orderBy, query } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, Timestamp, where } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
@@ -502,9 +502,23 @@ function AnalyticsSection() {
     const load = async () => {
       try {
         setIsLoading(true);
+        // Fetch only what the selected period needs: 2× the window (current +
+        // previous period, for the trend badges). "All" has no cutoff but is
+        // capped — pulling the entire history client-side does not scale past
+        // a semester of production data.
+        const days = PERIOD_OPTIONS.find((p) => p.value === period)?.days ?? null;
+        const constraints = days
+          ? [where('createdAt', '>=', Timestamp.fromMillis(Date.now() - 2 * days * 86_400_000))]
+          : [];
         const [boardingSnap, requestSnap] = await Promise.all([
-          getDocs(query(collection(db, 'orgs', org.orgId, 'boardingCounts'), orderBy('createdAt', 'desc'))),
-          getDocs(query(collection(db, 'orgs', org.orgId, 'stopRequests'), orderBy('createdAt', 'desc'))),
+          getDocs(query(
+            collection(db, 'orgs', org.orgId, 'boardingCounts'),
+            ...constraints, orderBy('createdAt', 'desc'), limit(5000),
+          )),
+          getDocs(query(
+            collection(db, 'orgs', org.orgId, 'stopRequests'),
+            ...constraints, orderBy('createdAt', 'desc'), limit(5000),
+          )),
         ]);
         setRecords(boardingSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardingCount, 'id'>) })));
         setRequests(requestSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StopRequestDoc, 'id'>) })));
@@ -515,7 +529,7 @@ function AnalyticsSection() {
       }
     };
     load();
-  }, [org?.orgId, hasAnalytics]);
+  }, [org?.orgId, hasAnalytics, period]);
 
   // Rider satisfaction aggregates come from the backend — the feedback
   // collection itself is never readable client-side.
@@ -647,8 +661,29 @@ function AnalyticsSection() {
   if (error) return <View style={s.center}><Text style={s.errorText}>{error}</Text></View>;
   if (records.length === 0) return (
     <View style={s.center}>
-      <Text style={s.emptyText}>No boarding data yet.</Text>
-      <Text style={s.emptySubtext}>Data will appear here once drivers start recording pickups.</Text>
+      <Text style={s.emptyText}>
+        {period === 'all' ? 'No boarding data yet.' : 'No boardings in this period.'}
+      </Text>
+      <Text style={s.emptySubtext}>
+        {period === 'all'
+          ? 'Data will appear here once drivers start recording pickups.'
+          : 'Try a longer period below.'}
+      </Text>
+      {period !== 'all' && (
+        <View style={a.periodRow}>
+          {PERIOD_OPTIONS.map((p) => (
+            <TouchableOpacity
+              key={p.value}
+              style={[a.periodChip, period === p.value && { backgroundColor: primaryColor }]}
+              onPress={() => setPeriod(p.value)}
+            >
+              <Text style={[a.periodChipText, period === p.value && a.periodChipTextActive]}>
+                {p.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </View>
   );
 

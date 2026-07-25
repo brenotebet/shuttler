@@ -81,10 +81,19 @@ type DriverStatsData = {
   stops: StopStat[];
 };
 
+// Stats window for the expandable driver cards. Bounded so the dashboard
+// stays fast as boarding history grows — full history lives in CSV export.
+const DRIVER_STATS_WINDOW_DAYS = 90;
+
 async function fetchDriverStats(uid: string, orgId: string): Promise<DriverStatsData | null> {
   try {
+    const windowStart = Timestamp.fromMillis(Date.now() - DRIVER_STATS_WINDOW_DAYS * 86_400_000);
     const snap = await getDocs(
-      query(collection(db, 'orgs', orgId, 'boardingCounts'), where('driverUid', '==', uid)),
+      query(
+        collection(db, 'orgs', orgId, 'boardingCounts'),
+        where('driverUid', '==', uid),
+        where('createdAt', '>=', windowStart),
+      ),
     );
     const docs = snap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
 
@@ -166,7 +175,7 @@ const DriverStatCard = memo(function DriverStatCard({ driver, orgId }: { driver:
         <>
           <View style={styles.analyticsChips}>
             {[
-              { label: 'All-time', value: stats.totalAllTime },
+              { label: '90 days', value: stats.totalAllTime },
               { label: 'Today', value: stats.totalToday },
               { label: 'Active days', value: stats.activeDays },
               { label: 'Avg/day', value: stats.avgPerDay },
