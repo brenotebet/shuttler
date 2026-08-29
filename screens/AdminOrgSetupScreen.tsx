@@ -20,6 +20,8 @@ import { signOut } from 'firebase/auth';
 import { auth, db } from '../firebase/firebaseconfig';
 import { useOrg, Stop, Route, WeekSchedule, DaySchedule, DEFAULT_WEEK_SCHEDULE, BreakSettings } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
+import { startSamlLogin } from '../src/auth/startSamlLogin';
+import { extractTokenFromUrl } from '../src/auth/samlAuth';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { useExternalCheckout } from '../src/hooks/useExternalCheckout';
 import { showToast } from '../src/components/Toast';
@@ -262,6 +264,7 @@ const profileStyles = StyleSheet.create({
 // ---- Auth Settings Tab ----
 
 type AuthMethod = 'saml' | 'email' | 'phone';
+type SamlTestStatus = 'idle' | 'testing' | 'passed' | 'failed';
 
 function AuthTab() {
   const { org, refreshOrg } = useOrg();
@@ -274,11 +277,25 @@ function AuthTab() {
   const [idpSsoUrl, setIdpSsoUrl] = useState('');
   const [idpCert, setIdpCert] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isActivating, setIsActivating] = useState(false);
   const [savedSpInfo, setSavedSpInfo] = useState<{ spEntityId?: string; acsUrl?: string } | null>(
     null,
   );
+  // Fingerprints of the IdP fields at the moment of the last successful save
+  // and the last successful test, so Test/Activate can tell when the admin
+  // has edited the form since — the SP endpoints test whatever's saved on the
+  // server, not the live form, so a stale draft or stale test must re-gate.
+  const [savedConfigKey, setSavedConfigKey] = useState<string | null>(null);
+  const [testStatus, setTestStatus] = useState<SamlTestStatus>('idle');
+  const [testedConfigKey, setTestedConfigKey] = useState<string | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [testEmail, setTestEmail] = useState<string | null>(null);
 
-  const handleSave = useCallback(async () => {
+  const currentConfigKey = JSON.stringify({ idpEntityId, idpSsoUrl, idpCert });
+  const isDraftCurrent = authMethod === 'saml' && savedConfigKey === currentConfigKey;
+  const isTestCurrent = testStatus === 'passed' && testedConfigKey === currentConfigKey;
+
+  const handleSaveDraft = useCallback(async () => {
     if (!org) return;
     setIsSaving(true);
     try {
@@ -301,14 +318,90 @@ function AuthTab() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? 'Failed to save auth config');
       await refreshOrg();
-      setSavedSpInfo({ spEntityId: data.spEntityId, acsUrl: data.acsUrl });
-      showToast('Auth configuration updated.', 'success');
+      if (authMethod === 'saml') {
+        setSavedSpInfo({ spEntityId: data.spEntityId, acsUrl: data.acsUrl });
+        setSavedConfigKey(currentConfigKey);
+        setTestStatus('idle');
+        setTestError(null);
+        setTestEmail(null);
+        showToast('Draft saved — SAML is not live yet. Test the connection before activating.', 'success');
+      } else {
+        setSavedSpInfo(null);
+        showToast('Auth configuration updated.', 'success');
+      }
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to save.', 'error');
     } finally {
       setIsSaving(false);
     }
-  }, [org, authMethod, domains, idpEntityId, idpSsoUrl, idpCert, refreshOrg]);
+  }, [org, authMethod, domains, idpEntityId, idpSsoUrl, idpCert, refreshOrg, currentConfigKey]);
+
+  const handleTestConnection = useCallback(async () => {
+    if (!org) return;
+    setTestStatus('testing');
+    setTestError(null);
+    try {
+      const redirectUrl = await startSamlLogin(org.slug);
+      if (!redirectUrl) {
+        setTestStatus('idle');
+        return;
+      }
+      const samlToken = extractTokenFromUrl(redirectUrl);
+      if (!samlToken) {
+        throw new Error('SSO finished but no token came back — check the ACS URL your IdP is configured with.');
+      }
+      const res = await fetch(`${SHUTTLER_API_URL}/saml/${org.slug}/test-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ samlToken }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? 'Test login failed');
+      setTestStatus('passed');
+      setTestedConfigKey(currentConfigKey);
+      setTestEmail(data.email ?? null);
+    } catch (e: any) {
+      setTestStatus('failed');
+      setTestError(e?.message ?? 'Unknown error during test login.');
+    }
+  }, [org, currentConfigKey]);
+
+  const activateSaml = useCallback(async () => {
+    if (!org) return;
+    setIsActivating(true);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/admin/orgs/${org.orgId}/auth-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          authMethod: 'saml',
+          samlConfig: { idpEntityId, idpSsoUrl, idpSigningCert: idpCert },
+          activate: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to activate SAML');
+      await refreshOrg();
+      showToast('SAML is now live — all users will sign in via your IdP.', 'success');
+    } catch (e: any) {
+      showToast(e?.message ?? 'Failed to activate.', 'error');
+    } finally {
+      setIsActivating(false);
+    }
+  }, [org, idpEntityId, idpSsoUrl, idpCert, refreshOrg]);
+
+  const handleActivate = useCallback(() => {
+    if (!org) return;
+    Alert.alert(
+      'Activate SAML sign-in?',
+      `This changes how everyone in ${org.name} signs in — they'll use your IdP instead of email/password from now on. Make sure your IT team has confirmed the test login above.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Activate', style: 'destructive', onPress: activateSaml },
+      ],
+    );
+  }, [org, activateSaml]);
 
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
@@ -370,20 +463,54 @@ function AuthTab() {
       )}
 
       <AppButton
-        label={isSaving ? 'Saving…' : 'Save Auth Settings'}
-        onPress={handleSave}
+        label={isSaving ? 'Saving…' : authMethod === 'saml' ? 'Save Draft' : 'Save Auth Settings'}
+        onPress={handleSaveDraft}
         disabled={isSaving}
         style={styles.actionButton}
       />
 
-      {savedSpInfo?.acsUrl && (
-        <View style={styles.infoBox}>
-          <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Give these to your IT team:</Text>
-          <Text style={styles.infoBoxLabel}>ACS URL</Text>
-          <Text style={styles.infoBoxValue} selectable>{savedSpInfo.acsUrl}</Text>
-          <Text style={styles.infoBoxLabel}>SP Entity ID</Text>
-          <Text style={styles.infoBoxValue} selectable>{savedSpInfo.spEntityId}</Text>
-        </View>
+      {authMethod === 'saml' && savedSpInfo?.acsUrl && (
+        <>
+          <View style={styles.infoBox}>
+            <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Give these to your IT team:</Text>
+            <Text style={styles.infoBoxLabel}>ACS URL</Text>
+            <Text style={styles.infoBoxValue} selectable>{savedSpInfo.acsUrl}</Text>
+            <Text style={styles.infoBoxLabel}>SP Entity ID</Text>
+            <Text style={styles.infoBoxValue} selectable>{savedSpInfo.spEntityId}</Text>
+          </View>
+
+          <Text style={[styles.sectionLabel, { marginTop: spacing.section }]}>
+            {isDraftCurrent ? 'Draft saved — not live yet' : 'Unsaved changes — save the draft again before testing'}
+          </Text>
+
+          <AppButton
+            label={testStatus === 'testing' ? 'Testing…' : 'Test Connection'}
+            onPress={handleTestConnection}
+            disabled={!isDraftCurrent || testStatus === 'testing'}
+            style={styles.actionButton}
+          />
+
+          {testStatus === 'passed' && isTestCurrent && (
+            <Text style={styles.testPassedText}>
+              ✅ Test succeeded{testEmail ? ` — verified ${testEmail} via your IdP` : ''}
+            </Text>
+          )}
+          {testStatus === 'failed' && (
+            <Text style={styles.testFailedText}>❌ {testError ?? 'Test failed'}</Text>
+          )}
+
+          <AppButton
+            label={isActivating ? 'Activating…' : 'Activate SAML for All Users'}
+            onPress={handleActivate}
+            disabled={!isTestCurrent || isActivating}
+            style={styles.actionButton}
+          />
+          <Text style={styles.hint}>
+            {org?.authMethod === 'saml'
+              ? 'SAML is currently live for this organization.'
+              : 'Nobody signs in with SAML until you activate — a successful test is required first.'}
+          </Text>
+        </>
       )}
     </ScrollView>
   );
@@ -3434,6 +3561,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#111',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  testPassedText: {
+    fontSize: 13,
+    color: '#16a34a',
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  testFailedText: {
+    fontSize: 13,
+    color: '#dc2626',
+    fontWeight: '600',
+    marginTop: 8,
   },
   // Stops tab
   stopsContainer: {

@@ -931,9 +931,31 @@ export default function AuthScreen() {
       );
     }
 
+    // Same escape hatch for SAML orgs — a misconfigured or unreachable IdP
+    // must never fully strand an admin who still has a working email/password
+    // login. Without this, org.authMethod === 'saml' was a dead end: SamlPanel
+    // was the only thing ever rendered for it.
+    if (org.authMethod === 'saml' && adminOverride) {
+      return (
+        <>
+          <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} adminOnly />
+          <TouchableOpacity onPress={() => setAdminOverride(false)} style={styles.adminOverrideLink}>
+            <Text style={[styles.adminOverrideLinkText, { color: primaryColor }]}>← Back to SSO sign-in</Text>
+          </TouchableOpacity>
+        </>
+      );
+    }
+
     switch (org.authMethod) {
       case 'saml':
-        return <SamlPanel orgSlug={org.slug} />;
+        return (
+          <>
+            <SamlPanel orgSlug={org.slug} />
+            <TouchableOpacity onPress={() => setAdminOverride(true)} style={styles.adminOverrideLink}>
+              <Text style={styles.adminOverrideLinkText}>Admin sign-in</Text>
+            </TouchableOpacity>
+          </>
+        );
       case 'email':
       case 'google':
       case 'email+google':

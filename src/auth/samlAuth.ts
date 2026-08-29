@@ -15,7 +15,7 @@ function isInvalidOrExpiredTokenError(error: unknown): boolean {
   );
 }
 
-function extractTokenFromUrl(url?: string | null): string | null {
+export function extractTokenFromUrl(url?: string | null): string | null {
   if (!url) return null;
   const parsed = Linking.parse(url);
   const params = parsed.queryParams ?? {};
