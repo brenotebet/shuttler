@@ -65,6 +65,18 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const API_BASE_URL = (process.env.API_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET || '';
 
+// Catches the case where API_BASE_URL isn't set in a deployed environment and
+// silently falls back to the localhost default above — any SAML SP URLs built
+// from it would be unreachable from a real IdP.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+function isLoopbackUrl(url: string): boolean {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 // URL schemes allowed in SAML RelayState (prevents open redirect via forged responses)
 const ALLOWED_RELAY_PREFIXES = (process.env.SAML_ALLOWED_RELAY_PREFIXES || 'shuttler://')
   .split(',')
@@ -214,6 +226,7 @@ function createRateLimiter(windowMs: number, max: number) {
 }
 
 const exchangeLimit = createRateLimiter(60_000, 10);
+const samlTestVerifyLimit = createRateLimiter(60_000, 10);
 const aiChatLimit = createRateLimiter(60_000, 20);
 const registerLimit = createRateLimiter(60_000, 5);
 const passwordResetLimit = createRateLimiter(60_000, 5);
@@ -302,27 +315,48 @@ async function requireAuth(req: Request, res: Response, next: Function) {
   }
 }
 
+// Shared by requireSuperAdmin and the super-admin bypass in requireOrgAdmin /
+// the org-delete owner check below, so there's one place that defines what
+// "is a super admin" means.
+function isSuperAdminClaims(claims: admin.auth.DecodedIdToken | undefined): boolean {
+  if (!claims) return false;
+  if (claims.superAdmin === true) return true;
+  const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
+  // Email fallback only counts for verified emails — otherwise registering
+  // the configured address on any unverified-signup path would grant access.
+  return claims.email_verified === true && superAdminEmails.includes(claims.email ?? '');
+}
+
 async function requireOrgAdmin(req: Request, res: Response, next: Function) {
   const orgId = req.params.orgId as string;
   const uid = (req as any).uid as string;
+  const claims = (req as any).claims as admin.auth.DecodedIdToken | undefined;
   try {
-    const userDoc = await admin.firestore()
-      .collection('orgs').doc(orgId)
-      .collection('users').doc(uid)
-      .get();
-    if (!userDoc.exists || userDoc.data()!.role !== 'admin') {
-      return res.status(403).json({ error: 'Not authorized as org admin' });
-    }
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
+
+    // A super admin can act on any org's admin-scoped endpoints without being
+    // a member of it — support/ops need this to fix a customer's SAML config,
+    // manage their users, etc. without being invited into their org first.
+    if (!isSuperAdminClaims(claims)) {
+      const userDoc = await admin.firestore()
+        .collection('orgs').doc(orgId)
+        .collection('users').doc(uid)
+        .get();
+      if (!userDoc.exists || userDoc.data()!.role !== 'admin') {
+        return res.status(403).json({ error: 'Not authorized as org admin' });
+      }
+    }
+
     (req as any).orgSlug = orgDoc.data()!.slug;
     next();
   } catch {
     return res.status(500).json({ error: 'Authorization check failed' });
   }
 }
-
-
 
 async function requireSuperAdmin(req: Request, res: Response, next: Function) {
   if (superAdminLimit(req.ip ?? 'unknown')) {
@@ -336,15 +370,7 @@ async function requireSuperAdmin(req: Request, res: Response, next: Function) {
     // checkRevoked: disabling the account or revoking sessions locks the
     // panel out immediately instead of after the 1h token TTL.
     const decoded = await admin.auth().verifyIdToken(header.slice(7), true);
-    const superAdminEmails = (process.env.SUPER_ADMIN_EMAILS ?? '')
-      .split(',')
-      .map((s: string) => s.trim())
-      .filter(Boolean);
-    // Email fallback only counts for verified emails — otherwise registering
-    // the configured address on any unverified-signup path would grant access.
-    const isSuperAdmin = decoded.superAdmin === true ||
-      (decoded.email_verified === true && superAdminEmails.includes(decoded.email ?? ''));
-    if (!isSuperAdmin) {
+    if (!isSuperAdminClaims(decoded)) {
       return res.status(403).json({ error: 'Super admin access required' });
     }
     (req as any).uid = decoded.uid;
@@ -514,17 +540,23 @@ app.get('/orgs', async (_req: Request, res: Response) => {
     const orgById: Record<string, admin.firestore.DocumentData> = {};
     orgDocs.forEach((d) => { if (d.exists) orgById[d.id] = d.data()!; });
 
-    const orgs = snap.docs.map((d) => {
-      const slugData = d.data();
-      const orgId = slugData.orgId as string | undefined;
-      const extra = orgId ? orgById[orgId] : null;
-      return {
-        slug: d.id,
-        ...slugData,
-        logoUrl: extra?.logoUrl ?? null,
-        primaryColor: extra?.primaryColor ?? null,
-      };
-    });
+    const orgs = snap.docs
+      .map((d) => {
+        const slugData = d.data();
+        const orgId = slugData.orgId as string | undefined;
+        const extra = orgId ? orgById[orgId] : null;
+        return {
+          slug: d.id,
+          ...slugData,
+          logoUrl: extra?.logoUrl ?? null,
+          primaryColor: extra?.primaryColor ?? null,
+          approved: extra?.approved ?? false,
+        };
+      })
+      // Unreviewed self-serve applications shouldn't be selectable — keeps the
+      // picker from listing an org before /auth/email/register would even let
+      // anyone into it.
+      .filter((o) => o.approved === true);
     return res.json(orgs);
   } catch (e) {
     return res.status(500).json({ error: 'Failed to list orgs' });
@@ -705,6 +737,33 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
   }
 });
 
+// Lets an admin prove a draft SAML config actually works — a real SP-initiated
+// round trip through startSamlLogin() — without the two side effects a real
+// login would have: it never mints a Firebase session (so it can't hijack the
+// admin's own active app session) and never touches the org's users
+// subcollection (so it can't demote an existing admin to 'student' the way
+// /saml/exchange's unconditional role write would).
+app.post('/saml/:orgSlug/test-verify', async (req: Request, res: Response) => {
+  const clientIp = req.ip ?? 'unknown';
+  if (samlTestVerifyLimit(clientIp)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
+  const samlToken = (req.body as any)?.samlToken;
+  if (!samlToken) return res.status(400).json({ error: 'Missing SAML handoff token' });
+
+  const payload = await consumeHandoffToken(String(samlToken));
+  if (!payload) return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
+
+  const { attributes } = payload;
+  const email =
+    normalizeString((attributes as any).email) ||
+    normalizeString((attributes as any).mail) ||
+    undefined;
+
+  return res.json({ ok: true, email: email ?? null });
+});
+
 app.get('/saml/:orgSlug/metadata', async (req: Request, res: Response) => {
   try {
     const config = await loadOrgSamlConfig(req.params.orgSlug as string);
@@ -874,6 +933,16 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org document missing' });
     const org = orgDoc.data()!;
 
+    // A self-serve application (POST /orgs/create) exists in Firestore — and
+    // gets a 'trialing' subscriptionStatus — well before a super-admin has
+    // reviewed it. Block real signups until that review has happened.
+    if (!org.approved) {
+      return res.status(403).json({ error: "This organization hasn't been approved yet." });
+    }
+    if (!(org.stops?.length > 0)) {
+      return res.status(403).json({ error: "This organization hasn't finished setting up yet — check back soon." });
+    }
+
     if (!['trialing', 'active'].includes(org.subscriptionStatus)) {
       return res.status(403).json({ error: 'Org subscription is not active' });
     }
@@ -931,7 +1000,9 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       });
     }
 
-    await admin.auth().setCustomUserClaims(authUser.uid, { orgId });
+    // Merge rather than replace — this uid may already carry other claims
+    // (e.g. superAdmin) that a bare { orgId } write would silently erase.
+    await admin.auth().setCustomUserClaims(authUser.uid, { ...(authUser.customClaims ?? {}), orgId });
 
     try {
       console.log(`[register] Writing user doc → orgs/${orgId}/users/${authUser.uid}`);
@@ -1182,6 +1253,7 @@ app.delete('/account', requireAuth, async (req: Request, res: Response) => {
 app.delete('/admin/orgs/:orgId', requireAuth, async (req: Request, res: Response) => {
   const orgId = req.params.orgId as string;
   const uid = (req as any).uid as string;
+  const claims = (req as any).claims as admin.auth.DecodedIdToken | undefined;
 
   try {
     const orgRef = admin.firestore().collection('orgs').doc(orgId);
@@ -1189,7 +1261,7 @@ app.delete('/admin/orgs/:orgId', requireAuth, async (req: Request, res: Response
     if (!orgSnap.exists) return res.status(404).json({ error: 'Org not found' });
     const org = orgSnap.data()!;
 
-    if (org.ownerUid !== uid) {
+    if (org.ownerUid !== uid && !isSuperAdminClaims(claims)) {
       return res.status(403).json({ error: 'Only the organization owner can delete the organization.' });
     }
 
@@ -1249,10 +1321,9 @@ app.post(
   async (req: Request, res: Response) => {
     const orgId = req.params.orgId as string;
     const orgSlug = (req as any).orgSlug as string;
-    const { authMethod, samlConfig, allowedEmailDomains } = req.body;
+    const { authMethod, samlConfig, allowedEmailDomains, activate } = req.body;
 
     const update: Record<string, any> = {
-      authMethod,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     // Only overwrite allowedEmailDomains when the admin explicitly sends it.
@@ -1267,6 +1338,14 @@ app.post(
     if (authMethod === 'saml' && samlConfig) {
       acsUrl = `${API_BASE_URL}/saml/${orgSlug}/acs`;
       spEntityId = `${API_BASE_URL}/orgs/${orgId}`;
+
+      if (isLoopbackUrl(acsUrl) || isLoopbackUrl(spEntityId)) {
+        console.error('[auth-config] Refusing to save SAML config with a loopback SP URL — API_BASE_URL is not set for this environment', { API_BASE_URL });
+        return res.status(500).json({
+          error: 'Backend is not configured with a public API_BASE_URL in this environment, so the SSO endpoints it would generate are unreachable. Contact Shuttler support before continuing.',
+        });
+      }
+
       update.samlConfig = {
         idpEntityId: samlConfig.idpEntityId,
         idpSsoUrl: samlConfig.idpSsoUrl,
@@ -1274,17 +1353,28 @@ app.post(
         acsUrl,
         spEntityId,
       };
+      // Saving SAML details never flips the org live on its own — the SP
+      // endpoints (login/acs/metadata) key off org.samlConfig regardless of
+      // authMethod, so a draft is fully testable. Only an explicit
+      // activate:true (sent after a successful test) changes authMethod.
+      if (activate === true) {
+        update.authMethod = 'saml';
+      }
     } else {
-      // Clear SAML config if switching away
+      // Switching to email/phone is a single step — there's no untested
+      // config to gate, and it's always safe to fall back to a known-good method.
       update.samlConfig = admin.firestore.FieldValue.delete();
+      update.authMethod = authMethod;
     }
 
     await admin.firestore().collection('orgs').doc(orgId).update(update);
-    await admin.firestore()
-      .collection('orgSlugs').doc(orgSlug)
-      .update({ authMethod });
+    if (update.authMethod) {
+      await admin.firestore()
+        .collection('orgSlugs').doc(orgSlug)
+        .update({ authMethod: update.authMethod });
+    }
 
-    return res.json({ ok: true, spEntityId, acsUrl });
+    return res.json({ ok: true, spEntityId, acsUrl, activated: update.authMethod === 'saml' });
   },
 );
 
@@ -1806,6 +1896,14 @@ app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, asyn
       return res.status(400).json({ error: 'Application has no contact email on file' });
     }
 
+    // The org doc can be missing if it was deleted directly (e.g. in the
+    // Firebase console) after the application was filed — there's nothing
+    // left to approve into.
+    const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (!orgSnap.exists) {
+      return res.status(409).json({ error: 'The org record for this application no longer exists. Ask the applicant to resubmit.' });
+    }
+
     // No account exists yet for a pending application (Guideline 3.1.1 — org
     // creation is request-only until a human approves it). Provision the
     // founder's admin login now, same createUser-or-recover pattern as
@@ -1821,7 +1919,9 @@ app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, asyn
         displayName: `${firstName} ${lastName}`.trim(),
       });
     }
-    await admin.auth().setCustomUserClaims(authUser.uid, { orgId });
+    // Merge rather than replace — this uid may already carry other claims
+    // (e.g. superAdmin) that a bare { orgId } write would silently erase.
+    await admin.auth().setCustomUserClaims(authUser.uid, { ...(authUser.customClaims ?? {}), orgId });
 
     const batch = admin.firestore().batch();
     batch.set(admin.firestore().collection('orgs').doc(orgId).collection('users').doc(authUser.uid), {
@@ -1878,13 +1978,21 @@ app.post('/super-admin/org-applications/:orgId/reject', requireSuperAdmin, async
     const firstName: string = appData.contactFirstName ?? 'there';
     const orgName: string = appData.orgName ?? appData.name ?? orgId;
 
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const orgSnap = await orgRef.get();
+
     const batch = admin.firestore().batch();
-    batch.update(admin.firestore().collection('orgs').doc(orgId), {
-      approved: false,
-      reviewStatus: 'rejected',
-      rejectionReason: reason ?? null,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    // The org doc can be missing if it was deleted directly (e.g. in the
+    // Firebase console) after the application was filed — nothing to update
+    // in that case, just close out the application.
+    if (orgSnap.exists) {
+      batch.update(orgRef, {
+        approved: false,
+        reviewStatus: 'rejected',
+        rejectionReason: reason ?? null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
     batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
       reviewStatus: 'rejected',
       rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1952,6 +2060,8 @@ app.get('/super-admin/orgs', requireSuperAdmin, async (_req: Request, res: Respo
         approved: data.approved ?? false,
         reviewStatus: data.reviewStatus ?? null,
         founderEmail: data.founderEmail ?? null,
+        authMethod: data.authMethod ?? null,
+        allowedEmailDomains: data.allowedEmailDomains ?? [],
         subscriptionPlan: data.subscriptionPlan ?? null,
         subscriptionStatus: data.subscriptionStatus ?? null,
         dataAddonActive: data.dataAddonActive ?? false,
@@ -2080,6 +2190,147 @@ app.post('/super-admin/orgs/:orgId/extend-trial', requireSuperAdmin, async (req:
   } catch (e) {
     console.error('[super-admin] extend-trial error:', e);
     return res.status(500).json({ error: 'Failed to extend trial' });
+  }
+});
+
+// Manually override subscription status/plan — bypasses Stripe entirely, for
+// support cases (comping a customer, fixing a stuck webhook, etc). Recomputes
+// entitlements from the new plan the same way the data-addon endpoint above
+// does, so plan-gated limits stay consistent.
+app.post('/super-admin/orgs/:orgId/subscription', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  const { subscriptionStatus, subscriptionPlan } = req.body as { subscriptionStatus?: string; subscriptionPlan?: string };
+  const allowedStatuses = ['trialing', 'active', 'past_due', 'canceled', 'unpaid'];
+  if (subscriptionStatus !== undefined && !allowedStatuses.includes(subscriptionStatus)) {
+    return res.status(400).json({ error: `subscriptionStatus must be one of: ${allowedStatuses.join(', ')}` });
+  }
+
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const orgSnap = await orgRef.get();
+    if (!orgSnap.exists) return res.status(404).json({ error: 'Org not found' });
+
+    const update: Record<string, any> = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+    if (subscriptionStatus !== undefined) update.subscriptionStatus = subscriptionStatus;
+    if (subscriptionPlan !== undefined) {
+      update.subscriptionPlan = subscriptionPlan;
+      update.entitlements = computeEntitlements(subscriptionPlan, orgSnap.data()?.dataAddonActive === true);
+    }
+
+    await orgRef.update(update);
+    await writeAdminAudit(req, 'set-subscription', orgId, { subscriptionStatus, subscriptionPlan });
+    return res.json({
+      orgId,
+      subscriptionStatus: update.subscriptionStatus ?? orgSnap.data()?.subscriptionStatus,
+      subscriptionPlan: update.subscriptionPlan ?? orgSnap.data()?.subscriptionPlan,
+    });
+  } catch (e) {
+    console.error('[super-admin] set-subscription error:', e);
+    return res.status(500).json({ error: 'Failed to update subscription' });
+  }
+});
+
+// Suspend/reinstate an already-approved org — reuses the `approved` gate that
+// blocks self-registration and delists the org from GET /orgs (see the
+// registration checks earlier in this file), without touching the one-time
+// application's reviewStatus history.
+app.post('/super-admin/orgs/:orgId/suspend', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    if (!(await orgRef.get()).exists) return res.status(404).json({ error: 'Org not found' });
+    await orgRef.update({ approved: false, reviewStatus: 'suspended', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await writeAdminAudit(req, 'suspend-org', orgId, {});
+    return res.json({ orgId, approved: false, reviewStatus: 'suspended' });
+  } catch (e) {
+    console.error('[super-admin] suspend error:', e);
+    return res.status(500).json({ error: 'Failed to suspend org' });
+  }
+});
+
+app.post('/super-admin/orgs/:orgId/reinstate', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    if (!(await orgRef.get()).exists) return res.status(404).json({ error: 'Org not found' });
+    await orgRef.update({ approved: true, reviewStatus: 'approved', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await writeAdminAudit(req, 'reinstate-org', orgId, {});
+    return res.json({ orgId, approved: true, reviewStatus: 'approved' });
+  } catch (e) {
+    console.error('[super-admin] reinstate error:', e);
+    return res.status(500).json({ error: 'Failed to reinstate org' });
+  }
+});
+
+// Edit core profile fields not covered by the org-admin's own ProfileTab
+// (which writes name/logo/color directly to Firestore for their own org).
+// Deliberately no slug editing here — the slug is baked into QR codes, deep
+// links, and (once SAML is configured) the ACS URL/SP Entity ID; renaming it
+// would silently break all of those with no auto-fix.
+app.post('/super-admin/orgs/:orgId/profile', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  const { name, founderEmail } = req.body as { name?: string; founderEmail?: string };
+  if (name !== undefined) {
+    if (!name.trim()) return res.status(400).json({ error: 'name cannot be empty' });
+    if (containsProfanity(name)) return res.status(400).json({ error: 'Organization name contains inappropriate language.' });
+  }
+
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    if (!(await orgRef.get()).exists) return res.status(404).json({ error: 'Org not found' });
+
+    const update: Record<string, any> = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+    if (name !== undefined) update.name = name.trim();
+    if (founderEmail !== undefined) update.founderEmail = founderEmail.trim().toLowerCase();
+
+    await orgRef.update(update);
+    await writeAdminAudit(req, 'update-org-profile', orgId, { name, founderEmail });
+    return res.json({ orgId, ok: true });
+  } catch (e) {
+    console.error('[super-admin] update-profile error:', e);
+    return res.status(500).json({ error: 'Failed to update org profile' });
+  }
+});
+
+// Cross-org email lookup — support tooling to find which org(s) an email
+// belongs to without knowing the org first. A person can legitimately have
+// separate memberships in more than one org (e.g. a parent at two schools).
+app.get('/super-admin/users/search', requireSuperAdmin, async (req: Request, res: Response) => {
+  const email = (req.query.email as string | undefined)?.trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'email query param is required' });
+
+  try {
+    const snap = await admin.firestore()
+      .collectionGroup('users')
+      .where('email', '==', email)
+      .limit(20)
+      .get();
+
+    if (snap.empty) return res.json({ results: [] });
+
+    const orgIds = Array.from(new Set(snap.docs.map((d) => d.ref.parent.parent!.id)));
+    const orgDocs = await admin.firestore().getAll(
+      ...orgIds.map((id) => admin.firestore().collection('orgs').doc(id)),
+    );
+    const orgNameById: Record<string, string | null> = {};
+    orgDocs.forEach((d) => { orgNameById[d.id] = d.exists ? (d.data()?.name ?? null) : null; });
+
+    const results = snap.docs.map((d) => {
+      const data = d.data();
+      const orgId = d.ref.parent.parent!.id;
+      return {
+        uid: d.id,
+        orgId,
+        orgName: orgNameById[orgId] ?? null,
+        email: data.email ?? null,
+        displayName: data.displayName ?? null,
+        role: data.role ?? null,
+      };
+    });
+    return res.json({ results });
+  } catch (e) {
+    console.error('[super-admin] user search error:', e);
+    return res.status(500).json({ error: 'Failed to search users' });
   }
 });
 
@@ -2678,10 +2929,21 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
     let isNew = false;
 
     if (memberDoc.exists) {
-      // Existing member: just refresh lastLoginAt.
+      // Existing member: just refresh lastLoginAt. No approval/setup gate here —
+      // that only guards new signups, not logins for members who already exist.
       await userRef.update({ lastLoginAt: admin.firestore.FieldValue.serverTimestamp() });
     } else {
-      // New member: create the user doc via Admin SDK (bypasses Firestore security
+      // New member — same gate as /auth/email/register: block real signups
+      // into an org a super-admin hasn't approved yet, or one with no stops
+      // configured (nothing for a new member to do there anyway).
+      if (!orgData.approved) {
+        return res.status(403).json({ error: "This organization hasn't been approved yet." });
+      }
+      if (!(orgData.stops?.length > 0)) {
+        return res.status(403).json({ error: "This organization hasn't finished setting up yet — check back soon." });
+      }
+
+      // Create the user doc via Admin SDK (bypasses Firestore security
       // rules, which would otherwise block new users from creating their own doc
       // because orgIsActive() requires existing membership to read the org doc).
       // Callers may request 'parent' role (phone auth); anything else defaults to 'student'.
