@@ -4,6 +4,13 @@ import {
   setOrgLimits,
   setDataAddon,
   extendTrial,
+  updateOrgProfile,
+  setSubscription,
+  suspendOrg,
+  reinstateOrg,
+  deleteOrg,
+  resetAuthMethod,
+  updateAllowedDomains,
   type OrgSummary,
 } from '../api';
 import RefreshButton from './RefreshButton';
@@ -43,6 +50,13 @@ function OrgActions({ org, onChanged }: { org: OrgSummary; onChanged: () => void
   const [maxVehicles, setMaxVehicles] = useState(org.limitOverrides?.maxVehicles?.toString() ?? '');
   const [maxRoutes, setMaxRoutes] = useState(org.limitOverrides?.maxRoutes?.toString() ?? '');
   const [maxStops, setMaxStops] = useState(org.limitOverrides?.maxStops?.toString() ?? '');
+  const [name, setName] = useState(org.name ?? '');
+  const [founderEmail, setFounderEmail] = useState(org.founderEmail ?? '');
+  const [domains, setDomains] = useState((org.allowedEmailDomains ?? []).join(', '));
+  const [subStatus, setSubStatus] = useState(org.subscriptionStatus ?? 'trialing');
+  const [subPlan, setSubPlan] = useState(org.subscriptionPlan ?? 'starter');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const run = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label);
@@ -145,6 +159,154 @@ function OrgActions({ org, onChanged }: { org: OrgSummary; onChanged: () => void
         ⚠ For orgs with an active Stripe subscription, set overrides in the Stripe subscription
         metadata too — the webhook re-stamps them on every subscription event.
       </p>
+
+      <hr className="border-gray-200" />
+
+      {/* Profile */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-medium text-gray-700 w-36">Org name</span>
+        <input value={name} onChange={(e) => setName(e.target.value)} className={`${inputCls} w-56`} />
+        <span className="text-sm font-medium text-gray-700 w-36">Founder email</span>
+        <input value={founderEmail} onChange={(e) => setFounderEmail(e.target.value)} className={`${inputCls} w-56`} />
+        <button
+          disabled={busy !== null}
+          onClick={() => run('profile', () => updateOrgProfile(org.orgId, { name, founderEmail }))}
+          className={`${btnCls} bg-indigo-50 text-indigo-700 hover:bg-indigo-100`}
+        >
+          {busy === 'profile' ? '…' : 'Save profile'}
+        </button>
+      </div>
+
+      {/* Auth method */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-medium text-gray-700 w-36">Auth method</span>
+        <span className="text-sm text-gray-500 capitalize">{org.authMethod ?? '—'}</span>
+        {org.authMethod === 'saml' && (
+          <button
+            disabled={busy !== null}
+            onClick={() => {
+              if (window.confirm(`Revert "${org.name ?? org.orgId}" to email/password sign-in? Do this if their SAML setup is broken and locking people out.`)) {
+                run('reset-auth', () => resetAuthMethod(org.orgId));
+              }
+            }}
+            className={`${btnCls} bg-amber-50 text-amber-700 hover:bg-amber-100`}
+          >
+            {busy === 'reset-auth' ? '…' : 'Reset to email/password'}
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-medium text-gray-700 w-36">Allowed domains</span>
+        <input
+          value={domains}
+          onChange={(e) => setDomains(e.target.value)}
+          placeholder="any (blank = open)"
+          className={`${inputCls} w-56`}
+        />
+        <button
+          disabled={busy !== null}
+          onClick={() => run('domains', () => updateAllowedDomains(
+            org.orgId,
+            org.authMethod ?? 'email',
+            domains.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
+          ))}
+          className={`${btnCls} bg-indigo-50 text-indigo-700 hover:bg-indigo-100`}
+        >
+          {busy === 'domains' ? '…' : 'Save'}
+        </button>
+      </div>
+
+      {/* Subscription override */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-medium text-gray-700 w-36">Subscription</span>
+        <select value={subStatus} onChange={(e) => setSubStatus(e.target.value)} className={inputCls + ' w-32'}>
+          {['trialing', 'active', 'past_due', 'canceled', 'unpaid'].map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select value={subPlan} onChange={(e) => setSubPlan(e.target.value)} className={inputCls + ' w-32'}>
+          {['starter', 'growth', 'enterprise'].map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <button
+          disabled={busy !== null}
+          onClick={() => run('subscription', () => setSubscription(org.orgId, { subscriptionStatus: subStatus, subscriptionPlan: subPlan }))}
+          className={`${btnCls} bg-indigo-50 text-indigo-700 hover:bg-indigo-100`}
+        >
+          {busy === 'subscription' ? '…' : 'Save'}
+        </button>
+      </div>
+      <p className="text-xs text-amber-600">
+        ⚠ This bypasses Stripe entirely — for orgs with a real subscription, the next webhook
+        event will overwrite it. Use for comps/support fixes, not routine billing changes.
+      </p>
+
+      {/* Suspend / reinstate */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-medium text-gray-700 w-36">Approval</span>
+        <span className="text-sm text-gray-500">{org.approved ? 'Approved' : `Not approved (${org.reviewStatus ?? 'pending'})`}</span>
+        {org.approved ? (
+          <button
+            disabled={busy !== null}
+            onClick={() => {
+              if (window.confirm(`Suspend "${org.name ?? org.orgId}"? New signups will be blocked and it disappears from the org picker. Existing signed-in users keep their sessions.`)) {
+                run('suspend', () => suspendOrg(org.orgId));
+              }
+            }}
+            className={`${btnCls} bg-red-50 text-red-700 hover:bg-red-100`}
+          >
+            {busy === 'suspend' ? '…' : 'Suspend'}
+          </button>
+        ) : (
+          <button
+            disabled={busy !== null}
+            onClick={() => run('reinstate', () => reinstateOrg(org.orgId))}
+            className={`${btnCls} bg-green-50 text-green-700 hover:bg-green-100`}
+          >
+            {busy === 'reinstate' ? '…' : 'Reinstate'}
+          </button>
+        )}
+      </div>
+
+      <hr className="border-gray-200" />
+
+      {/* Danger zone */}
+      <div className="space-y-2">
+        <span className="text-sm font-medium text-red-700">Danger zone</span>
+        {!deleteConfirmOpen ? (
+          <div>
+            <button
+              onClick={() => setDeleteConfirmOpen(true)}
+              className={`${btnCls} bg-red-50 text-red-700 hover:bg-red-100`}
+            >
+              Delete organization…
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 flex-wrap bg-red-50 border border-red-200 rounded-lg p-3">
+            <span className="text-xs text-red-700">
+              Cancels their Stripe subscription and permanently deletes all org data. Type
+              <strong> {org.name ?? org.orgId} </strong> to confirm:
+            </span>
+            <input
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              className={inputCls + ' w-48'}
+            />
+            <button
+              disabled={busy !== null || deleteConfirmText !== (org.name ?? org.orgId)}
+              onClick={() => run('delete', () => deleteOrg(org.orgId))}
+              className={`${btnCls} bg-red-600 text-white hover:bg-red-700`}
+            >
+              {busy === 'delete' ? '…' : 'Permanently delete'}
+            </button>
+            <button onClick={() => { setDeleteConfirmOpen(false); setDeleteConfirmText(''); }} className={`${btnCls} text-gray-500 hover:text-gray-800`}>
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

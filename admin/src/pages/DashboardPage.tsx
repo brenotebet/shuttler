@@ -4,11 +4,12 @@ import { auth } from '../firebase';
 import { listApplications, approveOrg, rejectOrg, type Application } from '../api';
 import ApplicationCard from '../components/ApplicationCard';
 import OrgsTab from '../components/OrgsTab';
+import UsersTab from '../components/UsersTab';
 import FeedbackTab from '../components/FeedbackTab';
 import WaitlistTab from '../components/WaitlistTab';
 import RefreshButton from '../components/RefreshButton';
 
-type Tab = 'applications' | 'orgs' | 'feedback' | 'waitlist';
+type Tab = 'applications' | 'orgs' | 'users' | 'feedback' | 'waitlist';
 
 export default function DashboardPage({ user }: { user: User }) {
   const [activeTab, setActiveTab] = useState<Tab>('applications');
@@ -68,6 +69,7 @@ export default function DashboardPage({ user }: { user: User }) {
           {([
             { key: 'applications', label: 'Applications' },
             { key: 'orgs', label: 'Orgs' },
+            { key: 'users', label: 'Users' },
             { key: 'feedback', label: 'Rider Feedback' },
             { key: 'waitlist', label: 'Waitlist' },
           ] as { key: Tab; label: string }[]).map((t) => (
@@ -131,6 +133,7 @@ export default function DashboardPage({ user }: { user: User }) {
         )}
 
         {activeTab === 'orgs' && <OrgsTab />}
+        {activeTab === 'users' && <UsersTab />}
         {activeTab === 'feedback' && <FeedbackTab />}
         {activeTab === 'waitlist' && <WaitlistTab />}
       </main>
