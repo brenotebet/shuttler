@@ -37,6 +37,7 @@ const ORG_DOC = {
   authMethod:         'email',
   primaryColor:       '#2563eb',
   subscriptionStatus: 'active',
+  approved:           true,
   reviewStatus:       'approved',
   mapCenter:          { latitude: 38.6270, longitude: -90.1994 }, // St. Louis
   mapBoundingBox: {
