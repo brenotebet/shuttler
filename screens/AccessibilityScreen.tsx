@@ -56,14 +56,14 @@ export default function AccessibilityScreen() {
               <Text style={[s.previewIconText, { color: primaryColor }]}>A</Text>
             </View>
             <View style={s.previewText}>
-              <Text style={[s.previewTitle, { fontSize: 16 * fontScale }]}>Menu Item Title</Text>
-              <Text style={[s.previewDesc, { fontSize: 14 * fontScale }]}>
+              <Text style={s.previewTitle}>Menu Item Title</Text>
+              <Text style={s.previewDesc}>
                 Description text below the title
               </Text>
             </View>
           </View>
           <View style={s.previewDivider} />
-          <Text style={[s.previewSmall, { fontSize: 12 * fontScale }]}>
+          <Text style={s.previewSmall}>
             Smaller label · Like a badge or timestamp
           </Text>
         </View>
@@ -73,8 +73,8 @@ export default function AccessibilityScreen() {
 
         <View style={s.toggleRow}>
           <View style={s.toggleInfo}>
-            <Text style={[s.toggleTitle, { fontSize: 15 * fontScale }]}>Reduce motion</Text>
-            <Text style={[s.toggleDesc, { fontSize: 13 * fontScale }]}>
+            <Text style={s.toggleTitle}>Reduce motion</Text>
+            <Text style={s.toggleDesc}>
               Simplifies slide and spring animations
             </Text>
           </View>

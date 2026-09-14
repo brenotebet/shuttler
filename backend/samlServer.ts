@@ -44,6 +44,7 @@ import { containsProfanity } from './profanity';
  *   POST /saml/exchange                 ← Exchange handoff token for Firebase token
  *   GET  /saml/:orgSlug/metadata        ← SP metadata (per org)
  *   POST /auth/email/register           ← Email/password signup with domain enforcement
+ *   GET  /admin/orgs/:orgId/auth-config ← Read saved auth config, cert redacted (org admin only)
  *   POST /admin/orgs/:orgId/auth-config ← Save SAML/email config (org admin only)
  *   POST /billing/create-checkout-session
  *   POST /billing/create-portal-session
@@ -1312,6 +1313,39 @@ app.delete('/admin/orgs/:orgId', requireAuth, async (req: Request, res: Response
   }
 });
 
+// ---- Admin: read auth config ----
+//
+// Org GETs (/orgs/:slug, /orgs/by-id/:orgId) strip samlConfig entirely since
+// they're unauthenticated and the cert shouldn't be public. This endpoint is
+// admin-only and returns just enough to repopulate the Auth tab on reload —
+// the IdP Entity ID/SSO URL (not secret) plus whether a cert is on file, never
+// the cert itself.
+
+app.get(
+  '/admin/orgs/:orgId/auth-config',
+  requireAuth,
+  requireOrgAdmin,
+  async (req: Request, res: Response) => {
+    const orgId = req.params.orgId as string;
+    const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
+    const data = orgDoc.data()!;
+    const saml = data.samlConfig as { idpEntityId?: string; idpSsoUrl?: string; idpSigningCert?: string } | undefined;
+
+    return res.json({
+      authMethod: data.authMethod ?? 'email',
+      allowedEmailDomains: data.allowedEmailDomains ?? [],
+      samlDraft: saml
+        ? {
+            idpEntityId: saml.idpEntityId ?? '',
+            idpSsoUrl: saml.idpSsoUrl ?? '',
+            hasCert: Boolean(saml.idpSigningCert),
+          }
+        : null,
+    });
+  },
+);
+
 // ---- Admin: save auth config ----
 
 app.post(
@@ -1346,10 +1380,21 @@ app.post(
         });
       }
 
+      // The client never receives the stored certificate back (see the GET
+      // handler above), so a blank idpSigningCert here means "unchanged", not
+      // "clear it" — fall back to whatever's already on file.
+      let idpSigningCert = samlConfig.idpSigningCert;
+      if (!idpSigningCert) {
+        const existing = await admin.firestore().collection('orgs').doc(orgId).get();
+        // '' not undefined — an admin can legitimately save a draft before
+        // ever entering a cert, and Firestore rejects literal `undefined`.
+        idpSigningCert = existing.data()?.samlConfig?.idpSigningCert ?? '';
+      }
+
       update.samlConfig = {
         idpEntityId: samlConfig.idpEntityId,
         idpSsoUrl: samlConfig.idpSsoUrl,
-        idpSigningCert: samlConfig.idpSigningCert,
+        idpSigningCert,
         acsUrl,
         spEntityId,
       };

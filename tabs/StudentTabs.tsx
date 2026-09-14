@@ -21,7 +21,6 @@ export default function StudentTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarShowLabel: false,
         tabBarActiveTintColor: primaryColor,
         tabBarInactiveTintColor: TEXT_SECONDARY,
         tabBarStyle: {

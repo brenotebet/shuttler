@@ -35,6 +35,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import BottomSheet from '../components/BottomSheet';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useOrgSetupProgress } from '../src/hooks/useOrgSetupProgress';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
@@ -276,11 +277,17 @@ function AuthTab() {
   const [idpEntityId, setIdpEntityId] = useState('');
   const [idpSsoUrl, setIdpSsoUrl] = useState('');
   const [idpCert, setIdpCert] = useState('');
+  // Whether the server already has a signing cert on file for this draft —
+  // the GET below never returns the cert itself, only this flag, so a blank
+  // idpCert here means "keep what's on file," not "no cert exists."
+  const [certOnFile, setCertOnFile] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isActivating, setIsActivating] = useState(false);
-  const [savedSpInfo, setSavedSpInfo] = useState<{ spEntityId?: string; acsUrl?: string } | null>(
-    null,
-  );
+  // Deterministic from org.slug/orgId — an IT team can copy these before ever
+  // saving a draft, no round trip to the server needed to reveal them.
+  const spInfo = org
+    ? { acsUrl: `${SHUTTLER_API_URL}/saml/${org.slug}/acs`, spEntityId: `${SHUTTLER_API_URL}/orgs/${org.orgId}` }
+    : null;
   // Fingerprints of the IdP fields at the moment of the last successful save
   // and the last successful test, so Test/Activate can tell when the admin
   // has edited the form since — the SP endpoints test whatever's saved on the
@@ -294,6 +301,38 @@ function AuthTab() {
   const currentConfigKey = JSON.stringify({ idpEntityId, idpSsoUrl, idpCert });
   const isDraftCurrent = authMethod === 'saml' && savedConfigKey === currentConfigKey;
   const isTestCurrent = testStatus === 'passed' && testedConfigKey === currentConfigKey;
+
+  // Reload whatever draft is already saved server-side so reopening this tab
+  // doesn't present a blank form the admin has to fill in from scratch again.
+  useEffect(() => {
+    if (!org?.orgId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getBearerToken();
+        const res = await fetch(`${SHUTTLER_API_URL}/admin/orgs/${org.orgId}/auth-config`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !data.samlDraft) return;
+        setIdpEntityId(data.samlDraft.idpEntityId ?? '');
+        setIdpSsoUrl(data.samlDraft.idpSsoUrl ?? '');
+        setCertOnFile(Boolean(data.samlDraft.hasCert));
+        // The loaded values are exactly what the server has saved — mark the
+        // draft current so a returning admin can hit Test/Activate right away
+        // instead of being told to "save again" for a draft that's unchanged.
+        setSavedConfigKey(JSON.stringify({
+          idpEntityId: data.samlDraft.idpEntityId ?? '',
+          idpSsoUrl: data.samlDraft.idpSsoUrl ?? '',
+          idpCert: '',
+        }));
+      } catch {
+        // Best-effort hydration — worst case the admin re-enters the draft.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [org?.orgId]);
 
   const handleSaveDraft = useCallback(async () => {
     if (!org) return;
@@ -319,14 +358,15 @@ function AuthTab() {
       if (!res.ok) throw new Error(data?.error ?? 'Failed to save auth config');
       await refreshOrg();
       if (authMethod === 'saml') {
-        setSavedSpInfo({ spEntityId: data.spEntityId, acsUrl: data.acsUrl });
         setSavedConfigKey(currentConfigKey);
         setTestStatus('idle');
         setTestError(null);
         setTestEmail(null);
+        // A cert now exists on the server either way: the one just typed, or
+        // (since a blank field means "keep it") the one already on file.
+        if (idpCert) setCertOnFile(true);
         showToast('Draft saved — SAML is not live yet. Test the connection before activating.', 'success');
       } else {
-        setSavedSpInfo(null);
         showToast('Auth configuration updated.', 'success');
       }
     } catch (e: any) {
@@ -438,6 +478,16 @@ function AuthTab() {
       />
       <Text style={styles.hint}>Comma-separated. Leave blank to allow any email domain.</Text>
 
+      {authMethod === 'saml' && spInfo && (
+        <View style={styles.infoBox}>
+          <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Give these to your IT team:</Text>
+          <Text style={styles.infoBoxLabel}>ACS URL</Text>
+          <Text style={styles.infoBoxValue} selectable>{spInfo.acsUrl}</Text>
+          <Text style={styles.infoBoxLabel}>SP Entity ID</Text>
+          <Text style={styles.infoBoxValue} selectable>{spInfo.spEntityId}</Text>
+        </View>
+      )}
+
       {authMethod === 'saml' && (
         <>
           <Text style={styles.sectionLabel}>IdP Entity ID</Text>
@@ -453,12 +503,15 @@ function AuthTab() {
             style={[styles.input, styles.certInput]}
             value={idpCert}
             onChangeText={setIdpCert}
-            placeholder="Paste the IdP certificate here"
+            placeholder={certOnFile ? 'A certificate is already on file — paste one here only to replace it' : 'Paste the IdP certificate here'}
             placeholderTextColor="#aaa"
             multiline
             autoCapitalize="none"
             autoCorrect={false}
           />
+          {certOnFile && !idpCert && (
+            <Text style={styles.hint}>Leaving this blank keeps the certificate already on file.</Text>
+          )}
         </>
       )}
 
@@ -469,16 +522,8 @@ function AuthTab() {
         style={styles.actionButton}
       />
 
-      {authMethod === 'saml' && savedSpInfo?.acsUrl && (
+      {authMethod === 'saml' && savedConfigKey !== null && (
         <>
-          <View style={styles.infoBox}>
-            <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Give these to your IT team:</Text>
-            <Text style={styles.infoBoxLabel}>ACS URL</Text>
-            <Text style={styles.infoBoxValue} selectable>{savedSpInfo.acsUrl}</Text>
-            <Text style={styles.infoBoxLabel}>SP Entity ID</Text>
-            <Text style={styles.infoBoxValue} selectable>{savedSpInfo.spEntityId}</Text>
-          </View>
-
           <Text style={[styles.sectionLabel, { marginTop: spacing.section }]}>
             {isDraftCurrent ? 'Draft saved — not live yet' : 'Unsaved changes — save the draft again before testing'}
           </Text>
@@ -3202,6 +3247,7 @@ export default function AdminOrgSetupScreen() {
   const [activeTab, setActiveTab] = useState<Tab>(
     route.params?.initialTab ?? ((setupOrg?.stops?.length ?? 0) === 0 ? 'stops' : 'profile'),
   );
+  const { doneCount, total, pct, tabStatus } = useOrgSetupProgress();
 
   const tabs: { key: Tab; icon: string; label: string }[] = [
     { key: 'profile', icon: 'business', label: 'Profile' },
@@ -3238,7 +3284,16 @@ export default function AdminOrgSetupScreen() {
             <Text style={styles.headerSubtitle}>{setupOrg.name}</Text>
           ) : null}
         </View>
+        {doneCount < total && (
+          <Text style={styles.headerProgressText}>{doneCount}/{total} set up</Text>
+        )}
       </View>
+
+      {doneCount < total && (
+        <View style={styles.headerProgressBarBg}>
+          <View style={[styles.headerProgressBarFill, { backgroundColor: primaryColor, width: `${pct}%` as any }]} />
+        </View>
+      )}
 
       {/* Tab Bar — wrapped in a fixed-height View so the ScrollView can't flex-expand */}
       <View style={styles.tabBar}>
@@ -3254,7 +3309,17 @@ export default function AdminOrgSetupScreen() {
               style={[styles.tabBarItem, activeTab === t.key && styles.tabBarItemActive, activeTab === t.key && { borderBottomColor: primaryColor }]}
               onPress={() => setActiveTab(t.key)}
             >
-              <Icon name={t.icon} size={20} color={activeTab === t.key ? primaryColor : '#aaa'} />
+              <View style={styles.tabBarIconWrap}>
+                <Icon name={t.icon} size={20} color={activeTab === t.key ? primaryColor : '#aaa'} />
+                {tabStatus[t.key] === 'done' && (
+                  <View style={[styles.tabBarBadge, { backgroundColor: primaryColor }]}>
+                    <Icon name="check" size={8} color="#fff" />
+                  </View>
+                )}
+                {tabStatus[t.key] === 'attention' && (
+                  <View style={[styles.tabBarBadge, styles.tabBarBadgeAttention]} />
+                )}
+              </View>
               <Text style={[styles.tabBarLabel, activeTab === t.key && styles.tabBarLabelActive, activeTab === t.key && { color: primaryColor }]}>
                 {t.label}
               </Text>
@@ -3302,6 +3367,18 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginTop: 1,
   },
+  headerProgressText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  headerProgressBarBg: {
+    height: 3,
+    backgroundColor: '#f3f4f6',
+  },
+  headerProgressBarFill: {
+    height: '100%',
+  },
   tabBar: {
     height: 60,
     borderBottomWidth: 1,
@@ -3321,6 +3398,25 @@ const styles = StyleSheet.create({
   tabBarItemActive: {
     borderBottomWidth: 2,
     borderBottomColor: PRIMARY_COLOR,
+  },
+  tabBarIconWrap: {
+    width: 20,
+    height: 20,
+  },
+  tabBarBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -6,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  tabBarBadgeAttention: {
+    backgroundColor: '#d97706',
   },
   tabBarLabel: {
     fontSize: 11,

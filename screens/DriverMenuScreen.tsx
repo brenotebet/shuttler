@@ -14,7 +14,8 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
-import { collection, doc, limit, onSnapshot, query, setDoc, where } from 'firebase/firestore';
+import { useOrgSetupProgress, type OrgSetupTabKey } from '../src/hooks/useOrgSetupProgress';
+import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/firebaseconfig';
@@ -29,8 +30,6 @@ import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 
 // ── Setup checklist (admins only) ────────────────────────────────────────────
 
-type OrgSetupTab = 'profile' | 'auth' | 'stops' | 'users' | 'ops' | 'billing';
-
 function SetupChecklist({
   orgId,
   primaryColor,
@@ -38,33 +37,17 @@ function SetupChecklist({
 }: {
   orgId: string;
   primaryColor: string;
-  onNavigate: (tab: OrgSetupTab) => void;
+  onNavigate: (tab: OrgSetupTabKey) => void;
 }) {
-  const { org } = useOrg();
   const [dismissed, setDismissed] = useState<boolean | null>(null);
-  const [hasDriver, setHasDriver] = useState<boolean | null>(null);
   const storageKey = `setup_checklist_dismissed_${orgId}`;
+  const { steps, doneCount, total, pct, allDone, hasDanglingSamlDraft, isReady } = useOrgSetupProgress();
 
   useEffect(() => {
     AsyncStorage.getItem(storageKey)
       .then((val) => setDismissed(val === '1'))
       .catch(() => setDismissed(false));
   }, [storageKey]);
-
-  useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, 'orgs', orgId, 'users'), where('role', '==', 'driver'), limit(1)),
-      (snap) => setHasDriver(!snap.empty),
-      () => setHasDriver(false),
-    );
-    return unsub;
-  }, [orgId]);
-
-  const hasStops = (org?.stops?.length ?? 0) > 0;
-  const hasRoutes = (org?.routes?.length ?? 0) > 0;
-  const driverReady = hasDriver === true;
-
-  const allDone = hasStops && hasRoutes && driverReady;
 
   useEffect(() => {
     if (allDone) {
@@ -78,16 +61,7 @@ function SetupChecklist({
     setDismissed(true);
   }, [storageKey]);
 
-  if (dismissed === null || dismissed || hasDriver === null) return null;
-
-  const steps: { key: string; label: string; done: boolean; tab: OrgSetupTab }[] = [
-    { key: 'stops', label: 'Add your shuttle stops', done: hasStops, tab: 'stops' },
-    { key: 'routes', label: 'Create at least one route', done: hasRoutes, tab: 'stops' },
-    { key: 'driver', label: 'Invite a driver', done: driverReady, tab: 'users' },
-  ];
-
-  const doneCount = steps.filter((s) => s.done).length;
-  const pct = Math.round((doneCount / steps.length) * 100);
+  if (dismissed === null || dismissed || !isReady) return null;
 
   return (
     <View style={checklistStyles.card}>
@@ -95,7 +69,7 @@ function SetupChecklist({
         <View style={checklistStyles.titleRow}>
           <Icon name="assignment-turned-in" size={16} color={primaryColor} />
           <Text style={checklistStyles.title}>Getting Started</Text>
-          <Text style={checklistStyles.progress}>{doneCount}/{steps.length}</Text>
+          <Text style={checklistStyles.progress}>{doneCount}/{total}</Text>
         </View>
         <TouchableOpacity onPress={dismiss} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
           <Icon name="close" size={18} color="#9ca3af" />
@@ -123,6 +97,19 @@ function SetupChecklist({
           {!step.done && <Icon name="chevron-right" size={18} color="#9ca3af" />}
         </TouchableOpacity>
       ))}
+
+      {hasDanglingSamlDraft && (
+        <TouchableOpacity
+          style={checklistStyles.step}
+          onPress={() => onNavigate('auth')}
+        >
+          <Icon name="error-outline" size={18} color="#d97706" />
+          <Text style={[checklistStyles.stepLabel, checklistStyles.attentionLabel]}>
+            You have an unfinished SSO draft — test or activate it
+          </Text>
+          <Icon name="chevron-right" size={18} color="#9ca3af" />
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -199,6 +186,10 @@ const checklistStyles = StyleSheet.create({
     color: '#9ca3af',
     textDecorationLine: 'line-through',
   },
+  attentionLabel: {
+    color: '#b45309',
+    fontWeight: '500',
+  },
 });
 
 export default function DriverMenuScreen() {
@@ -267,12 +258,12 @@ export default function DriverMenuScreen() {
       >
       <View style={styles.hero}>
         {firstName ? (
-          <Text style={[styles.greeting, { fontSize: 14 * fontScale }]}>Hi, {firstName} 👋</Text>
+          <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={[styles.title, { color: primaryColor, fontSize: 28 * fontScale }]}>
+        <Text style={[styles.title, { color: primaryColor }]}>
           {role === 'admin' ? 'Admin Hub' : 'Driver Hub'}
         </Text>
-        <Text style={[styles.subtitle, { fontSize: 15 * fontScale }]}>
+        <Text style={styles.subtitle}>
           {role === 'admin' ? 'Manage your org and operations' : 'Stay on top of requests and routes'}
         </Text>
       </View>

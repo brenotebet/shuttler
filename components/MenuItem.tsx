@@ -6,7 +6,6 @@ import { Text } from './Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { CARD_BACKGROUND, TEXT_PRIMARY, TEXT_SECONDARY, DANGER_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
-import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
 export type MenuItemProps = {
@@ -20,7 +19,6 @@ export type MenuItemProps = {
 
 function MenuItem({ icon, title, description, onPress, variant = 'default', badge = false }: MenuItemProps) {
   const { primaryColor } = useOrgTheme();
-  const { fontScale } = useAccessibility();
   const isDanger = variant === 'danger';
 
   return (
@@ -34,8 +32,8 @@ function MenuItem({ icon, title, description, onPress, variant = 'default', badg
         {badge && <View style={styles.badgeDot} />}
       </View>
       <View style={styles.textContainer}>
-        <Text style={[styles.title, isDanger && styles.dangerTitle, { fontSize: 16 * fontScale }]}>{title}</Text>
-        <Text style={[styles.description, { fontSize: 14 * fontScale }]}>{description}</Text>
+        <Text style={[styles.title, isDanger && styles.dangerTitle]}>{title}</Text>
+        <Text style={styles.description}>{description}</Text>
       </View>
     </TouchableOpacity>
   );

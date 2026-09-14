@@ -82,10 +82,10 @@ export default function StudentMenuScreen() {
       >
       <View style={styles.hero}>
         {firstName ? (
-          <Text style={[styles.greeting, { fontSize: 14 * fontScale }]}>Hi, {firstName} 👋</Text>
+          <Text style={styles.greeting}>Hi, {firstName} 👋</Text>
         ) : null}
-        <Text style={[styles.title, { color: primaryColor, fontSize: 28 * fontScale }]}>{isParent ? 'Parent Center' : 'Rider Center'}</Text>
-        <Text style={[styles.subtitle, { fontSize: 15 * fontScale }]}>
+        <Text style={[styles.title, { color: primaryColor }]}>{isParent ? 'Parent Center' : 'Rider Center'}</Text>
+        <Text style={styles.subtitle}>
           {isParent ? 'Track your child\'s shuttle' : 'Manage your rides and profile'}
         </Text>
       </View>

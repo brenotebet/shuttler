@@ -20,7 +20,6 @@ export default function DriverTabs() {
       initialRouteName={role === 'admin' ? 'Menu' : 'LiveLocation'}
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarShowLabel: false,
         tabBarStyle: {
           backgroundColor: CARD_BACKGROUND,
           borderTopWidth: 1,
@@ -41,7 +40,7 @@ export default function DriverTabs() {
         tabBarInactiveTintColor: TEXT_SECONDARY,
       })}
     >
-      <Tab.Screen name="LiveLocation" component={DriverScreen} />
+      <Tab.Screen name="LiveLocation" component={DriverScreen} options={{ tabBarLabel: 'Live' }} />
       <Tab.Screen name="Routes" component={RoutesScreen} />
       <Tab.Screen name="Menu" component={DriverMenuScreen} />
     </Tab.Navigator>
