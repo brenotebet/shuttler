@@ -565,7 +565,11 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
       {adminOnly ? (
         <View style={styles.founderBanner}>
           <Icon name="admin-panel-settings" size={18} color="#1d4ed8" />
-          <Text style={styles.founderBannerText}>Admin sign-in only — parents use phone sign-in</Text>
+          <Text style={styles.founderBannerText}>
+            {org?.authMethod === 'saml'
+              ? 'Admin sign-in only — everyone else signs in through your SSO provider'
+              : 'Admin sign-in only — parents use phone sign-in'}
+          </Text>
         </View>
       ) : initialEmail ? (
         <View style={styles.founderBanner}>

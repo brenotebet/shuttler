@@ -486,9 +486,9 @@ function AuthTab() {
             </Text>
             <Text style={styles.radioSublabel}>
               {m === 'email'
-                ? 'Users sign up with an email and password. No setup needed — works right away.'
+                ? 'Users sign up with an email and password, or continue with Google or Apple. No setup needed — works right away.'
                 : m === 'phone'
-                ? 'Users sign in with a texted code. Good for younger students or parents without email.'
+                ? 'Parents sign in with a texted code — no email needed. They link their child from inside the app, so students don’t need their own account.'
                 : 'Users sign in through your school’s identity provider (Okta, Azure AD, Shibboleth, etc). Requires the IdP details below, then a passing test, before it goes live.'}
             </Text>
           </View>
@@ -1393,7 +1393,11 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
               </TouchableOpacity>
             </View>
           ) : (
-            <Text style={newStopStyles.tapHint}>— or tap directly on the map above —</Text>
+            <Text style={newStopStyles.tapHint}>
+              {searchQuery.trim().length >= 3 && !isSearching && searchResults.length === 0
+                ? 'No matches for that search — tap the map above or enter coordinates manually below.'
+                : '— or tap directly on the map above —'}
+            </Text>
           )}
 
           {/* Manual coordinate entry — collapsible */}
