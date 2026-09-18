@@ -11,6 +11,17 @@ import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import ScreenContainer from '../components/ScreenContainer';
+import {
+  WHITE,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
+import { borderRadius } from '../src/styles/common';
 
 interface Message {
   id: string;
@@ -155,7 +166,7 @@ export default function AdminChatScreen() {
       <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
         {!isUser && (
           <View style={[styles.aiBadge, { backgroundColor: primaryColor }]}>
-            <Icon name="auto-awesome" size={12} color="#fff" />
+            <Icon name="auto-awesome" size={12} color={WHITE} />
           </View>
         )}
         <View style={[
@@ -184,13 +195,13 @@ export default function AdminChatScreen() {
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Icon name="arrow-back" size={22} color="#374151" />
+            <Icon name="arrow-back" size={22} color={GRAY_700} />
           </TouchableOpacity>
           <View style={styles.headerText}>
             <Text style={styles.headerTitle}>AI Assistant</Text>
           </View>
           <View style={[styles.aiBadgeLarge, { backgroundColor: primaryColor }]}>
-            <Icon name="auto-awesome" size={16} color="#fff" />
+            <Icon name="auto-awesome" size={16} color={WHITE} />
           </View>
         </View>
 
@@ -234,7 +245,7 @@ export default function AdminChatScreen() {
         {loading && (
           <View style={styles.thinkingRow}>
             <View style={[styles.aiBadge, { backgroundColor: primaryColor }]}>
-              <Icon name="auto-awesome" size={12} color="#fff" />
+              <Icon name="auto-awesome" size={12} color={WHITE} />
             </View>
             <View style={styles.thinkingBubble}>
               <ActivityIndicator size="small" color={primaryColor} />
@@ -255,7 +266,7 @@ export default function AdminChatScreen() {
             value={input}
             onChangeText={setInput}
             placeholder="Ask a question…"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={GRAY_400}
             multiline
             maxLength={500}
             returnKeyType="send"
@@ -263,11 +274,11 @@ export default function AdminChatScreen() {
             blurOnSubmit
           />
           <TouchableOpacity
-            style={[styles.sendBtn, { backgroundColor: input.trim() && !loading ? primaryColor : '#e5e7eb' }]}
+            style={[styles.sendBtn, { backgroundColor: input.trim() && !loading ? primaryColor : GRAY_200 }]}
             onPress={() => send(input)}
             disabled={!input.trim() || loading}
           >
-            <Icon name="send" size={18} color={input.trim() && !loading ? '#fff' : '#9ca3af'} />
+            <Icon name="send" size={18} color={input.trim() && !loading ? WHITE : GRAY_400} />
           </TouchableOpacity>
         </View>
       </ScreenContainer>
@@ -279,7 +290,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   aiDisclaimer: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
     lineHeight: 15,
     textAlign: 'center',
     paddingHorizontal: 20,
@@ -293,13 +304,13 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-    backgroundColor: '#fff',
+    borderBottomColor: GRAY_100,
+    backgroundColor: WHITE,
     gap: 12,
   },
   backBtn: { padding: 4 },
   headerText: { flex: 1 },
-  headerTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  headerTitle: { fontSize: 16, fontWeight: '700', color: GRAY_900 },
   aiBadgeLarge: {
     width: 34,
     height: 34,
@@ -314,7 +325,7 @@ const styles = StyleSheet.create({
   aiBadge: {
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     justifyContent: 'center',
     alignItems: 'center',
     flexShrink: 0,
@@ -324,13 +335,13 @@ const styles = StyleSheet.create({
     maxWidth: '80%',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 16,
+    borderRadius: borderRadius.lg,
   },
   bubbleUser: { borderBottomRightRadius: 4 },
-  bubbleAssistant: { backgroundColor: '#f3f4f6', borderBottomLeftRadius: 4 },
+  bubbleAssistant: { backgroundColor: GRAY_100, borderBottomLeftRadius: 4 },
   bubbleText: { fontSize: 15, lineHeight: 22 },
-  bubbleTextUser: { color: '#fff' },
-  bubbleTextAssistant: { color: '#111827' },
+  bubbleTextUser: { color: WHITE },
+  bubbleTextAssistant: { color: GRAY_900 },
   thinkingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -342,10 +353,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 16,
+    borderRadius: borderRadius.lg,
     borderBottomLeftRadius: 4,
   },
   thinkingText: { fontSize: 13, fontWeight: '500' },
@@ -356,26 +367,26 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingBottom: 10,
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
-    backgroundColor: '#fff',
+    borderTopColor: GRAY_100,
+    backgroundColor: WHITE,
     gap: 8,
   },
   input: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: GRAY_50,
     borderRadius: 22,
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#111827',
+    color: GRAY_900,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
   },
   sendBtn: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -396,12 +407,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: GRAY_900,
     marginBottom: 8,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     lineHeight: 21,
     marginBottom: 28,
@@ -413,7 +424,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   suggestionText: { fontSize: 14, fontWeight: '500' },
 });

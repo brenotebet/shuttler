@@ -7,7 +7,7 @@
 // no self-serve business account registration in the app).
 
 import React, { useCallback, useState } from 'react';
-import { Alert, KeyboardAvoidingView, LayoutAnimation, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native'
+import { KeyboardAvoidingView, LayoutAnimation, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native'
 import { Text } from '../components/Text';
 import * as Linking from 'expo-linking';
 import { useNavigation } from '@react-navigation/native';
@@ -16,10 +16,22 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import {
+  PRIMARY_COLOR,
+  WHITE,
+  GRAY_100,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_900,
+  BORDER_COLOR,
+} from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { SHUTTLER_API_URL } from '../config';
 import PhoneInput from '../src/components/PhoneInput';
+import { showAlert } from '../src/utils/alerts';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CreateOrg'>;
 
@@ -87,7 +99,7 @@ const infoStyles = StyleSheet.create({
     padding: 10,
     marginTop: 6,
   },
-  bodyText: { fontSize: 12, color: '#374151', lineHeight: 18 },
+  bodyText: { fontSize: 12, color: GRAY_700, lineHeight: 18 },
 });
 
 // ---- Small reusable chip picker ----
@@ -134,8 +146,8 @@ const chipStyles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: borderRadius.lg,
     borderWidth: 1.5,
-    borderColor: '#D1D5DB',
-    backgroundColor: '#fff',
+    borderColor: GRAY_300,
+    backgroundColor: WHITE,
   },
   chipSelected: {
     borderColor: PRIMARY_COLOR,
@@ -143,7 +155,7 @@ const chipStyles = StyleSheet.create({
   },
   chipText: {
     fontSize: 13,
-    color: '#555',
+    color: GRAY_700,
   },
   chipTextSelected: {
     color: PRIMARY_COLOR,
@@ -178,23 +190,23 @@ export default function CreateOrgScreen() {
 
   const handleSubmit = useCallback(async () => {
     if (!firstName.trim() || !lastName.trim()) {
-      Alert.alert('Required', 'Please enter your first and last name.');
+      showAlert('Please enter your first and last name.', 'Required', 'error');
       return;
     }
     if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      Alert.alert('Required', 'Please enter a valid email address.');
+      showAlert('Please enter a valid email address.', 'Required', 'error');
       return;
     }
     if (!orgName.trim()) {
-      Alert.alert('Required', 'Please enter an organization name.');
+      showAlert('Please enter an organization name.', 'Required', 'error');
       return;
     }
     if (!orgType) {
-      Alert.alert('Required', 'Please select an organization type.');
+      showAlert('Please select an organization type.', 'Required', 'error');
       return;
     }
     if (!termsAccepted) {
-      Alert.alert('Required', 'Please accept the Terms of Service and Privacy Policy to continue.');
+      showAlert('Please accept the Terms of Service and Privacy Policy to continue.', 'Required', 'error');
       return;
     }
 
@@ -223,7 +235,7 @@ export default function CreateOrgScreen() {
 
       setSubmitted(true);
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
+      showAlert(e?.message ?? 'Something went wrong. Please try again.', 'Error', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -290,7 +302,7 @@ export default function CreateOrgScreen() {
                 value={firstName}
                 onChangeText={setFirstName}
                 placeholder="Jane"
-                placeholderTextColor="#aaa"
+                placeholderTextColor={GRAY_400}
                 autoCapitalize="words"
               />
             </View>
@@ -301,7 +313,7 @@ export default function CreateOrgScreen() {
                 value={lastName}
                 onChangeText={setLastName}
                 placeholder="Smith"
-                placeholderTextColor="#aaa"
+                placeholderTextColor={GRAY_400}
                 autoCapitalize="words"
               />
             </View>
@@ -313,7 +325,7 @@ export default function CreateOrgScreen() {
             value={email}
             onChangeText={setEmail}
             placeholder="jane@university.edu"
-            placeholderTextColor="#aaa"
+            placeholderTextColor={GRAY_400}
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
@@ -341,7 +353,7 @@ export default function CreateOrgScreen() {
             value={orgName}
             onChangeText={setOrgName}
             placeholder="e.g. McKendree University"
-            placeholderTextColor="#aaa"
+            placeholderTextColor={GRAY_400}
             autoCapitalize="words"
           />
 
@@ -355,7 +367,7 @@ export default function CreateOrgScreen() {
             value={website}
             onChangeText={setWebsite}
             placeholder="https://yourorg.edu"
-            placeholderTextColor="#aaa"
+            placeholderTextColor={GRAY_400}
             keyboardType="url"
             autoCapitalize="none"
             autoCorrect={false}
@@ -381,7 +393,7 @@ export default function CreateOrgScreen() {
             value={description}
             onChangeText={setDescription}
             placeholder="e.g. Campus loop serving 3 dorms and a parking garage, running 7am–10pm weekdays."
-            placeholderTextColor="#aaa"
+            placeholderTextColor={GRAY_400}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
@@ -405,7 +417,7 @@ export default function CreateOrgScreen() {
             <Icon
               name={termsAccepted ? 'check-box' : 'check-box-outline-blank'}
               size={22}
-              color={termsAccepted ? PRIMARY_COLOR : '#9ca3af'}
+              color={termsAccepted ? PRIMARY_COLOR : GRAY_400}
             />
             <Text style={styles.termsText}>
               I agree to Shuttler's{' '}
@@ -444,7 +456,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.section,
     paddingVertical: spacing.item,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: BORDER_COLOR,
   },
   backBtn: {
     padding: 4,
@@ -456,11 +468,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   subtitle: {
     fontSize: 13,
-    color: '#888',
+    color: GRAY_500,
     marginTop: 2,
   },
   form: {
@@ -470,7 +482,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: spacing.item,
   },
   row: {
@@ -483,18 +495,18 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#374151',
+    color: GRAY_700,
     marginBottom: 5,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: GRAY_300,
     borderRadius: borderRadius.md,
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 11 : 8,
     fontSize: 15,
-    color: '#111',
-    backgroundColor: '#fff',
+    color: GRAY_900,
+    backgroundColor: WHITE,
     marginBottom: spacing.item,
   },
   phoneInput: {
@@ -512,12 +524,12 @@ const styles = StyleSheet.create({
   confirmTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 10,
   },
   confirmBody: {
     fontSize: 15,
-    color: '#4b5563',
+    color: GRAY_600,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: spacing.section * 1.5,
@@ -528,14 +540,14 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginTop: -6,
     marginBottom: spacing.item,
     lineHeight: 17,
   },
   divider: {
     height: 1,
-    backgroundColor: '#F0F0F0',
+    backgroundColor: GRAY_100,
     marginVertical: spacing.section,
   },
   reviewNotice: {
@@ -549,7 +561,7 @@ const styles = StyleSheet.create({
   reviewNoticeText: {
     flex: 1,
     fontSize: 13,
-    color: '#374151',
+    color: GRAY_700,
     lineHeight: 19,
   },
   termsRow: {
@@ -561,7 +573,7 @@ const styles = StyleSheet.create({
   termsText: {
     flex: 1,
     fontSize: 13,
-    color: '#4b5563',
+    color: GRAY_600,
     lineHeight: 20,
     paddingTop: 2,
   },

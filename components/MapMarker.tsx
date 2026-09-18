@@ -3,6 +3,8 @@ import { View, StyleSheet } from 'react-native'
 import { Text } from './Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { WHITE, BLACK, GRAY_900 } from '../src/constants/theme';
+import { borderRadius } from '../src/styles/common';
 
 type Props = {
   icon?: string;
@@ -25,7 +27,7 @@ function MapMarker({ icon, label, color: colorProp }: Props) {
       {icon ? (
         // Special marker (e.g. destination flag): solid fill with icon
         <View style={[styles.pinFilled, { backgroundColor: color }]}>
-          <Icon name={icon} size={14} color="#fff" />
+          <Icon name={icon} size={14} color={WHITE} />
         </View>
       ) : (
         // Regular stop: white ring + colored center dot
@@ -48,12 +50,12 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'stretch',
-    backgroundColor: '#fff',
-    borderRadius: 8,
+    backgroundColor: WHITE,
+    borderRadius: borderRadius.sm,
     overflow: 'hidden',
     marginBottom: 5,
     maxWidth: 140,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.14,
     shadowRadius: 4,
@@ -65,7 +67,7 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     paddingHorizontal: 7,
     paddingVertical: 4,
     letterSpacing: 0.1,
@@ -75,10 +77,10 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     borderWidth: 3,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 3,
@@ -94,10 +96,10 @@ const styles = StyleSheet.create({
     height: 26,
     borderRadius: 13,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: WHITE,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,

@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, TouchableOpacity, View } from 'react-native'
 import { Text } from '../../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { borderRadius } from '../styles/common';
 
 interface Props {
   message: string | null;
@@ -32,7 +33,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fef2f2',
     borderWidth: 1,
     borderColor: '#fecaca',
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     paddingVertical: 12,
     paddingHorizontal: 14,
     marginBottom: 16,

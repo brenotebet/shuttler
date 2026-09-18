@@ -7,7 +7,18 @@ import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAccessibility, type FontScale } from '../src/contexts/AccessibilityContext';
-import { cardShadow, spacing } from '../src/styles/common';
+import { cardShadow, spacing, borderRadius } from '../src/styles/common';
+import {
+  TEXT_PRIMARY,
+  TEXT_SECONDARY,
+  WHITE,
+  GRAY_100,
+  GRAY_200,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 
 const FONT_OPTIONS: { label: string; value: FontScale; hint: string }[] = [
   { label: 'Normal', value: 1, hint: 'Default text size' },
@@ -81,8 +92,8 @@ export default function AccessibilityScreen() {
           <Switch
             value={reduceMotion}
             onValueChange={setReduceMotion}
-            trackColor={{ false: '#e5e7eb', true: `${primaryColor}60` }}
-            thumbColor={reduceMotion ? primaryColor : '#9ca3af'}
+            trackColor={{ false: GRAY_200, true: `${primaryColor}60` }}
+            thumbColor={reduceMotion ? primaryColor : GRAY_400}
           />
         </View>
 
@@ -100,14 +111,14 @@ const s = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 6,
   },
   sectionHint: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     marginBottom: 14,
     lineHeight: 18,
   },
@@ -119,39 +130,39 @@ const s = StyleSheet.create({
   chip: {
     flex: 1,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
+    borderColor: GRAY_200,
+    borderRadius: borderRadius.md,
     paddingVertical: 12,
     paddingHorizontal: 10,
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     gap: 4,
   },
   chipLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: GRAY_700,
   },
   chipLabelActive: {
-    color: '#fff',
+    color: WHITE,
   },
   chipHint: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   chipHintActive: {
     color: 'rgba(255,255,255,0.8)',
   },
   previewCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: WHITE,
+    borderRadius: borderRadius.lg,
     padding: 16,
     ...cardShadow,
   },
   previewHeading: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginBottom: 14,
@@ -165,7 +176,7 @@ const s = StyleSheet.create({
   previewIconBox: {
     width: 40,
     height: 40,
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
@@ -177,24 +188,24 @@ const s = StyleSheet.create({
   previewText: { flex: 1 },
   previewTitle: {
     fontWeight: '600',
-    color: '#0F172A',
+    color: TEXT_PRIMARY,
     marginBottom: 3,
   },
   previewDesc: {
-    color: '#64748B',
+    color: TEXT_SECONDARY,
   },
   previewDivider: {
     height: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     marginVertical: 12,
   },
   previewSmall: {
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     padding: 16,
     ...cardShadow,
@@ -202,11 +213,11 @@ const s = StyleSheet.create({
   toggleInfo: { flex: 1, marginRight: 16 },
   toggleTitle: {
     fontWeight: '600',
-    color: '#111827',
+    color: GRAY_900,
     marginBottom: 3,
   },
   toggleDesc: {
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 18,
   },
 });

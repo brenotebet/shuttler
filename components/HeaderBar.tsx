@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { View, TouchableOpacity, StyleSheet } from 'react-native'
 import { Text } from './Text';
 import { useNavigation } from '@react-navigation/native';
-import { BACKGROUND_COLOR, TEXT_PRIMARY } from '../src/constants/theme';
+import { BACKGROUND_COLOR, TEXT_PRIMARY, BORDER_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -47,7 +47,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: BORDER_COLOR,
   },
   backButton: {
     padding: 4,

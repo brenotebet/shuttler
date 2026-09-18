@@ -26,6 +26,17 @@ import MenuItem from '../components/MenuItem';
 import ScreenContainer from '../components/ScreenContainer';
 import { cardShadow, spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import {
+  WHITE,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 
 // ── Setup checklist (admins only) ────────────────────────────────────────────
@@ -72,7 +83,7 @@ function SetupChecklist({
           <Text style={checklistStyles.progress}>{doneCount}/{total}</Text>
         </View>
         <TouchableOpacity onPress={dismiss} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-          <Icon name="close" size={18} color="#9ca3af" />
+          <Icon name="close" size={18} color={GRAY_400} />
         </TouchableOpacity>
       </View>
 
@@ -89,12 +100,12 @@ function SetupChecklist({
           activeOpacity={step.done ? 1 : 0.7}
         >
           <View style={[checklistStyles.circle, step.done && { backgroundColor: primaryColor, borderColor: primaryColor }]}>
-            {step.done && <Icon name="check" size={11} color="#fff" />}
+            {step.done && <Icon name="check" size={11} color={WHITE} />}
           </View>
           <Text style={[checklistStyles.stepLabel, step.done && checklistStyles.stepLabelDone]}>
             {step.label}
           </Text>
-          {!step.done && <Icon name="chevron-right" size={18} color="#9ca3af" />}
+          {!step.done && <Icon name="chevron-right" size={18} color={GRAY_400} />}
         </TouchableOpacity>
       ))}
 
@@ -107,7 +118,7 @@ function SetupChecklist({
           <Text style={[checklistStyles.stepLabel, checklistStyles.attentionLabel]}>
             You have an unfinished SSO draft — test or activate it
           </Text>
-          <Icon name="chevron-right" size={18} color="#9ca3af" />
+          <Icon name="chevron-right" size={18} color={GRAY_400} />
         </TouchableOpacity>
       )}
     </View>
@@ -116,10 +127,10 @@ function SetupChecklist({
 
 const checklistStyles = StyleSheet.create({
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 14,
     marginBottom: 16,
     ...cardShadow,
@@ -139,16 +150,16 @@ const checklistStyles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   progress: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
     marginRight: 8,
   },
   progressBarBg: {
     height: 4,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     borderRadius: 2,
     overflow: 'hidden',
     marginBottom: 10,
@@ -163,7 +174,7 @@ const checklistStyles = StyleSheet.create({
     gap: 10,
     paddingVertical: 9,
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: GRAY_100,
   },
   stepFirst: {
     borderTopWidth: 0,
@@ -173,17 +184,17 @@ const checklistStyles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: '#d1d5db',
+    borderColor: GRAY_300,
     alignItems: 'center',
     justifyContent: 'center',
   },
   stepLabel: {
     flex: 1,
     fontSize: 13,
-    color: '#374151',
+    color: GRAY_700,
   },
   stepLabelDone: {
-    color: '#9ca3af',
+    color: GRAY_400,
     textDecorationLine: 'line-through',
   },
   attentionLabel: {
@@ -417,7 +428,7 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#6b7280',
+    color: GRAY_500,
     marginBottom: 4,
   },
   title: {
@@ -427,7 +438,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 15,
-    color: '#4b5563',
+    color: GRAY_600,
   },
   menuSection: {
     marginTop: spacing.section,
@@ -440,7 +451,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },

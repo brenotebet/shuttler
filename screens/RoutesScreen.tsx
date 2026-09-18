@@ -11,9 +11,21 @@ import ScreenContainer from '../components/ScreenContainer';
 import { useOrg } from '../src/org/OrgContext';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAuth } from '../src/auth/AuthProvider';
-import { spacing } from '../src/styles/common';
+import { spacing, borderRadius } from '../src/styles/common';
 import { isRouteActive, getTodayScheduleText, getTodayKey } from '../src/utils/scheduleUtils';
 import type { Route, WeekSchedule } from '../src/org/OrgContext';
+import {
+  PRIMARY_COLOR,
+  WHITE,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 
 const DAY_KEYS: (keyof WeekSchedule)[] = [
   'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
@@ -73,7 +85,7 @@ function RouteCard({ route, stops, primaryColor, timezone }: {
           <Icon
             name={expanded ? 'expand-less' : 'expand-more'}
             size={20}
-            color="#9ca3af"
+            color={GRAY_400}
             style={{ marginLeft: 8 }}
           />
         </View>
@@ -170,7 +182,7 @@ export default function RoutesScreen() {
           <Text style={styles.subtitle}>{org?.name ?? ''}</Text>
         </View>
         <View style={styles.emptyState}>
-          <Icon name="directions-bus" size={52} color="#d1d5db" style={{ marginBottom: 12 }} />
+          <Icon name="directions-bus" size={52} color={GRAY_300} style={{ marginBottom: 12 }} />
           <Text style={styles.emptyTitle}>No routes yet</Text>
           <Text style={styles.emptyBody}>
             {isAdmin
@@ -230,20 +242,20 @@ const styles = StyleSheet.create({
   },
   header: { marginBottom: spacing.section },
   title: { fontSize: 28, fontWeight: '700', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#6b7280' },
+  subtitle: { fontSize: 14, color: GRAY_500 },
   openSummary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     marginTop: 10,
   },
-  openSummaryText: { fontSize: 13, color: '#16a34a', fontWeight: '600' },
+  openSummaryText: { fontSize: 13, color: PRIMARY_COLOR, fontWeight: '600' },
   list: { gap: 12, paddingBottom: 24 },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     overflow: 'hidden',
   },
   cardHeader: {
@@ -255,13 +267,13 @@ const styles = StyleSheet.create({
   routeIconWrap: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     justifyContent: 'center',
     alignItems: 'center',
   },
   cardHeaderText: { flex: 1 },
-  routeName: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  todayHours: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  routeName: { fontSize: 15, fontWeight: '700', color: GRAY_900 },
+  todayHours: { fontSize: 12, color: GRAY_500, marginTop: 2 },
   cardRight: { flexDirection: 'row', alignItems: 'center' },
   openBadge: {
     flexDirection: 'row',
@@ -276,19 +288,19 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: '#16a34a',
+    backgroundColor: PRIMARY_COLOR,
   },
-  openText: { fontSize: 11, fontWeight: '700', color: '#16a34a' },
+  openText: { fontSize: 11, fontWeight: '700', color: PRIMARY_COLOR },
   closedBadge: {
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  closedText: { fontSize: 11, fontWeight: '600', color: '#9ca3af' },
+  closedText: { fontSize: 11, fontWeight: '600', color: GRAY_400 },
   cardBody: {
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: GRAY_100,
     padding: 16,
     gap: 16,
   },
@@ -296,7 +308,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -316,7 +328,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   stopDotFill: {
     width: 6,
@@ -330,7 +342,7 @@ const styles = StyleSheet.create({
     bottom: -14,
     width: 2,
   },
-  stopName: { fontSize: 14, color: '#374151', flex: 1, lineHeight: 20 },
+  stopName: { fontSize: 14, color: GRAY_700, flex: 1, lineHeight: 20 },
   scheduleGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -339,22 +351,22 @@ const styles = StyleSheet.create({
   scheduleCell: {
     flex: 1,
     minWidth: 44,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 6,
     alignItems: 'center',
-    backgroundColor: '#fafafa',
+    backgroundColor: GRAY_50,
   },
   scheduleCellClosed: { opacity: 0.45 },
-  scheduleDayLabel: { fontSize: 10, fontWeight: '600', color: '#6b7280', marginBottom: 3 },
-  scheduleTime: { fontSize: 10, color: '#374151', fontWeight: '500' },
-  scheduleDash: { fontSize: 9, color: '#9ca3af' },
-  scheduleClosed: { fontSize: 9, color: '#9ca3af', fontStyle: 'italic', marginTop: 2 },
-  noInfo: { fontSize: 13, color: '#9ca3af', textAlign: 'center', paddingVertical: 8 },
+  scheduleDayLabel: { fontSize: 10, fontWeight: '600', color: GRAY_500, marginBottom: 3 },
+  scheduleTime: { fontSize: 10, color: GRAY_700, fontWeight: '500' },
+  scheduleDash: { fontSize: 9, color: GRAY_400 },
+  scheduleClosed: { fontSize: 9, color: GRAY_400, fontStyle: 'italic', marginTop: 2 },
+  noInfo: { fontSize: 13, color: GRAY_400, textAlign: 'center', paddingVertical: 8 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 8 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#374151' },
-  emptyBody: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 21, maxWidth: 280 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: GRAY_700 },
+  emptyBody: { fontSize: 14, color: GRAY_500, textAlign: 'center', lineHeight: 21, maxWidth: 280 },
   emptyBtn: {
     flexDirection: 'row',
     alignItems: 'center',

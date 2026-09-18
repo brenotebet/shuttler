@@ -16,7 +16,24 @@ import MapView, {
 } from 'react-native-maps';
 import MapMarker from '../components/MapMarker';
 import { grayscaleMapStyle, MAX_LAT_DELTA, MAX_LON_DELTA } from '../src/constants/mapConfig';
-import { BACKGROUND_COLOR } from '../src/constants/theme';
+import {
+  BACKGROUND_COLOR,
+  PRIMARY_COLOR,
+  DANGER_COLOR,
+  TEXT_PRIMARY,
+  TEXT_SECONDARY,
+  WHITE,
+  BLACK,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_800,
+  GRAY_900,
+} from '../src/constants/theme';
 import * as Location from 'expo-location';
 import { StudentTabParamList } from '../tabs/StudentTabs';
 import {
@@ -56,6 +73,7 @@ import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/uti
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
+import { borderRadius } from '../src/styles/common';
 
 // Bus marker stays visible as long as online:true in Firestore.
 // Opacity reflects freshness (full = recent GPS, dimmed = GPS stale but driver hasn't stopped sharing).
@@ -1703,7 +1721,7 @@ const handleRequest = async (entry: RequestableStop) => {
     return (
       <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.center}>
         <ActivityIndicator size="large" color={primaryColor} />
-        {!ownRequestReady ? <Text style={{ marginTop: 10, color: '#666' }}>Syncing your ride…</Text> : null}
+        {!ownRequestReady ? <Text style={{ marginTop: 10, color: GRAY_600 }}>Syncing your ride…</Text> : null}
       </SafeAreaView>
     );
   }
@@ -1739,11 +1757,11 @@ const handleRequest = async (entry: RequestableStop) => {
           }}
           activeOpacity={0.8}
         >
-          <Icon name="place" size={18} color={busOnline && serviceIsOpen ? primaryColor : '#bbb'} style={{ marginRight: 6 }} />
+          <Icon name="place" size={18} color={busOnline && serviceIsOpen ? primaryColor : GRAY_400} style={{ marginRight: 6 }} />
           <Text style={[styles.searchText, (!busOnline || !serviceIsOpen) && styles.searchTextOffline]}>
             {!serviceIsOpen ? 'Service closed' : !busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
           </Text>
-          <Icon name="keyboard-arrow-down" size={24} color={busOnline && serviceIsOpen ? primaryColor : '#bbb'} />
+          <Icon name="keyboard-arrow-down" size={24} color={busOnline && serviceIsOpen ? primaryColor : GRAY_400} />
         </TouchableOpacity>
       )}
 
@@ -1793,7 +1811,7 @@ const handleRequest = async (entry: RequestableStop) => {
             // Outside operating hours — show schedule
             <View style={styles.hoursCard}>
               <View style={styles.hoursCardHeader}>
-                <Icon name="schedule" size={16} color="#374151" />
+                <Icon name="schedule" size={16} color={GRAY_700} />
                 <Text style={styles.hoursCardTitle}>Service Closed</Text>
               </View>
               {orgRoutes.filter((r) => r.schedule).map((r) => {
@@ -1812,7 +1830,7 @@ const handleRequest = async (entry: RequestableStop) => {
             // Service hours are open but no driver is sharing location
             <View style={styles.noBusCard}>
               <View style={styles.noBusIconWrap}>
-                <Icon name="directions-bus" size={28} color="#6b7280" />
+                <Icon name="directions-bus" size={28} color={GRAY_500} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.noBusTitle}>No buses online right now</Text>
@@ -1993,7 +2011,7 @@ const handleRequest = async (entry: RequestableStop) => {
                         <View style={styles.busCloudHeader}>
                           <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
                           <TouchableOpacity onPress={closeSelectedBus} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                            <Icon name="close" size={18} color="#9CA3AF" />
+                            <Icon name="close" size={18} color={GRAY_400} />
                           </TouchableOpacity>
                         </View>
 
@@ -2071,7 +2089,7 @@ const handleRequest = async (entry: RequestableStop) => {
 
       {locationPermDenied && (
         <View style={styles.locationDeniedBanner}>
-          <Icon name="location-off" size={20} color="#fff" />
+          <Icon name="location-off" size={20} color={WHITE} />
           <Text style={styles.locationDeniedText}>Location access is off</Text>
           <TouchableOpacity
             onPress={() => Linking.openSettings()}
@@ -2103,16 +2121,16 @@ const handleRequest = async (entry: RequestableStop) => {
         ]}
       >
         <TouchableOpacity style={styles.fab} onPress={centerOnUser} activeOpacity={0.9}>
-          <Icon name="my-location" size={22} color="#111" />
+          <Icon name="my-location" size={22} color={GRAY_900} />
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.fab} onPress={fitStops} activeOpacity={0.9}>
-          <Icon name="map" size={22} color="#111" />
+          <Icon name="map" size={22} color={GRAY_900} />
         </TouchableOpacity>
 
         {rideActive && (
           <TouchableOpacity style={[styles.fabPrimary, { backgroundColor: primaryColor }]} onPress={fitActiveRide} activeOpacity={0.9}>
-            <Icon name="alt-route" size={22} color="#fff" />
+            <Icon name="alt-route" size={22} color={WHITE} />
             <Text style={styles.fabPrimaryText}>Fit</Text>
           </TouchableOpacity>
         )}
@@ -2204,7 +2222,7 @@ const handleRequest = async (entry: RequestableStop) => {
 
             {ttlCountdown && (
               <View style={[styles.cardInfoRow, { marginTop: 2 }]}>
-                <Icon name="timer" size={13} color="#9CA3AF" />
+                <Icon name="timer" size={13} color={GRAY_400} />
                 <Text style={[styles.cardInfoMeta, { marginLeft: 4 }]}>{ttlCountdown}</Text>
               </View>
             )}
@@ -2215,7 +2233,7 @@ const handleRequest = async (entry: RequestableStop) => {
                 style={[styles.confirmPickupBtn, { backgroundColor: primaryColor }]}
                 onPress={() => setShowPickupConfirm(true)}
               >
-                <Icon name="directions-bus" size={16} color="#fff" />
+                <Icon name="directions-bus" size={16} color={WHITE} />
                 <Text style={styles.confirmPickupBtnText}>Confirm pickup</Text>
               </TouchableOpacity>
             )}
@@ -2340,13 +2358,13 @@ const styles = StyleSheet.create({
   notReadyTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#0F172A',
+    color: TEXT_PRIMARY,
     marginBottom: 12,
     textAlign: 'center',
   },
   notReadyBody: {
     fontSize: 15,
-    color: '#64748B',
+    color: TEXT_SECONDARY,
     textAlign: 'center',
     lineHeight: 22,
   },
@@ -2374,11 +2392,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: 'rgba(255,255,255,0.92)',
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     paddingHorizontal: 10,
     paddingVertical: 5,
     marginTop: 8,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
@@ -2388,15 +2406,15 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: '#16a34a',
+    backgroundColor: PRIMARY_COLOR,
     marginRight: 5,
   },
-  busCountText: { fontSize: 12, fontWeight: '600', color: '#374151' },
+  busCountText: { fontSize: 12, fontWeight: '600', color: GRAY_700 },
   hoursCard: {
     backgroundColor: 'rgba(255,255,255,0.96)',
     borderRadius: 14,
     padding: 14,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 6,
@@ -2409,7 +2427,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.96)',
     borderRadius: 14,
     padding: 14,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 6,
@@ -2419,20 +2437,20 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  noBusTitle: { fontSize: 14, fontWeight: '700', color: '#111', marginBottom: 4 },
-  noBusBody: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
+  noBusTitle: { fontSize: 14, fontWeight: '700', color: GRAY_900, marginBottom: 4 },
+  noBusBody: { fontSize: 13, color: GRAY_500, lineHeight: 18 },
   hoursCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  hoursCardTitle: { fontSize: 14, fontWeight: '700', color: '#111' },
+  hoursCardTitle: { fontSize: 14, fontWeight: '700', color: GRAY_900 },
   hoursRouteBlock: { marginBottom: 8 },
   hoursRouteName: { fontSize: 13, fontWeight: '600', marginBottom: 2 },
-  hoursEntry: { fontSize: 13, color: '#374151' },
-  searchText: { flex: 1, fontSize: 15, fontWeight: '500', color: '#374151' },
-  searchContainerOffline: { backgroundColor: '#f3f4f6' },
-  searchTextOffline: { color: '#aaa' },
+  hoursEntry: { fontSize: 13, color: GRAY_700 },
+  searchText: { flex: 1, fontSize: 15, fontWeight: '500', color: GRAY_700 },
+  searchContainerOffline: { backgroundColor: GRAY_100 },
+  searchTextOffline: { color: GRAY_400 },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 99 },
   transparentOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', zIndex: 99 },
 
@@ -2441,9 +2459,9 @@ const styles = StyleSheet.create({
     left: 20,
     right: 20,
     backgroundColor: BACKGROUND_COLOR,
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     maxHeight: 250,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
@@ -2453,10 +2471,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: GRAY_100,
   },
-  locationText: { fontSize: 16, color: '#333' },
-  locationRouteMeta: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
+  locationText: { fontSize: 16, color: GRAY_800 },
+  locationRouteMeta: { fontSize: 12, color: GRAY_400, marginTop: 2 },
 
   pastDueBanner: {
     position: 'absolute',
@@ -2489,27 +2507,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     backgroundColor: 'rgba(17,18,20,0.88)',
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     paddingVertical: 10,
     paddingHorizontal: 14,
     zIndex: 200,
   },
   locationDeniedText: {
-    color: '#fff',
+    color: WHITE,
     fontSize: 14,
     fontWeight: '500',
     flex: 1,
   },
   locationDeniedBtn: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
+    backgroundColor: WHITE,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
   locationDeniedBtnText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   fabWrapBottomLeft: {
     position: 'absolute',
@@ -2522,10 +2540,10 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 6,
@@ -2538,13 +2556,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     height: 44,
     borderRadius: 22,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 7,
   },
-  fabPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  fabPrimaryText: { color: WHITE, fontWeight: '700', fontSize: 14 },
 
   bottomCard: {
     position: 'absolute',
@@ -2556,7 +2574,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -2566,7 +2584,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: GRAY_300,
     alignSelf: 'center',
     marginBottom: 14,
   },
@@ -2576,33 +2594,33 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  cardStopName: { fontSize: 20, fontWeight: '700', color: '#111', flex: 1, marginRight: 10 },
+  cardStopName: { fontSize: 20, fontWeight: '700', color: GRAY_900, flex: 1, marginRight: 10 },
   cardBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
   },
   cardBadgeActive: { backgroundColor: '#D1FAE5' },
-  cardBadgeDone: { backgroundColor: '#E5E7EB' },
+  cardBadgeDone: { backgroundColor: GRAY_200 },
   cardBadgeExpired: { backgroundColor: '#FEE2E2' },
   cardBadgeConfirming: { backgroundColor: '#FEF3C7' },
-  cardBadgeText: { fontSize: 12, fontWeight: '600', color: '#111' },
+  cardBadgeText: { fontSize: 12, fontWeight: '600', color: GRAY_900 },
   cardTitle: { fontSize: 18, fontWeight: '600', marginBottom: 6 },
-  cardSubtitle: { fontSize: 14, color: '#555', marginBottom: 4 },
-  cardRouteMeta: { fontSize: 12, color: '#9ca3af', marginBottom: 4 },
+  cardSubtitle: { fontSize: 14, color: GRAY_700, marginBottom: 4 },
+  cardRouteMeta: { fontSize: 12, color: GRAY_400, marginBottom: 4 },
   cardInfoRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 },
   etaText: { fontSize: 15, fontWeight: '700' },
-  cardInfoDot: { fontSize: 14, color: '#9CA3AF' },
-  cardInfoMeta: { fontSize: 14, color: '#6B7280' },
+  cardInfoDot: { fontSize: 14, color: GRAY_400 },
+  cardInfoMeta: { fontSize: 14, color: GRAY_500 },
   cancelButton: {
     borderWidth: 1.5,
-    borderColor: '#DC2626',
-    borderRadius: 8,
+    borderColor: DANGER_COLOR,
+    borderRadius: borderRadius.sm,
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 14,
   },
-  cancelButtonText: { color: '#DC2626', fontSize: 15, fontWeight: '600' },
+  cancelButtonText: { color: DANGER_COLOR, fontSize: 15, fontWeight: '600' },
   confirmPickupBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2610,43 +2628,43 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 14,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
   },
   confirmPickupBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#fff',
+    color: WHITE,
   },
   dismissButton: {
     borderWidth: 1.5,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
+    borderColor: GRAY_300,
+    borderRadius: borderRadius.sm,
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 14,
   },
-  dismissButtonText: { color: '#6B7280', fontSize: 15, fontWeight: '600' },
-  noRideText: { fontSize: 16, color: '#888', textAlign: 'center' },
+  dismissButtonText: { color: GRAY_500, fontSize: 15, fontWeight: '600' },
+  noRideText: { fontSize: 16, color: GRAY_500, textAlign: 'center' },
   childPickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   childPickerSheet: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 24,
     paddingBottom: 40,
     gap: 4,
   },
-  childPickerTitle: { fontSize: 16, fontWeight: '700', color: '#111', marginBottom: 12, textAlign: 'center' },
+  childPickerTitle: { fontSize: 16, fontWeight: '700', color: GRAY_900, marginBottom: 12, textAlign: 'center' },
   childPickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 12,
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
   },
   childPickerAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  childPickerName: { fontSize: 15, fontWeight: '600', color: '#111' },
-  childPickerGrade: { fontSize: 12, color: '#6b7280', marginTop: 1 },
+  childPickerName: { fontSize: 15, fontWeight: '600', color: GRAY_900 },
+  childPickerGrade: { fontSize: 12, color: GRAY_500, marginTop: 1 },
 
   busCloud: {
     width: Math.min(260, SCREEN_WIDTH - 40),
@@ -2661,7 +2679,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 13,
     paddingHorizontal: 16,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.12,
     shadowRadius: 10,
@@ -2688,18 +2706,18 @@ const styles = StyleSheet.create({
   busCloudTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#111',
+    color: GRAY_900,
     flex: 1,
   },
   busCloudText: {
     fontSize: 16,
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 6,
     fontWeight: '600',
   },
   busCloudMuted: {
     fontSize: 14,
-    color: '#6B7280',
+    color: GRAY_500,
     fontWeight: '600',
     marginBottom: 4,
   },
@@ -2708,9 +2726,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 4,
   },
-  busCloudOccupancyOpen: { color: '#16a34a' },
+  busCloudOccupancyOpen: { color: PRIMARY_COLOR },
   busCloudOccupancyFilling: { color: '#d97706' },
-  busCloudOccupancyFull: { color: '#dc2626' },
+  busCloudOccupancyFull: { color: DANGER_COLOR },
   parentCtaCard: {
     position: 'absolute',
     left: 20,
@@ -2722,7 +2740,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     zIndex: 90,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 6,
@@ -2731,12 +2749,12 @@ const styles = StyleSheet.create({
   parentCtaTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 2,
   },
   parentCtaBody: {
     fontSize: 12,
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 17,
   },
   activeChildPill: {
@@ -2746,12 +2764,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderWidth: 1.5,
     zIndex: 90,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
     shadowRadius: 4,

@@ -6,10 +6,11 @@ import { ActivityIndicator, Alert, FlatList, StyleSheet, TouchableOpacity, View 
 import { Text } from '../components/Text';
 import { auth } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL } from '../config';
-import { PRIMARY_COLOR, BACKGROUND_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, BACKGROUND_COLOR, DANGER_COLOR, WHITE, GRAY_500, GRAY_900 } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import HeaderBar from '../components/HeaderBar';
 import ScreenContainer from '../components/ScreenContainer';
+import { showAlert } from '../src/utils/alerts';
 
 type Application = {
   orgId: string;
@@ -45,7 +46,7 @@ export default function SuperAdminScreen() {
       const data = await res.json();
       setApplications(data.applications ?? []);
     } catch (err) {
-      Alert.alert('Error', 'Failed to load applications. Check your connection.');
+      showAlert('Failed to load applications. Check your connection.', 'Error', 'error');
       console.error('[SuperAdminScreen] fetch error:', err);
     } finally {
       setLoading(false);
@@ -76,7 +77,7 @@ export default function SuperAdminScreen() {
               if (!res.ok) throw new Error(`HTTP ${res.status}`);
               setApplications((prev) => prev.filter((a) => a.orgId !== orgId));
             } catch (err) {
-              Alert.alert('Error', 'Failed to approve. Try again.');
+              showAlert('Failed to approve. Try again.', 'Error', 'error');
               console.error('[SuperAdminScreen] approve error:', err);
             } finally {
               setActionInFlight(null);
@@ -114,7 +115,7 @@ export default function SuperAdminScreen() {
               if (!res.ok) throw new Error(`HTTP ${res.status}`);
               setApplications((prev) => prev.filter((a) => a.orgId !== orgId));
             } catch (err) {
-              Alert.alert('Error', 'Failed to reject. Try again.');
+              showAlert('Failed to reject. Try again.', 'Error', 'error');
               console.error('[SuperAdminScreen] reject error:', err);
             } finally {
               setActionInFlight(null);
@@ -145,7 +146,7 @@ export default function SuperAdminScreen() {
             onPress={() => handleApprove(item.orgId, item.name)}
           >
             {isActing ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={WHITE} />
             ) : (
               <Text style={styles.buttonText}>Approve</Text>
             )}
@@ -201,7 +202,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
   },
   card: {
@@ -214,12 +215,12 @@ const styles = StyleSheet.create({
   orgName: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#111827',
+    color: GRAY_900,
     marginBottom: 6,
   },
   detail: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     marginBottom: 2,
   },
   actions: {
@@ -238,13 +239,13 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY_COLOR,
   },
   rejectButton: {
-    backgroundColor: '#DC2626',
+    backgroundColor: DANGER_COLOR,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   buttonText: {
-    color: '#fff',
+    color: WHITE,
     fontWeight: '600',
     fontSize: 14,
   },

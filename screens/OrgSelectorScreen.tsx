@@ -13,7 +13,16 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import ScreenContainer from '../components/ScreenContainer';
 import { useOrg, OrgConfig } from '../src/org/OrgContext';
 import { SHUTTLER_API_URL } from '../config';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import {
+  PRIMARY_COLOR,
+  WHITE,
+  BLACK,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_900,
+} from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
@@ -104,18 +113,18 @@ export default function OrgSelectorScreen() {
     <ScreenContainer>
       <View style={styles.hero}>
         <View style={styles.brandCircle}>
-          <Icon name="directions-bus" size={30} color="#fff" />
+          <Icon name="directions-bus" size={30} color={WHITE} />
         </View>
         <Text style={styles.title}>Shuttler</Text>
         <Text style={styles.subtitle}>Choose your school or venue</Text>
       </View>
 
       <View style={styles.searchRow}>
-        <Icon name="search" size={20} color="#999" style={styles.searchIcon} />
+        <Icon name="search" size={20} color={GRAY_400} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search organizations…"
-          placeholderTextColor="#999"
+          placeholderTextColor={GRAY_400}
           value={query}
           onChangeText={handleSearch}
           autoCorrect={false}
@@ -127,7 +136,7 @@ export default function OrgSelectorScreen() {
         <ActivityIndicator style={styles.centered} size="large" color={PRIMARY_COLOR} />
       ) : error ? (
         <View style={styles.centered}>
-          <Icon name="wifi-off" size={40} color="#ccc" />
+          <Icon name="wifi-off" size={40} color={GRAY_300} />
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={loadOrgs}>
             <Text style={styles.retryBtnText}>Try again</Text>
@@ -135,7 +144,7 @@ export default function OrgSelectorScreen() {
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.centered}>
-          <Icon name="search-off" size={40} color="#ccc" />
+          <Icon name="search-off" size={40} color={GRAY_300} />
           <Text style={styles.emptyText}>
             {query.length > 0 ? 'No organizations found.' : 'No organizations yet.'}
           </Text>
@@ -167,7 +176,7 @@ export default function OrgSelectorScreen() {
                   {AUTH_METHOD_LABEL[item.authMethod] ?? item.authMethod}
                 </Text>
               </View>
-              <Icon name="chevron-right" size={22} color="#ccc" />
+              <Icon name="chevron-right" size={22} color={GRAY_300} />
             </TouchableOpacity>
           )}
         />
@@ -210,26 +219,26 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#111',
+    color: GRAY_900,
     letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    color: GRAY_500,
     marginTop: 6,
   },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     marginHorizontal: spacing.section,
     marginBottom: spacing.item,
     paddingHorizontal: spacing.item,
     height: 48,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: '#000',
+    borderColor: GRAY_200,
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
     shadowRadius: 8,
@@ -241,7 +250,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 15,
-    color: '#111',
+    color: GRAY_900,
   },
   list: {
     paddingHorizontal: spacing.section,
@@ -250,7 +259,7 @@ const styles = StyleSheet.create({
   orgCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     padding: spacing.item,
     marginBottom: spacing.item / 2,
@@ -280,11 +289,11 @@ const styles = StyleSheet.create({
   orgName: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#111',
+    color: GRAY_900,
   },
   orgType: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginTop: 2,
   },
   authBadge: {
@@ -306,13 +315,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   errorText: {
-    color: '#888',
+    color: GRAY_500,
     textAlign: 'center',
     maxWidth: 260,
     fontSize: 14,
   },
   emptyText: {
-    color: '#888',
+    color: GRAY_500,
     fontSize: 14,
   },
   createOrgBtn: {
@@ -337,12 +346,12 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
   },
   retryBtnText: {
-    color: '#fff',
+    color: WHITE,
     fontWeight: '600',
     fontSize: 14,
   },
   emptyHint: {
-    color: '#bbb',
+    color: GRAY_400,
     fontSize: 13,
     marginTop: 4,
   },

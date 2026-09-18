@@ -2,6 +2,7 @@ import React from 'react';
 import { View, TextInput, StyleSheet, TextInputProps, StyleProp, ViewStyle } from 'react-native'
 import { Text } from './Text';
 import { borderRadius, spacing } from '../src/styles/common';
+import { WHITE, GRAY_300, GRAY_400, GRAY_800, GRAY_900 } from '../src/constants/theme';
 
 export type FormFieldProps = TextInputProps & {
   label: string;
@@ -14,7 +15,7 @@ export default function FormField({ label, style, containerStyle, ...inputProps 
       <Text style={styles.label}>{label}</Text>
       <TextInput
         style={[styles.input, style]}
-        placeholderTextColor="#9ca3af"
+        placeholderTextColor={GRAY_400}
         {...inputProps}
       />
     </View>
@@ -28,17 +29,17 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#2f2f2f',
+    color: GRAY_800,
     marginBottom: 6,
   },
   input: {
     height: 50,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: GRAY_300,
     paddingHorizontal: 16,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     fontSize: 16,
-    color: '#1f2933',
+    color: GRAY_900,
   },
 });

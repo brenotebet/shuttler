@@ -26,6 +26,16 @@ import { showAlert } from '../src/utils/alerts';
 import { containsProfanity } from '../src/utils/profanity';
 import { spacing, borderRadius } from '../src/styles/common';
 import type { AnnouncementSeverity } from '../src/hooks/useAnnouncements';
+import {
+  DANGER_COLOR,
+  WHITE,
+  GRAY_200,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_800,
+  GRAY_900,
+} from '../src/constants/theme';
 
 interface ActiveAlert {
   id: string;
@@ -40,7 +50,7 @@ interface ActiveAlert {
 const SEVERITY_OPTIONS: { value: AnnouncementSeverity; label: string; icon: string; color: string }[] = [
   { value: 'info', label: 'Notice', icon: 'campaign', color: '#2563eb' },
   { value: 'warning', label: 'Delay', icon: 'warning-amber', color: '#d97706' },
-  { value: 'alert', label: 'Urgent', icon: 'error-outline', color: '#dc2626' },
+  { value: 'alert', label: 'Urgent', icon: 'error-outline', color: DANGER_COLOR },
 ];
 
 const DURATION_OPTIONS: { value: number | null; label: string }[] = [
@@ -166,7 +176,7 @@ export default function AnnouncementsScreen() {
                     style={[styles.chip, selected && { backgroundColor: `${opt.color}15`, borderColor: opt.color }]}
                     onPress={() => setSeverity(opt.value)}
                   >
-                    <Icon name={opt.icon} size={16} color={selected ? opt.color : '#6b7280'} />
+                    <Icon name={opt.icon} size={16} color={selected ? opt.color : GRAY_500} />
                     <Text style={[styles.chipText, selected && { color: opt.color, fontWeight: '700' }]}>
                       {opt.label}
                     </Text>
@@ -223,7 +233,7 @@ export default function AnnouncementsScreen() {
             <ActivityIndicator color={primaryColor} style={{ marginTop: 16 }} />
           ) : activeAlerts.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Icon name="check-circle-outline" size={28} color="#9ca3af" />
+              <Icon name="check-circle-outline" size={28} color={GRAY_400} />
               <Text style={styles.emptyText}>No active alerts — service is running normally.</Text>
             </View>
           ) : (
@@ -275,22 +285,22 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 6,
   },
   hint: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     marginBottom: 16,
     lineHeight: 18,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 14,
   },
   chipRow: {
@@ -304,18 +314,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
-    borderRadius: 20,
+    borderColor: GRAY_200,
+    borderRadius: borderRadius.xl,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
-  chipText: { fontSize: 13, color: '#6b7280', fontWeight: '600' },
+  chipText: { fontSize: 13, color: GRAY_500, fontWeight: '600' },
   // Matches FormField's label so all fields in the card read as one form.
   fieldLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#2f2f2f',
+    color: GRAY_800,
     marginBottom: 6,
   },
   detailsInput: {
@@ -326,30 +336,30 @@ const styles = StyleSheet.create({
   emptyCard: {
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 24,
   },
-  emptyText: { fontSize: 13, color: '#6b7280', textAlign: 'center' },
+  emptyText: { fontSize: 13, color: GRAY_500, textAlign: 'center' },
   alertCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 14,
     marginBottom: 10,
   },
-  alertTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  alertBody: { fontSize: 13, color: '#4b5563', marginTop: 2, lineHeight: 18 },
-  alertMeta: { fontSize: 11, color: '#9ca3af', marginTop: 5 },
+  alertTitle: { fontSize: 14, fontWeight: '700', color: GRAY_900 },
+  alertBody: { fontSize: 13, color: GRAY_600, marginTop: 2, lineHeight: 18 },
+  alertMeta: { fontSize: 11, color: GRAY_400, marginTop: 5 },
   clearBtn: {
     borderWidth: 1.5,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 12,
     paddingVertical: 6,
     minWidth: 56,

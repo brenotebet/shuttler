@@ -3,6 +3,7 @@ import { TouchableOpacity, StyleSheet, StyleProp, ViewStyle } from 'react-native
 import { Text } from './Text';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow } from '../src/styles/common';
+import { WHITE } from '../src/constants/theme';
 
 export type AppButtonProps = {
   label: string;
@@ -57,7 +58,7 @@ const styles = StyleSheet.create({
   text: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: WHITE,
   },
   disabled: {
     opacity: 0.6,

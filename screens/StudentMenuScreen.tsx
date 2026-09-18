@@ -16,6 +16,7 @@ import { clearSamlSession } from '../src/auth/samlAuth';
 import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { spacing } from '../src/styles/common';
+import { GRAY_100, GRAY_200, GRAY_400, GRAY_500, GRAY_600, GRAY_900 } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
@@ -139,8 +140,8 @@ export default function StudentMenuScreen() {
           <Switch
             value={feedbackEnabled}
             onValueChange={toggleFeedback}
-            trackColor={{ false: '#e5e7eb', true: `${primaryColor}60` }}
-            thumbColor={feedbackEnabled ? primaryColor : '#9ca3af'}
+            trackColor={{ false: GRAY_200, true: `${primaryColor}60` }}
+            thumbColor={feedbackEnabled ? primaryColor : GRAY_400}
           />
         </View>
 
@@ -197,7 +198,7 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#6b7280',
+    color: GRAY_500,
     marginBottom: 4,
   },
   title: {
@@ -207,7 +208,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 15,
-    color: '#4b5563',
+    color: GRAY_600,
   },
   menuSection: {
     marginTop: spacing.section,
@@ -219,10 +220,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 4,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: GRAY_100,
     marginBottom: 4,
   },
   toggleInfo: { flex: 1, marginRight: 16 },
-  toggleTitle: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  toggleDesc: { fontSize: 13, color: '#6b7280', marginTop: 2 },
+  toggleTitle: { fontSize: 15, fontWeight: '600', color: GRAY_900 },
+  toggleDesc: { fontSize: 13, color: GRAY_500, marginTop: 2 },
 });

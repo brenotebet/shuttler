@@ -16,6 +16,7 @@ import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAuth } from '../src/auth/AuthProvider';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import type { RootStackParamList } from '../navigation/StackNavigator';
+import { TEXT_SECONDARY, DANGER_COLOR, WHITE, GRAY_100, GRAY_300, GRAY_600, GRAY_900, BORDER_COLOR } from '../src/constants/theme';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ const STUDENT_STEPS: Step[] = [
     icon: 'history',
     title: 'View Past Rides',
     body: 'Tap Menu → History at any time to see a log of all your completed rides, including stops and timestamps.',
-    color: '#64748B',
+    color: TEXT_SECONDARY,
   },
 ];
 
@@ -98,13 +99,13 @@ const DRIVER_STEPS: Step[] = [
     icon: 'where-to-vote',
     title: 'Mark Arrived & Complete',
     body: 'Tap "Arrived" when you reach the stop. After boarding students, tap "Complete" to close out the request. Students receive a notification for each action.',
-    color: '#EF4444',
+    color: DANGER_COLOR,
   },
   {
     icon: 'stop-circle',
     title: 'End Your Shift',
     body: 'When your route is done, tap "Stop Sharing" to turn off location broadcasting. Your completed rides are saved to History automatically.',
-    color: '#64748B',
+    color: TEXT_SECONDARY,
   },
 ];
 
@@ -143,7 +144,7 @@ const ADMIN_STEPS: Step[] = [
     icon: 'list-alt',
     title: 'Review Ride Requests',
     body: 'Menu → Requested Rides gives you a real-time admin view of all active and pending stop requests across your organization.',
-    color: '#EF4444',
+    color: DANGER_COLOR,
   },
 ];
 
@@ -183,7 +184,7 @@ const ADMIN_SETUP_STEPS: Step[] = [
     icon: 'bar-chart',
     title: 'Track Everything',
     body: 'The Dashboard and Analytics tabs give you a live view of active drivers, boarding counts, and stop demand — all in one place. You can revisit this guide any time from the menu.',
-    color: '#EF4444',
+    color: DANGER_COLOR,
   },
 ];
 
@@ -216,7 +217,7 @@ const PARENT_STEPS: Step[] = [
     icon: 'history',
     title: 'View Past Rides',
     body: 'Tap Menu → History to see a log of all completed pickups, including stop names and timestamps. Useful for confirming your child was picked up on time.',
-    color: '#64748B',
+    color: TEXT_SECONDARY,
   },
 ];
 
@@ -385,7 +386,7 @@ export default function HowToUseScreen() {
             {activeIndex === steps.length - 1 ? 'Done' : 'Next'}
           </Text>
           {activeIndex < steps.length - 1 && (
-            <Icon name="chevron-right" size={22} color="#fff" />
+            <Icon name="chevron-right" size={22} color={WHITE} />
           )}
         </TouchableOpacity>
       </View>
@@ -406,13 +407,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.section,
     paddingVertical: spacing.item,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: BORDER_COLOR,
   },
   backBtn: { padding: 4 },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   sliderWrapper: {
     flex: 1,
@@ -423,7 +424,7 @@ const styles = StyleSheet.create({
   },
   card: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     padding: 28,
     alignItems: 'center',
@@ -444,24 +445,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   stepBadge: {
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     paddingHorizontal: 10,
     paddingVertical: 3,
   },
   stepBadgeText: {
-    color: '#fff',
+    color: WHITE,
     fontSize: 12,
     fontWeight: '700',
   },
   stepTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     textAlign: 'center',
   },
   stepBody: {
     fontSize: 15,
-    color: '#4b5563',
+    color: GRAY_600,
     textAlign: 'center',
     lineHeight: 22,
   },
@@ -475,7 +476,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: GRAY_300,
   },
   dotActive: {},
   navRow: {
@@ -500,14 +501,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   navBtnSecondary: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: GRAY_100,
   },
   navBtnHidden: {
     opacity: 0,
     pointerEvents: 'none',
   },
   navBtnPrimaryText: {
-    color: '#fff',
+    color: WHITE,
     fontWeight: '700',
     fontSize: 16,
     textAlign: 'center',

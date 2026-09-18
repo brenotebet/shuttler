@@ -1,6 +1,6 @@
 // screens/AdminDashboardScreen.tsx
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, TextInput, Share } from 'react-native'
+import { View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, TextInput, Share } from 'react-native'
 import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -23,12 +23,22 @@ import {
   TEXT_PRIMARY,
   TEXT_SECONDARY,
   DANGER_COLOR,
+  WHITE,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+  BORDER_COLOR,
 } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import HeaderBar from '../components/HeaderBar';
 import ScreenContainer from '../components/ScreenContainer';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { showAlert } from '../src/utils/alerts';
 
 const STALE_WINDOW_SECONDS = 180;
 const GPS_LOST_SECONDS = 60;
@@ -168,7 +178,7 @@ const DriverStatCard = memo(function DriverStatCard({ driver, orgId }: { driver:
         <Text style={styles.analyticsDriverName}>{driver.name}</Text>
         {loading
           ? <ActivityIndicator size="small" color={primaryColor} />
-          : <Icon name={open ? 'expand-less' : 'bar-chart'} size={20} color="#9ca3af" />}
+          : <Icon name={open ? 'expand-less' : 'bar-chart'} size={20} color={GRAY_400} />}
       </View>
 
       {open && stats && (
@@ -458,7 +468,7 @@ export default function AdminDashboardScreen() {
     // just provisioned), fall back to allowing the export rather than blocking.
     const canExport = org?.entitlements?.basicExport !== false;
     if (!canExport) {
-      Alert.alert('Upgrade Required', 'Data export is not available on your current plan. Please upgrade in the Billing tab.');
+      showAlert('Data export is not available on your current plan. Please upgrade in the Billing tab.', 'Upgrade Required', 'error');
       return;
     }
 
@@ -608,7 +618,7 @@ export default function AdminDashboardScreen() {
 
         {driverStats.length === 0 && (
           <View style={styles.driversEmptyState}>
-            <Icon name="directions-bus" size={40} color="#d1d5db" />
+            <Icon name="directions-bus" size={40} color={GRAY_300} />
             <Text style={styles.driversEmptyTitle}>No drivers yet</Text>
             <Text style={styles.driversEmptyHint}>
               Invite drivers from Org Setup → Users, then ask them to sign in and go online.
@@ -686,7 +696,7 @@ export default function AdminDashboardScreen() {
             {/* Today's total online time */}
             {driver.todayOnlineMs > 0 && (
               <View style={styles.onlineTimeRow}>
-                <Icon name="timer" size={13} color="#6b7280" />
+                <Icon name="timer" size={13} color={GRAY_500} />
                 <Text style={styles.onlineTimeText}>
                   {formatDuration(driver.todayOnlineMs)} online today
                 </Text>
@@ -784,11 +794,11 @@ export default function AdminDashboardScreen() {
         {/* Driver Analytics */}
         <Text style={styles.sectionTitle}>Driver Analytics</Text>
         <View style={styles.analyticsSearchRow}>
-          <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 6 }} />
+          <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 6 }} />
           <TextInput
             style={styles.analyticsSearchInput}
             placeholder="Search driver…"
-            placeholderTextColor="#bbb"
+            placeholderTextColor={GRAY_400}
             value={analyticsQuery}
             onChangeText={setAnalyticsQuery}
             autoCapitalize="none"
@@ -811,8 +821,8 @@ export default function AdminDashboardScreen() {
           disabled={isExporting}
         >
           {isExporting
-            ? <ActivityIndicator size="small" color="#fff" />
-            : <Icon name="file-download" size={18} color="#fff" />}
+            ? <ActivityIndicator size="small" color={WHITE} />
+            : <Icon name="file-download" size={18} color={WHITE} />}
           <Text style={styles.exportBtnText}>{isExporting ? 'Exporting…' : 'Export CSV'}</Text>
         </TouchableOpacity>
         <Text style={styles.exportHint}>
@@ -839,7 +849,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   pastDueBannerText: { flex: 1, fontSize: 13, color: '#7c2d12', fontWeight: '500' },
-  pastDueBannerLink: { fontSize: 13, color: '#dc2626', fontWeight: '700' },
+  pastDueBannerLink: { fontSize: 13, color: DANGER_COLOR, fontWeight: '700' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scroll: {
     paddingHorizontal: spacing.screenPadding,
@@ -860,7 +870,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.25)',
     marginVertical: 4,
   },
-  summaryValue: { fontSize: 22, fontWeight: '700', color: '#fff' },
+  summaryValue: { fontSize: 22, fontWeight: '700', color: WHITE },
   summaryLabel: { fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2 },
 
   // Section heading
@@ -883,12 +893,12 @@ const styles = StyleSheet.create({
   driversEmptyTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#374151',
+    color: GRAY_700,
     marginTop: 8,
   },
   driversEmptyHint: {
     fontSize: 13,
-    color: '#9ca3af',
+    color: GRAY_400,
     textAlign: 'center',
     lineHeight: 19,
   },
@@ -931,7 +941,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
   },
   badgeOnline: { backgroundColor: '#dcfce7' },
   badgeOffline: { backgroundColor: '#f1f5f9' },
@@ -942,12 +952,12 @@ const styles = StyleSheet.create({
   dotWarn: { backgroundColor: '#eab308' },
   statusText: { fontSize: 12, fontWeight: '600' },
   textOnline: {},
-  textOffline: { color: '#64748b' },
+  textOffline: { color: TEXT_SECONDARY },
   textWarn: { color: '#854d0e' },
 
   durationText: { fontSize: 12, color: TEXT_SECONDARY, marginBottom: 4 },
   onlineTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 },
-  onlineTimeText: { fontSize: 12, color: '#6b7280' },
+  onlineTimeText: { fontSize: 12, color: GRAY_500 },
 
   // Driver stats row
   statsRow: { flexDirection: 'row' },
@@ -962,7 +972,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
   },
-  stopRowBorder: { borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  stopRowBorder: { borderBottomWidth: 1, borderBottomColor: BORDER_COLOR },
   stopRank: {
     width: 22,
     fontSize: 13,
@@ -977,20 +987,20 @@ const styles = StyleSheet.create({
   analyticsSearchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     paddingHorizontal: 12,
     height: 42,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     marginBottom: 10,
   },
-  analyticsSearchInput: { flex: 1, fontSize: 14, color: '#111' },
+  analyticsSearchInput: { flex: 1, fontSize: 14, color: GRAY_900 },
   analyticsCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   analyticsIconWrap: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: borderRadius.lg,
     backgroundColor: '#f0f4ff',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1003,7 +1013,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+    borderTopColor: GRAY_100,
   },
   analyticsChip: {
     backgroundColor: '#f8fafc',
@@ -1034,7 +1044,7 @@ const styles = StyleSheet.create({
   analyticsBarBg: {
     flex: 1,
     height: 8,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: BORDER_COLOR,
     borderRadius: 4,
     overflow: 'hidden',
   },
@@ -1051,8 +1061,8 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     marginBottom: 14,
   },
-  exportBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  exportHint: { fontSize: 12, color: '#9ca3af', textAlign: 'center', marginTop: 6, marginBottom: 4 },
+  exportBtnText: { color: WHITE, fontWeight: '700', fontSize: 15 },
+  exportHint: { fontSize: 12, color: GRAY_400, textAlign: 'center', marginTop: 6, marginBottom: 4 },
 
   // 7-day bar chart
   trendRow: {
@@ -1071,7 +1081,7 @@ const styles = StyleSheet.create({
     width: 24,
     height: 48,
     justifyContent: 'flex-end',
-    backgroundColor: '#e2e8f0',
+    backgroundColor: BORDER_COLOR,
     borderRadius: 4,
     overflow: 'hidden',
   },

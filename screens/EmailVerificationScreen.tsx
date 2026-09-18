@@ -9,7 +9,7 @@ import { SHUTTLER_API_URL } from '../config';
 import { showAlert } from '../src/utils/alerts';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import { PRIMARY_COLOR, WHITE, GRAY_400, GRAY_500, GRAY_700, GRAY_900 } from '../src/constants/theme';
 import { spacing, borderRadius, cardShadow } from '../src/styles/common';
 import { useAuth } from '../src/auth/AuthProvider';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -137,31 +137,31 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: spacing.item,
     textAlign: 'center',
   },
   body: {
     fontSize: 15,
-    color: '#555',
+    color: GRAY_700,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: spacing.item / 2,
   },
   email: {
     fontWeight: '600',
-    color: '#111',
+    color: GRAY_900,
   },
   hint: {
     fontSize: 14,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: spacing.section,
   },
   card: {
     width: '100%',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     padding: spacing.section,
     ...cardShadow,
@@ -176,13 +176,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   resendTextDisabled: {
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   signOutButton: {
     paddingVertical: spacing.item / 2,
   },
   signOutText: {
-    color: '#9ca3af',
+    color: GRAY_400,
     fontSize: 14,
   },
 });

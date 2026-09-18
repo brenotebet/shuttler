@@ -28,7 +28,18 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { auth, db, app } from '../firebase/firebaseconfig';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrgTheme } from '../src/org/useOrgTheme';
-import { cardShadow } from '../src/styles/common';
+import {
+  PRIMARY_COLOR,
+  DANGER_COLOR,
+  WHITE,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
+import { cardShadow, borderRadius } from '../src/styles/common';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 
 type RouteT = RouteProp<RootStackParamList, 'PhoneVerification'>;
@@ -191,7 +202,7 @@ export default function PhoneVerificationScreen() {
               {step === 'otp' && (
                 <>
                   <View style={s.sentRow}>
-                    <Icon name="check-circle" size={16} color="#16a34a" />
+                    <Icon name="check-circle" size={16} color={PRIMARY_COLOR} />
                     <Text style={s.sentText}>Code sent to {phone}</Text>
                   </View>
                   <Text style={s.fieldLabel}>6-digit code</Text>
@@ -201,7 +212,7 @@ export default function PhoneVerificationScreen() {
                     onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 6)); setError(null); }}
                     keyboardType="number-pad"
                     placeholder="· · · · · ·"
-                    placeholderTextColor="#d1d5db"
+                    placeholderTextColor={GRAY_300}
                     maxLength={6}
                     autoFocus
                   />
@@ -217,7 +228,7 @@ export default function PhoneVerificationScreen() {
                       onPress={handleResend}
                       disabled={resendCooldown > 0 || isSubmitting}
                     >
-                      <Text style={[s.resendText, { color: resendCooldown > 0 ? '#9ca3af' : primaryColor }]}>
+                      <Text style={[s.resendText, { color: resendCooldown > 0 ? GRAY_400 : primaryColor }]}>
                         {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : 'Resend code'}
                       </Text>
                     </TouchableOpacity>
@@ -265,7 +276,7 @@ const s = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 10,
     backgroundColor: '#f0fdf4',
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     borderWidth: 1,
     borderColor: '#bbf7d0',
     padding: 14,
@@ -280,7 +291,7 @@ const s = StyleSheet.create({
   fieldLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#6b7280',
+    color: GRAY_500,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 8,
@@ -289,15 +300,15 @@ const s = StyleSheet.create({
     marginBottom: 12,
   },
   codeInput: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     paddingHorizontal: 20,
     paddingVertical: 16,
     fontSize: 28,
     fontWeight: '700',
-    color: '#111827',
+    color: GRAY_900,
     textAlign: 'center',
     letterSpacing: 8,
     marginBottom: 12,
@@ -314,11 +325,11 @@ const s = StyleSheet.create({
   },
   sentText: {
     fontSize: 14,
-    color: '#374151',
+    color: GRAY_700,
   },
   errorText: {
     fontSize: 13,
-    color: '#dc2626',
+    color: DANGER_COLOR,
     marginBottom: 12,
     lineHeight: 18,
   },
@@ -336,7 +347,7 @@ const s = StyleSheet.create({
   },
   resendSep: {
     fontSize: 14,
-    color: '#d1d5db',
+    color: GRAY_300,
   },
   successContainer: {
     alignItems: 'center',
@@ -354,11 +365,11 @@ const s = StyleSheet.create({
   successTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
+    color: GRAY_900,
   },
   successSub: {
     fontSize: 15,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 8,

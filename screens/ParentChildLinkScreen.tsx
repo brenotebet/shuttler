@@ -24,8 +24,17 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import AppButton from '../components/AppButton';
-import { CARD_BACKGROUND } from '../src/constants/theme';
+import {
+  CARD_BACKGROUND,
+  WHITE,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
+import { showAlert } from '../src/utils/alerts';
 
 export type ChildProfile = { id: string; name: string; grade?: string };
 
@@ -81,7 +90,7 @@ export default function ParentChildLinkScreen() {
       setNameInput('');
       setGradeInput('');
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to add child.');
+      showAlert(e?.message ?? 'Failed to add child.', 'Error', 'error');
     } finally {
       setIsAdding(false);
     }
@@ -101,7 +110,7 @@ export default function ParentChildLinkScreen() {
               await deleteDoc(doc(db, 'orgs', orgId!, 'users', parentUid, 'children', child.id));
               setChildren((prev) => prev.filter((c) => c.id !== child.id));
             } catch (e: any) {
-              Alert.alert('Error', e?.message ?? 'Failed to remove.');
+              showAlert(e?.message ?? 'Failed to remove.', 'Error', 'error');
             }
           },
         },
@@ -129,7 +138,7 @@ export default function ParentChildLinkScreen() {
             <TextInput
               style={styles.input}
               placeholder="Child's name"
-              placeholderTextColor="#aaa"
+              placeholderTextColor={GRAY_400}
               value={nameInput}
               onChangeText={setNameInput}
               autoCapitalize="words"
@@ -137,7 +146,7 @@ export default function ParentChildLinkScreen() {
             <TextInput
               style={[styles.input, { marginTop: -4 }]}
               placeholder="Grade (optional, e.g. Grade 3)"
-              placeholderTextColor="#aaa"
+              placeholderTextColor={GRAY_400}
               value={gradeInput}
               onChangeText={setGradeInput}
               autoCapitalize="words"
@@ -164,7 +173,7 @@ export default function ParentChildLinkScreen() {
               {item.grade ? <Text style={styles.cardGrade}>{item.grade}</Text> : null}
             </View>
             <TouchableOpacity onPress={() => handleRemove(item)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-              <Icon name="delete-outline" size={22} color="#9ca3af" />
+              <Icon name="delete-outline" size={22} color={GRAY_400} />
             </TouchableOpacity>
           </View>
         )}
@@ -173,7 +182,7 @@ export default function ParentChildLinkScreen() {
             <ActivityIndicator color={primaryColor} style={{ marginTop: 24 }} />
           ) : (
             <View style={styles.empty}>
-              <Icon name="people-outline" size={44} color="#d1d5db" />
+              <Icon name="people-outline" size={44} color={GRAY_300} />
               <Text style={styles.emptyText}>No children added yet.</Text>
               <Text style={styles.emptyHint}>Add your child's name above to get started.</Text>
             </View>
@@ -193,24 +202,24 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: spacing.section,
   },
-  infoText: { flex: 1, fontSize: 13, color: '#374151', lineHeight: 19 },
+  infoText: { flex: 1, fontSize: 13, color: GRAY_700, lineHeight: 19 },
   sectionLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: spacing.item / 2,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: GRAY_300,
     borderRadius: borderRadius.md,
     paddingHorizontal: 12,
     paddingVertical: 11,
     fontSize: 15,
-    color: '#111',
-    backgroundColor: '#fff',
+    color: GRAY_900,
+    backgroundColor: WHITE,
     marginBottom: spacing.item,
   },
   card: {
@@ -231,9 +240,9 @@ const styles = StyleSheet.create({
     marginRight: spacing.item,
   },
   cardContent: { flex: 1 },
-  cardName: { fontSize: 15, fontWeight: '600', color: '#111' },
-  cardGrade: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  cardName: { fontSize: 15, fontWeight: '600', color: GRAY_900 },
+  cardGrade: { fontSize: 12, color: GRAY_500, marginTop: 2 },
   empty: { alignItems: 'center', paddingVertical: 40, gap: 8 },
-  emptyText: { fontSize: 16, fontWeight: '600', color: '#374151' },
-  emptyHint: { fontSize: 13, color: '#9ca3af', textAlign: 'center' },
+  emptyText: { fontSize: 16, fontWeight: '600', color: GRAY_700 },
+  emptyHint: { fontSize: 13, color: GRAY_400, textAlign: 'center' },
 });

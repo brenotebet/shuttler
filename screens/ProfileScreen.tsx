@@ -19,9 +19,21 @@ import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
 import { validateUserText } from '../src/utils/profanity';
 import { useProfileStatus } from '../src/hooks/useProfileStatus';
-import { spacing } from '../src/styles/common';
+import { spacing, borderRadius } from '../src/styles/common';
 import PhoneInput from '../src/components/PhoneInput';
 import { passwordPolicyErrors } from '../src/utils/passwordPolicy';
+import {
+  PRIMARY_COLOR,
+  DANGER_COLOR,
+  WHITE,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 
 function getInitials(name: string | null, email: string | null): string {
   if (name) {
@@ -262,12 +274,12 @@ export default function ProfileScreen() {
               value={name}
               onChangeText={setName}
               placeholder="Your name"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={GRAY_400}
               autoCapitalize="words"
               editable={!isSaml && !savingName}
             />
             {isSaml ? (
-              <Icon name="lock" size={18} color="#9ca3af" style={{ marginLeft: 8 }} />
+              <Icon name="lock" size={18} color={GRAY_400} style={{ marginLeft: 8 }} />
             ) : (
               <TouchableOpacity
                 style={[styles.saveBtn, { backgroundColor: primaryColor }, savingName && styles.saveBtnDisabled]}
@@ -275,8 +287,8 @@ export default function ProfileScreen() {
                 disabled={savingName || !name.trim()}
               >
                 {savingName
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <Icon name="check" size={18} color="#fff" />}
+                  ? <ActivityIndicator size="small" color={WHITE} />
+                  : <Icon name="check" size={18} color={WHITE} />}
               </TouchableOpacity>
             )}
           </View>
@@ -290,7 +302,7 @@ export default function ProfileScreen() {
           <View style={styles.card}>
             <Text style={styles.cardLabel}>Email Address</Text>
             <View style={styles.readonlyRow}>
-              <Icon name="email" size={16} color="#9ca3af" />
+              <Icon name="email" size={16} color={GRAY_400} />
               <Text style={styles.readonlyValue}>{email}</Text>
             </View>
             <Text style={styles.fieldNote}>Email is managed by your account and cannot be changed here.</Text>
@@ -303,7 +315,7 @@ export default function ProfileScreen() {
             <Text style={styles.cardLabel}>Phone Number</Text>
             {phoneVerified && !editingPhone ? (
               <View style={styles.verifiedChip}>
-                <Icon name="verified" size={12} color="#16a34a" />
+                <Icon name="verified" size={12} color={PRIMARY_COLOR} />
                 <Text style={styles.verifiedChipText}>Verified</Text>
               </View>
             ) : !phoneVerified && phone.trim() && !editingPhone ? (
@@ -344,8 +356,8 @@ export default function ProfileScreen() {
                   disabled={savingPhone}
                 >
                   {savingPhone
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <Icon name="check" size={18} color="#fff" />}
+                    ? <ActivityIndicator size="small" color={WHITE} />
+                    : <Icon name="check" size={18} color={WHITE} />}
                 </TouchableOpacity>
               </View>
               {editingPhone && (
@@ -385,7 +397,7 @@ export default function ProfileScreen() {
             >
               <Icon name="lock" size={18} color={primaryColor} />
               <Text style={[styles.changePasswordLabel, { color: primaryColor }]}>Change Password</Text>
-              <Icon name={showPwForm ? 'expand-less' : 'expand-more'} size={20} color="#9ca3af" />
+              <Icon name={showPwForm ? 'expand-less' : 'expand-more'} size={20} color={GRAY_400} />
             </TouchableOpacity>
 
             {showPwForm && (
@@ -395,7 +407,7 @@ export default function ProfileScreen() {
                   value={currentPw}
                   onChangeText={setCurrentPw}
                   placeholder="Current password"
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={GRAY_400}
                   secureTextEntry
                 />
                 <TextInput
@@ -403,7 +415,7 @@ export default function ProfileScreen() {
                   value={newPw}
                   onChangeText={setNewPw}
                   placeholder="New password (8+ chars, upper/lower/number/symbol)"
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={GRAY_400}
                   secureTextEntry
                 />
                 <TextInput
@@ -411,7 +423,7 @@ export default function ProfileScreen() {
                   value={confirmPw}
                   onChangeText={setConfirmPw}
                   placeholder="Confirm new password"
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={GRAY_400}
                   secureTextEntry
                 />
                 <TouchableOpacity
@@ -424,7 +436,7 @@ export default function ProfileScreen() {
                   disabled={changingPw || !currentPw || !newPw || !confirmPw}
                 >
                   {changingPw
-                    ? <ActivityIndicator size="small" color="#fff" />
+                    ? <ActivityIndicator size="small" color={WHITE} />
                     : <Text style={styles.fullBtnText}>Update Password</Text>}
                 </TouchableOpacity>
               </View>
@@ -446,10 +458,10 @@ export default function ProfileScreen() {
             disabled={deleting}
           >
             {deleting ? (
-              <ActivityIndicator size="small" color="#dc2626" />
+              <ActivityIndicator size="small" color={DANGER_COLOR} />
             ) : (
               <>
-                <Icon name="delete-forever" size={18} color="#dc2626" />
+                <Icon name="delete-forever" size={18} color={DANGER_COLOR} />
                 <Text style={styles.deleteBtnText}>Delete Account</Text>
               </>
             )}
@@ -481,24 +493,24 @@ const styles = StyleSheet.create({
   avatarInitials: {
     fontSize: 30,
     fontWeight: '700',
-    color: '#fff',
+    color: WHITE,
   },
   roleBadge: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6b7280',
+    color: GRAY_500,
     textTransform: 'capitalize',
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     paddingHorizontal: 12,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
   },
   completionBanner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
     backgroundColor: '#fef3c7',
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     borderWidth: 1,
     borderColor: '#fcd34d',
     padding: 12,
@@ -511,10 +523,10 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 16,
     marginBottom: 12,
     gap: 10,
@@ -528,7 +540,7 @@ const styles = StyleSheet.create({
   },
   dangerHint: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 18,
   },
   deleteBtn: {
@@ -537,15 +549,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     borderWidth: 1.5,
-    borderColor: '#dc2626',
+    borderColor: DANGER_COLOR,
     borderRadius: 10,
     paddingVertical: 12,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   deleteBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#dc2626',
+    color: DANGER_COLOR,
   },
   cardLabelRow: {
     flexDirection: 'row',
@@ -555,7 +567,7 @@ const styles = StyleSheet.create({
   cardLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -564,21 +576,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     backgroundColor: '#dcfce7',
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
   verifiedChipText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#16a34a',
+    color: PRIMARY_COLOR,
   },
   unverifiedChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: '#fef3c7',
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
@@ -611,18 +623,18 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: GRAY_50,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     paddingHorizontal: 14,
     paddingVertical: 11,
     fontSize: 15,
-    color: '#111827',
+    color: GRAY_900,
   },
   inputDisabled: {
-    color: '#9ca3af',
-    backgroundColor: '#f3f4f6',
+    color: GRAY_400,
+    backgroundColor: GRAY_100,
   },
   saveBtn: {
     width: 42,
@@ -640,11 +652,11 @@ const styles = StyleSheet.create({
   },
   readonlyValue: {
     fontSize: 15,
-    color: '#374151',
+    color: GRAY_700,
   },
   fieldNote: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
     lineHeight: 17,
   },
   lockedPhoneRow: {
@@ -657,12 +669,12 @@ const styles = StyleSheet.create({
   lockedPhoneText: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#111827',
+    color: GRAY_900,
     flex: 1,
   },
   changePhoneBtn: {
     borderWidth: 1.5,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 14,
     paddingVertical: 6,
   },
@@ -674,7 +686,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#92400e',
     backgroundColor: '#fffbeb',
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     padding: 10,
     lineHeight: 17,
     marginBottom: 6,
@@ -686,7 +698,7 @@ const styles = StyleSheet.create({
   },
   cancelEditPhoneText: {
     fontSize: 13,
-    color: '#9ca3af',
+    color: GRAY_400,
     fontWeight: '500',
   },
   changePasswordRow: {
@@ -711,6 +723,6 @@ const styles = StyleSheet.create({
   fullBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#fff',
+    color: WHITE,
   },
 });

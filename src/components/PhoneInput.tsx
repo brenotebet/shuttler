@@ -2,6 +2,17 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, TextInput, TouchableOpacity, Modal, FlatList, StyleSheet, ViewStyle } from 'react-native'
 import { Text } from '../../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import {
+  DANGER_COLOR,
+  WHITE,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../constants/theme';
 
 export type Country = {
   flag: string;
@@ -175,7 +186,7 @@ export default function PhoneInput({
       >
         <Text style={styles.flag}>{country.flag}</Text>
         <Text style={styles.dialCode}>{country.dialCode}</Text>
-        {editable && <Icon name="arrow-drop-down" size={18} color="#6b7280" />}
+        {editable && <Icon name="arrow-drop-down" size={18} color={GRAY_500} />}
       </TouchableOpacity>
 
       <View style={styles.divider} />
@@ -185,7 +196,7 @@ export default function PhoneInput({
         value={localNumber}
         onChangeText={handleNumberChange}
         placeholder={placeholder}
-        placeholderTextColor="#bbb"
+        placeholderTextColor={GRAY_400}
         keyboardType="phone-pad"
         editable={editable}
       />
@@ -202,7 +213,7 @@ export default function PhoneInput({
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Select Country</Text>
               <TouchableOpacity onPress={() => { setShowPicker(false); setSearch(''); }}>
-                <Icon name="close" size={22} color="#374151" />
+                <Icon name="close" size={22} color={GRAY_700} />
               </TouchableOpacity>
             </View>
 
@@ -211,7 +222,7 @@ export default function PhoneInput({
               value={search}
               onChangeText={setSearch}
               placeholder="Search country or dial code…"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={GRAY_400}
               autoCorrect={false}
               autoCapitalize="none"
             />
@@ -248,13 +259,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: 10,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     overflow: 'hidden',
   },
   containerError: {
-    borderColor: '#ef4444',
+    borderColor: DANGER_COLOR,
   },
   countryBtn: {
     flexDirection: 'row',
@@ -270,20 +281,20 @@ const styles = StyleSheet.create({
   dialCode: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: GRAY_900,
     minWidth: 32,
   },
   divider: {
     width: 1,
     height: 22,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: GRAY_200,
   },
   numberInput: {
     flex: 1,
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 15,
-    color: '#111827',
+    color: GRAY_900,
   },
   // Modal
   overlay: {
@@ -292,7 +303,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
@@ -304,22 +315,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 18,
     borderBottomWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: GRAY_100,
   },
   sheetTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: GRAY_900,
   },
   searchInput: {
     margin: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: '#111827',
+    color: GRAY_900,
   },
   countryRow: {
     flexDirection: 'row',
@@ -328,7 +339,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 10,
     borderBottomWidth: 1,
-    borderColor: '#f9fafb',
+    borderColor: GRAY_50,
   },
   countryRowSelected: {
     backgroundColor: '#f0f4ff',
@@ -341,12 +352,12 @@ const styles = StyleSheet.create({
   rowName: {
     flex: 1,
     fontSize: 14,
-    color: '#111827',
+    color: GRAY_900,
     fontWeight: '500',
   },
   rowDial: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     fontWeight: '600',
     marginRight: 4,
   },

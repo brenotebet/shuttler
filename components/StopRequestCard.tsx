@@ -4,7 +4,7 @@ import { Text } from './Text';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { grayscaleMapStyle } from '../src/constants/mapConfig';
-import { CARD_BACKGROUND } from '../src/constants/theme';
+import { CARD_BACKGROUND, GRAY_700, GRAY_900 } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 
@@ -70,7 +70,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     ...cardShadow,
   },
-  title: { fontSize: 15, fontWeight: '600', marginBottom: 4, color: '#111827' },
-  detail: { fontSize: 14, color: '#374151' },
+  title: { fontSize: 15, fontWeight: '600', marginBottom: 4, color: GRAY_900 },
+  detail: { fontSize: 14, color: GRAY_700 },
   smallMap: { height: 150, width: '100%', marginVertical: 8 },
 });

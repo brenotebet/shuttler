@@ -8,6 +8,16 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { addDoc, collection, serverTimestamp, updateDoc, doc, runTransaction } from 'firebase/firestore';
 import { db } from '../../firebase/firebaseconfig';
 import { showAlert } from '../utils/alerts';
+import {
+  WHITE,
+  GRAY_50,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../constants/theme';
 
 export const FEEDBACK_ENABLED_KEY = 'shuttler_feedback_enabled';
 
@@ -167,7 +177,7 @@ export default function PickupConfirmModal({
                 onPress={handleConfirmedPickup}
                 disabled={saving}
               >
-                <Icon name="check-circle" size={20} color="#fff" />
+                <Icon name="check-circle" size={20} color={WHITE} />
                 <Text style={styles.primaryBtnText}>Yes, I'm on the bus!</Text>
               </TouchableOpacity>
 
@@ -177,7 +187,7 @@ export default function PickupConfirmModal({
                 disabled={saving}
               >
                 {saving
-                  ? <ActivityIndicator size="small" color="#6b7280" />
+                  ? <ActivityIndicator size="small" color={GRAY_500} />
                   : <Text style={styles.secondaryBtnText}>No, not yet</Text>}
               </TouchableOpacity>
             </>
@@ -201,7 +211,7 @@ export default function PickupConfirmModal({
                       <Icon
                         name={selectedRating !== null && n <= selectedRating ? 'star' : 'star-border'}
                         size={38}
-                        color={selectedRating !== null && n <= selectedRating ? '#f59e0b' : '#d1d5db'}
+                        color={selectedRating !== null && n <= selectedRating ? '#f59e0b' : GRAY_300}
                       />
                     </TouchableOpacity>
                   ))}
@@ -221,7 +231,7 @@ export default function PickupConfirmModal({
                     >
                       <Text style={[
                         styles.optionBtnText,
-                        selectedOption === opt && { color: '#fff' },
+                        selectedOption === opt && { color: WHITE },
                       ]}>
                         {opt}
                       </Text>
@@ -241,7 +251,7 @@ export default function PickupConfirmModal({
                   disabled={!canSubmit || saving}
                 >
                   {saving
-                    ? <ActivityIndicator size="small" color="#fff" />
+                    ? <ActivityIndicator size="small" color={WHITE} />
                     : <Text style={styles.submitBtnText}>Submit</Text>}
                 </TouchableOpacity>
 
@@ -264,7 +274,7 @@ const styles = StyleSheet.create({
   handle: {
     width: 40,
     height: 4,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: GRAY_200,
     borderRadius: 2,
     marginBottom: 24,
   },
@@ -279,13 +289,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#111827',
+    color: GRAY_900,
     textAlign: 'center',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 28,
@@ -293,7 +303,7 @@ const styles = StyleSheet.create({
   questionText: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#374151',
+    color: GRAY_700,
     textAlign: 'center',
     marginBottom: 24,
     lineHeight: 24,
@@ -311,7 +321,7 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#fff',
+    color: WHITE,
   },
   secondaryBtn: {
     width: '100%',
@@ -320,12 +330,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
   },
   secondaryBtnText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#6b7280',
+    color: GRAY_500,
   },
   starsRow: {
     flexDirection: 'row',
@@ -348,13 +358,13 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+    borderColor: GRAY_200,
+    backgroundColor: GRAY_50,
   },
   optionBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: GRAY_700,
   },
   feedbackActions: {
     width: '100%',
@@ -369,7 +379,7 @@ const styles = StyleSheet.create({
   submitBtnText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#fff',
+    color: WHITE,
   },
   skipBtn: {
     width: '100%',
@@ -378,7 +388,7 @@ const styles = StyleSheet.create({
   },
   skipBtnText: {
     fontSize: 14,
-    color: '#9ca3af',
+    color: GRAY_400,
     fontWeight: '500',
   },
   btnDisabled: { opacity: 0.4 },

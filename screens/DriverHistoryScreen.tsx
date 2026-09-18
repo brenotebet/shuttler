@@ -9,7 +9,18 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
 import { useAuth } from '../src/auth/AuthProvider';
 import { PieChart, BarChart } from 'react-native-chart-kit';
-import { CARD_BACKGROUND } from '../src/constants/theme';
+import {
+  CARD_BACKGROUND,
+  WHITE,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_800,
+  GRAY_900,
+} from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import HeaderBar from '../components/HeaderBar';
 import { db } from '../firebase/firebaseconfig';
@@ -141,7 +152,7 @@ export default function DriverHistoryScreen() {
     name: dest,
     count: destinationCounts[dest],
     color: colors[i % colors.length],
-    legendFontColor: '#333',
+    legendFontColor: GRAY_800,
     legendFontSize: 12,
   }));
 
@@ -151,8 +162,8 @@ export default function DriverHistoryScreen() {
   };
 
   const chartConfig = {
-    backgroundGradientFrom: '#fff',
-    backgroundGradientTo: '#fff',
+    backgroundGradientFrom: WHITE,
+    backgroundGradientTo: WHITE,
     decimalPlaces: 0,
     color: (opacity = 1) => `rgba(75,46,131, ${opacity})`,
     labelColor: (opacity = 1) => `rgba(0,0,0, ${opacity})`,
@@ -184,7 +195,7 @@ export default function DriverHistoryScreen() {
         }}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Icon name="history" size={52} color="#d1d5db" style={{ marginBottom: 12 }} />
+            <Icon name="history" size={52} color={GRAY_300} style={{ marginBottom: 12 }} />
             <Text style={styles.emptyTitle}>No rides yet</Text>
             <Text style={styles.emptyBody}>
               Complete your first pickup to see your stats and charts here.
@@ -325,7 +336,7 @@ const styles = StyleSheet.create({
   sectionHeading: { marginTop: spacing.section },
   metricsCard: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     padding: spacing.section,
     marginBottom: spacing.section,
@@ -333,18 +344,18 @@ const styles = StyleSheet.create({
   },
   metricItem: { flex: 1, alignItems: 'center', paddingHorizontal: 4 },
   metricItemLeft: {},
-  metricDivider: { width: 1, backgroundColor: '#e5e7eb', alignSelf: 'stretch' },
-  metricLabel: { fontSize: 12, color: '#4b5563', marginBottom: 4, textAlign: 'center' },
-  metricValue: { fontSize: 18, fontWeight: '700', color: '#111827', textAlign: 'center' },
+  metricDivider: { width: 1, backgroundColor: GRAY_200, alignSelf: 'stretch' },
+  metricLabel: { fontSize: 12, color: GRAY_600, marginBottom: 4, textAlign: 'center' },
+  metricValue: { fontSize: 18, fontWeight: '700', color: GRAY_900, textAlign: 'center' },
   sessionsCard: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     padding: spacing.section,
     marginBottom: spacing.section,
     ...cardShadow,
   },
   chartCard: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     paddingVertical: spacing.section,
     paddingHorizontal: spacing.section,
@@ -352,7 +363,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...cardShadow,
   },
-  chartTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: spacing.item, textAlign: 'center' },
+  chartTitle: { fontSize: 16, fontWeight: '600', color: GRAY_900, marginBottom: spacing.item, textAlign: 'center' },
   barChart: { marginTop: spacing.item },
   sessionRow: {
     flexDirection: 'row',
@@ -360,15 +371,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: GRAY_100,
   },
   sessionLeft: { flex: 1 },
-  sessionDate: { fontSize: 13, fontWeight: '700', color: '#111827' },
-  sessionTime: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  sessionDate: { fontSize: 13, fontWeight: '700', color: GRAY_900 },
+  sessionTime: { fontSize: 12, color: GRAY_500, marginTop: 2 },
   sessionDurationBadge: {
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
   },
   sessionDuration: { fontSize: 13, fontWeight: '700' },
   card: {
@@ -378,9 +389,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.section,
     ...cardShadow,
   },
-  cardStudent: { fontSize: 16, fontWeight: '500', marginBottom: 4, color: '#333', flexWrap: 'wrap' },
-  cardText: { fontSize: 14, color: '#555', marginBottom: 4, flexWrap: 'wrap' },
-  cardTimestamp: { fontSize: 12, color: '#777', flexWrap: 'wrap' },
+  cardStudent: { fontSize: 16, fontWeight: '500', marginBottom: 4, color: GRAY_800, flexWrap: 'wrap' },
+  cardText: { fontSize: 14, color: GRAY_700, marginBottom: 4, flexWrap: 'wrap' },
+  cardTimestamp: { fontSize: 12, color: GRAY_500, flexWrap: 'wrap' },
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -389,8 +400,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     gap: 8,
   },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#374151' },
-  emptyBody: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 20, maxWidth: 260 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: GRAY_700 },
+  emptyBody: { fontSize: 14, color: GRAY_500, textAlign: 'center', lineHeight: 20, maxWidth: 260 },
   emptyBtn: {
     flexDirection: 'row',
     alignItems: 'center',

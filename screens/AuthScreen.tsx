@@ -31,7 +31,20 @@ import ErrorBanner from '../src/components/ErrorBanner';
 import { auth, db } from '../firebase/firebaseconfig';
 import { SHUTTLER_API_URL, GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '../config';
 import { markSocialSignInPending, clearSocialSignInPending } from '../src/auth/socialSignInPending';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import {
+  PRIMARY_COLOR,
+  DANGER_COLOR,
+  WHITE,
+  BLACK,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import PhoneInput, { isValidE164 } from '../src/components/PhoneInput';
@@ -121,7 +134,7 @@ type FieldErrors = Partial<Record<
 >>;
 
 const STRENGTH_LABELS = ['', 'Weak', 'Fair', 'Good', 'Strong', 'Very strong'];
-const STRENGTH_COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#eab308', '#22c55e', '#16a34a'];
+const STRENGTH_COLORS = [GRAY_200, DANGER_COLOR, '#f97316', '#eab308', '#22c55e', PRIMARY_COLOR];
 
 function PasswordStrengthBar({ score }: { score: number }) {
   return (
@@ -132,7 +145,7 @@ function PasswordStrengthBar({ score }: { score: number }) {
             key={i}
             style={[
               styles.strengthSegment,
-              { backgroundColor: i <= score ? STRENGTH_COLORS[score] : '#e5e7eb' },
+              { backgroundColor: i <= score ? STRENGTH_COLORS[score] : GRAY_200 },
             ]}
           />
         ))}
@@ -179,12 +192,12 @@ function PasswordInput({
           secureTextEntry={!visible}
           autoCapitalize="none"
           autoCorrect={false}
-          placeholderTextColor="#aaa"
+          placeholderTextColor={GRAY_400}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
         />
         <TouchableOpacity onPress={() => setVisible((v) => !v)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-          <Icon name={visible ? 'visibility-off' : 'visibility'} size={20} color="#9ca3af" />
+          <Icon name={visible ? 'visibility-off' : 'visibility'} size={20} color={GRAY_400} />
         </TouchableOpacity>
       </View>
       {showReqs && (
@@ -197,7 +210,7 @@ function PasswordInput({
                 <Icon
                   name={met ? 'check-circle' : 'radio-button-unchecked'}
                   size={13}
-                  color={met ? '#16a34a' : '#9ca3af'}
+                  color={met ? PRIMARY_COLOR : GRAY_400}
                 />
                 <Text style={[styles.reqText, met && styles.reqTextMet]}>{rule.label}</Text>
               </View>
@@ -590,7 +603,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
                 onChangeText={setFirstName}
                 autoCapitalize="words"
                 autoCorrect={false}
-                placeholderTextColor="#bbb"
+                placeholderTextColor={GRAY_400}
               />
               {errors.firstName ? <Text style={styles.errorText}>{errors.firstName}</Text> : null}
             </View>
@@ -603,7 +616,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
                 onChangeText={setLastName}
                 autoCapitalize="words"
                 autoCorrect={false}
-                placeholderTextColor="#bbb"
+                placeholderTextColor={GRAY_400}
               />
               {errors.lastName ? <Text style={styles.errorText}>{errors.lastName}</Text> : null}
             </View>
@@ -634,7 +647,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
-          placeholderTextColor="#bbb"
+          placeholderTextColor={GRAY_400}
         />
         {errors.email
           ? <Text style={styles.errorText}>{errors.email}</Text>
@@ -673,7 +686,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
           <Icon
             name={agreedToTerms ? 'check-box' : 'check-box-outline-blank'}
             size={22}
-            color={agreedToTerms ? primaryColor : '#9ca3af'}
+            color={agreedToTerms ? primaryColor : GRAY_400}
           />
           <Text style={styles.termsText}>
             I agree to Shuttler's{' '}
@@ -748,7 +761,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
                 disabled={isSocialLoading}
                 activeOpacity={0.8}
               >
-                <Icon name="apple" size={18} color="#fff" />
+                <Icon name="apple" size={18} color={WHITE} />
                 <Text style={[styles.socialButtonText, styles.appleButtonText]}>Continue with Apple</Text>
               </TouchableOpacity>
             )}
@@ -878,7 +891,7 @@ function PhonePanel({ orgId }: { orgId: string }) {
             onChangeText={setCode}
             keyboardType="number-pad"
             autoCorrect={false}
-            placeholderTextColor="#aaa"
+            placeholderTextColor={GRAY_400}
           />
           <AppButton
             label={isSubmitting ? 'Verifying…' : 'Verify & Sign In'}
@@ -1052,7 +1065,7 @@ const styles = StyleSheet.create({
   orgName: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#111',
+    color: GRAY_900,
     textAlign: 'center',
     letterSpacing: -0.3,
   },
@@ -1061,7 +1074,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.section,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     padding: spacing.section,
     marginHorizontal: spacing.section,
@@ -1071,7 +1084,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginBottom: spacing.item * 1.5,
     borderBottomWidth: 1.5,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: GRAY_100,
   },
   tab: {
     flex: 1,
@@ -1086,7 +1099,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     fontSize: 14,
-    color: '#9ca3af',
+    color: GRAY_400,
     fontWeight: '500',
   },
   tabTextActive: {
@@ -1099,23 +1112,23 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#374151',
+    color: GRAY_700,
     marginBottom: 5,
     letterSpacing: 0.1,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.item,
     paddingVertical: Platform.OS === 'ios' ? 13 : 10,
     fontSize: 15,
-    color: '#111',
-    backgroundColor: '#fafafa',
+    color: GRAY_900,
+    backgroundColor: GRAY_50,
     marginBottom: 0,
   },
   inputError: {
-    borderColor: '#dc2626',
+    borderColor: DANGER_COLOR,
   },
   inputLocked: {
     backgroundColor: '#f1f5f9',
@@ -1140,7 +1153,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 12,
-    color: '#dc2626',
+    color: DANGER_COLOR,
     marginBottom: spacing.item / 2,
     marginTop: -2,
   },
@@ -1156,17 +1169,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.item,
     paddingVertical: Platform.OS === 'ios' ? 13 : 10,
     marginBottom: spacing.item / 2,
-    backgroundColor: '#fafafa',
+    backgroundColor: GRAY_50,
   },
   passwordInput: {
     flex: 1,
     fontSize: 15,
-    color: '#111',
+    color: GRAY_900,
   },
   primaryButton: {
     marginTop: spacing.item / 2,
@@ -1183,19 +1196,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   unsupportedText: {
-    color: '#888',
+    color: GRAY_500,
     textAlign: 'center',
     fontSize: 14,
   },
   phoneHint: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     marginBottom: spacing.item,
   },
   fieldHint: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
     marginTop: 4,
     marginBottom: spacing.item / 2,
     lineHeight: 15,
@@ -1235,10 +1248,10 @@ const styles = StyleSheet.create({
   },
   reqText: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   reqTextMet: {
-    color: '#16a34a',
+    color: PRIMARY_COLOR,
   },
   termsRow: {
     flexDirection: 'row',
@@ -1250,7 +1263,7 @@ const styles = StyleSheet.create({
   termsText: {
     flex: 1,
     fontSize: 13,
-    color: '#4b5563',
+    color: GRAY_600,
     lineHeight: 20,
     paddingTop: 2,
   },
@@ -1266,11 +1279,11 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: GRAY_200,
   },
   dividerText: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
     fontWeight: '500',
   },
   socialButton: {
@@ -1279,15 +1292,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: borderRadius.md,
     paddingVertical: 12,
     marginBottom: 10,
-    backgroundColor: '#fafafa',
+    backgroundColor: GRAY_50,
   },
   appleButton: {
-    backgroundColor: '#000',
-    borderColor: '#000',
+    backgroundColor: BLACK,
+    borderColor: BLACK,
   },
   socialButtonDisabled: {
     opacity: 0.5,
@@ -1295,14 +1308,14 @@ const styles = StyleSheet.create({
   socialButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#111',
+    color: GRAY_900,
   },
   appleButtonText: {
-    color: '#fff',
+    color: WHITE,
   },
   socialHint: {
     fontSize: 12,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     lineHeight: 17,
     marginBottom: 12,
@@ -1317,11 +1330,11 @@ const styles = StyleSheet.create({
   },
   adminOverrideLinkText: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   socialDisclaimer: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
     textAlign: 'center',
     lineHeight: 16,
     marginTop: 4,

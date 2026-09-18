@@ -11,7 +11,21 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showToast } from '../src/components/Toast';
 import { SHUTTLER_API_URL } from '../config';
-import { cardShadow, spacing } from '../src/styles/common';
+import { cardShadow, spacing, borderRadius } from '../src/styles/common';
+import {
+  PRIMARY_COLOR,
+  DANGER_COLOR,
+  WHITE,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 import {
   busiestHours,
   computeServicePerformance,
@@ -186,8 +200,8 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
           </TouchableOpacity>
         ) : (
           <View style={[s.generateBtn, s.generateBtnDisabled]}>
-            <Icon name="auto-awesome" size={16} color="#d1d5db" />
-            <Text style={[s.generateBtnText, { color: '#d1d5db' }]}>Available once rides are logged</Text>
+            <Icon name="auto-awesome" size={16} color={GRAY_300} />
+            <Text style={[s.generateBtnText, { color: GRAY_300 }]}>Available once rides are logged</Text>
           </View>
         )}
       </View>
@@ -396,8 +410,8 @@ function TrendBadge({ pct, invert = false }: { pct: number | null; invert?: bool
   const good = invert ? !up : up;
   return (
     <View style={[a.trendBadge, { backgroundColor: good ? '#dcfce7' : '#fee2e2' }]}>
-      <Icon name={up ? 'arrow-upward' : 'arrow-downward'} size={11} color={good ? '#16a34a' : '#dc2626'} />
-      <Text style={[a.trendText, { color: good ? '#16a34a' : '#dc2626' }]}>
+      <Icon name={up ? 'arrow-upward' : 'arrow-downward'} size={11} color={good ? PRIMARY_COLOR : DANGER_COLOR} />
+      <Text style={[a.trendText, { color: good ? PRIMARY_COLOR : DANGER_COLOR }]}>
         {Math.abs(pct)}% vs prev. period
       </Text>
     </View>
@@ -626,11 +640,11 @@ function AnalyticsSection() {
               </View>
             ))}
             <TouchableOpacity
-              style={[s.detailCta, { backgroundColor: isUpgrading ? '#e5e7eb' : primaryColor }]}
+              style={[s.detailCta, { backgroundColor: isUpgrading ? GRAY_200 : primaryColor }]}
               onPress={() => { setShowAddonDetail(false); openAddonCheckout(); }}
               disabled={isUpgrading}
             >
-              <Text style={[s.detailCtaText, { color: isUpgrading ? '#9ca3af' : '#fff' }]}>
+              <Text style={[s.detailCtaText, { color: isUpgrading ? GRAY_400 : WHITE }]}>
                 Add Data Analytics — $49/mo
               </Text>
             </TouchableOpacity>
@@ -783,7 +797,7 @@ function AnalyticsSection() {
             <Text style={a.welcomeBody}>Wait times, busiest hours, and rider satisfaction are now live alongside your full boarding history. Use the period filter to spot trends and the export buttons to share data with your team.</Text>
           </View>
           <TouchableOpacity onPress={() => setShowWelcome(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Icon name="close" size={18} color="#9ca3af" />
+            <Icon name="close" size={18} color={GRAY_400} />
           </TouchableOpacity>
         </View>
       )}
@@ -1026,7 +1040,7 @@ export default function AdminAnalyticsScreen() {
             style={[s.tabItem, activeTab === t.key && s.tabItemActive, activeTab === t.key && { borderBottomColor: primaryColor }]}
             onPress={() => setActiveTab(t.key)}
           >
-            <Icon name={t.icon} size={18} color={activeTab === t.key ? primaryColor : '#9ca3af'} />
+            <Icon name={t.icon} size={18} color={activeTab === t.key ? primaryColor : GRAY_400} />
             <Text style={[s.tabLabel, activeTab === t.key && { color: primaryColor, fontWeight: '600' }]}>
               {t.label}
             </Text>
@@ -1047,8 +1061,8 @@ const s = StyleSheet.create({
   tabBar: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    backgroundColor: '#fff',
+    borderBottomColor: GRAY_100,
+    backgroundColor: WHITE,
   },
   tabItem: {
     flex: 1,
@@ -1061,79 +1075,79 @@ const s = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabItemActive: {},
-  tabLabel: { fontSize: 14, color: '#9ca3af' },
+  tabLabel: { fontSize: 14, color: GRAY_400 },
   scrollContent: { padding: 16, gap: 12, paddingBottom: 40 },
   // Insight cards
-  intro: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 16, gap: 12, ...cardShadow },
+  intro: { fontSize: 13, color: GRAY_500, lineHeight: 18 },
+  card: { backgroundColor: WHITE, borderRadius: borderRadius.lg, padding: 16, gap: 12, ...cardShadow },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: '#111' },
-  cardDate: { fontSize: 11, color: '#9ca3af' },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: GRAY_900 },
+  cardDate: { fontSize: 11, color: GRAY_400 },
   statsRow: { flexDirection: 'row', gap: 12 },
-  statItem: { flex: 1, alignItems: 'center', backgroundColor: '#f9fafb', borderRadius: 10, padding: 10 },
+  statItem: { flex: 1, alignItems: 'center', backgroundColor: GRAY_50, borderRadius: 10, padding: 10 },
   statValue: { fontSize: 20, fontWeight: '700' },
-  statLabel: { fontSize: 11, color: '#6b7280', marginTop: 2 },
-  narrative: { fontSize: 14, color: '#374151', lineHeight: 21 },
-  emptyText: { fontSize: 14, color: '#9ca3af', fontStyle: 'italic', textAlign: 'center' },
-  emptySubtext: { fontSize: 12, color: '#9ca3af', textAlign: 'center' },
+  statLabel: { fontSize: 11, color: GRAY_500, marginTop: 2 },
+  narrative: { fontSize: 14, color: GRAY_700, lineHeight: 21 },
+  emptyText: { fontSize: 14, color: GRAY_400, fontStyle: 'italic', textAlign: 'center' },
+  emptySubtext: { fontSize: 12, color: GRAY_400, textAlign: 'center' },
   generateBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     borderWidth: 1, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16,
   },
   generateBtnText: { fontSize: 14, fontWeight: '600' },
-  generateBtnDisabled: { borderColor: '#e5e7eb' },
+  generateBtnDisabled: { borderColor: GRAY_200 },
   satisfactionUpsell: { fontSize: 13, fontWeight: '600' },
   // Analytics
   summaryRow: { flexDirection: 'row', gap: 10 },
-  summaryCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center', gap: 4, ...cardShadow },
-  summaryValue: { fontSize: 24, fontWeight: '700', color: '#111' },
-  summaryLabel: { fontSize: 11, color: '#6b7280', textAlign: 'center' },
-  sectionTitle: { fontSize: 14, fontWeight: '700', color: '#374151', marginTop: 4 },
-  listCard: { backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', ...cardShadow },
+  summaryCard: { backgroundColor: WHITE, borderRadius: borderRadius.md, padding: 14, alignItems: 'center', gap: 4, ...cardShadow },
+  summaryValue: { fontSize: 24, fontWeight: '700', color: GRAY_900 },
+  summaryLabel: { fontSize: 11, color: GRAY_500, textAlign: 'center' },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: GRAY_700, marginTop: 4 },
+  listCard: { backgroundColor: WHITE, borderRadius: borderRadius.md, overflow: 'hidden', ...cardShadow },
   listRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12 },
-  listRowBorder: { borderTopWidth: 1, borderTopColor: '#f3f4f6' },
-  rankBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  rankText: { fontSize: 12, fontWeight: '700', color: '#374151' },
-  listLabel: { flex: 1, fontSize: 14, color: '#111' },
-  listMeta: { fontSize: 11, color: '#9ca3af' },
-  listValue: { fontSize: 13, fontWeight: '600', color: '#374151' },
-  errorText: { color: '#DC2626', fontSize: 14, textAlign: 'center' },
+  listRowBorder: { borderTopWidth: 1, borderTopColor: GRAY_100 },
+  rankBadge: { width: 24, height: 24, borderRadius: borderRadius.md, backgroundColor: GRAY_100, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  rankText: { fontSize: 12, fontWeight: '700', color: GRAY_700 },
+  listLabel: { flex: 1, fontSize: 14, color: GRAY_900 },
+  listMeta: { fontSize: 11, color: GRAY_400 },
+  listValue: { fontSize: 13, fontWeight: '600', color: GRAY_700 },
+  errorText: { color: DANGER_COLOR, fontSize: 14, textAlign: 'center' },
   // Upsell
   upsellContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 },
   upsellIconWrap: { width: 80, height: 80, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  upsellTitle: { fontSize: 22, fontWeight: '800', color: '#111', textAlign: 'center' },
-  upsellBody: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 20 },
+  upsellTitle: { fontSize: 22, fontWeight: '800', color: GRAY_900, textAlign: 'center' },
+  upsellBody: { fontSize: 14, color: GRAY_500, textAlign: 'center', lineHeight: 20 },
   featureList: { alignSelf: 'stretch', gap: 8 },
   featureRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  featureText: { fontSize: 14, color: '#374151' },
+  featureText: { fontSize: 14, color: GRAY_700 },
   priceBox: { alignItems: 'center' },
   price: { fontSize: 36, fontWeight: '700' },
   priceSub: { fontSize: 18, fontWeight: '400' },
-  priceNote: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
+  priceNote: { fontSize: 12, color: GRAY_400, marginTop: 2 },
   upgradeBtn: { width: '100%', marginTop: 4 },
   learnMoreBtn: { paddingVertical: 4 },
   learnMoreText: { fontSize: 14, fontWeight: '600' },
   // Inline detail sheet
   detailSheet: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 48 },
-  detailHandle: { width: 40, height: 4, backgroundColor: '#e5e7eb', borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
-  detailHighlight: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10 },
+  detailHandle: { width: 40, height: 4, backgroundColor: GRAY_200, borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
+  detailHighlight: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', borderRadius: borderRadius.sm, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10 },
   detailHighlightText: { fontSize: 12, fontWeight: '700' },
-  detailName: { fontSize: 22, fontWeight: '800', color: '#111', marginBottom: 4 },
+  detailName: { fontSize: 22, fontWeight: '800', color: GRAY_900, marginBottom: 4 },
   detailPrice: { fontSize: 28, fontWeight: '700', marginBottom: 6 },
-  detailTagline: { fontSize: 14, color: '#6b7280', lineHeight: 20 },
-  detailDivider: { height: 1, backgroundColor: '#f3f4f6', marginVertical: 16 },
+  detailTagline: { fontSize: 14, color: GRAY_500, lineHeight: 20 },
+  detailDivider: { height: 1, backgroundColor: GRAY_100, marginVertical: 16 },
   detailFeatureRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
   detailFeatureIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  detailFeatureText: { flex: 1, fontSize: 14, color: '#374151', lineHeight: 20 },
+  detailFeatureText: { flex: 1, fontSize: 14, color: GRAY_700, lineHeight: 20 },
   detailCta: { borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
   detailCtaText: { fontSize: 16, fontWeight: '700' },
   // Purchase confirmation
   confirmSheet: { paddingHorizontal: 24, paddingTop: 32, paddingBottom: 48, alignItems: 'center' },
   confirmIconCircle: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-  confirmTitle: { fontSize: 22, fontWeight: '800', color: '#111', textAlign: 'center', marginBottom: 10 },
-  confirmBody: { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22, marginBottom: 28 },
+  confirmTitle: { fontSize: 22, fontWeight: '800', color: GRAY_900, textAlign: 'center', marginBottom: 10 },
+  confirmBody: { fontSize: 15, color: GRAY_500, textAlign: 'center', lineHeight: 22, marginBottom: 28 },
   confirmBtn: { borderRadius: 14, paddingVertical: 15, paddingHorizontal: 32, width: '100%', alignItems: 'center' },
-  confirmBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  confirmBtnText: { fontSize: 16, fontWeight: '700', color: WHITE },
 });
 
 // Styles for the unlocked analytics section
@@ -1155,7 +1169,7 @@ const a = StyleSheet.create({
   },
   welcomeBody: {
     fontSize: 13,
-    color: '#4b5563',
+    color: GRAY_600,
     lineHeight: 19,
   },
   // Period filter
@@ -1170,20 +1184,20 @@ const a = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
+    borderColor: GRAY_200,
+    backgroundColor: WHITE,
   },
   periodChipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#6b7280',
+    color: GRAY_500,
   },
   periodChipTextActive: {
-    color: '#fff',
+    color: WHITE,
   },
   // Hero card
   heroCard: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 18,
     padding: 20,
     alignItems: 'center',
@@ -1192,7 +1206,7 @@ const a = StyleSheet.create({
   heroLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
@@ -1205,7 +1219,7 @@ const a = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 8,
     paddingVertical: 4,
     marginTop: 2,
@@ -1228,7 +1242,7 @@ const a = StyleSheet.create({
   heroStatDivider: {
     width: 1,
     height: 28,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
   },
   heroStatValue: {
     fontSize: 20,
@@ -1236,14 +1250,14 @@ const a = StyleSheet.create({
   },
   heroStatLabel: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   // Chart cards
   section: {
     gap: 8,
   },
   chartCard: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     padding: 16,
   },
@@ -1258,13 +1272,13 @@ const a = StyleSheet.create({
   barLabel: {
     width: 80,
     fontSize: 12,
-    color: '#374151',
+    color: GRAY_700,
     fontWeight: '500',
   },
   barTrack: {
     flex: 1,
     height: 8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     borderRadius: 4,
     overflow: 'hidden',
   },
@@ -1276,14 +1290,14 @@ const a = StyleSheet.create({
     width: 36,
     fontSize: 12,
     fontWeight: '600',
-    color: '#374151',
+    color: GRAY_700,
     textAlign: 'right',
   },
   // Activity groups
   groupLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginBottom: 4,
@@ -1297,12 +1311,12 @@ const a = StyleSheet.create({
     marginTop: 14,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: GRAY_100,
   },
   perfTrendLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6b7280',
+    color: GRAY_500,
   },
   // Rider satisfaction
   ratingHeader: {
@@ -1321,7 +1335,7 @@ const a = StyleSheet.create({
   },
   ratingMeta: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
     marginTop: 2,
   },
   questionRow: {
@@ -1331,12 +1345,12 @@ const a = StyleSheet.create({
     gap: 12,
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: GRAY_100,
   },
   questionText: {
     flex: 1,
     fontSize: 13,
-    color: '#374151',
+    color: GRAY_700,
   },
   questionRating: {
     fontSize: 13,
@@ -1344,12 +1358,12 @@ const a = StyleSheet.create({
   },
   commentsDivider: {
     height: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     marginVertical: 10,
   },
   commentText: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     fontStyle: 'italic',
     lineHeight: 19,
     marginBottom: 8,
@@ -1368,7 +1382,7 @@ const a = StyleSheet.create({
     borderWidth: 1.5,
     borderRadius: 14,
     paddingVertical: 14,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   exportBtnText: {
     fontSize: 14,
@@ -1376,7 +1390,7 @@ const a = StyleSheet.create({
   },
   exportHint: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
     textAlign: 'center',
     lineHeight: 16,
   },

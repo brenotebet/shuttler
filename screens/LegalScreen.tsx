@@ -9,6 +9,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import HeaderBar from '../components/HeaderBar';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
+import { WHITE, GRAY_400, GRAY_500, GRAY_900 } from '../src/constants/theme';
 
 const TERMS_URL = 'https://shuttler.net/terms';
 const PRIVACY_URL = 'https://shuttler.net/privacy';
@@ -37,7 +38,7 @@ function LinkCard({
         <Text style={styles.cardTitle}>{title}</Text>
         <Text style={styles.cardDesc}>{description}</Text>
       </View>
-      <Icon name="open-in-new" size={18} color="#9ca3af" />
+      <Icon name="open-in-new" size={18} color={GRAY_400} />
     </TouchableOpacity>
   );
 }
@@ -93,14 +94,14 @@ const styles = StyleSheet.create({
   },
   intro: {
     fontSize: 14,
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 21,
     marginBottom: spacing.section * 1.5,
   },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     padding: spacing.section,
     marginBottom: spacing.section,
@@ -115,17 +116,17 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#111827',
+    color: GRAY_900,
     marginBottom: 3,
   },
   cardDesc: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 18,
   },
   footer: {
     fontSize: 13,
-    color: '#9ca3af',
+    color: GRAY_400,
     textAlign: 'center',
     lineHeight: 20,
     marginTop: spacing.section,

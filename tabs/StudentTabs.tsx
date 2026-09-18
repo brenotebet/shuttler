@@ -4,7 +4,7 @@ import MapScreen from '../screens/MapScreen';
 import StudentMenuScreen from '../screens/StudentMenuScreen';
 import RoutesScreen from '../screens/RoutesScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
+import { CARD_BACKGROUND, TEXT_SECONDARY, BORDER_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 
 export type StudentTabParamList = {
@@ -26,7 +26,7 @@ export default function StudentTabs() {
         tabBarStyle: {
           backgroundColor: CARD_BACKGROUND,
           borderTopWidth: 1,
-          borderTopColor: '#E2E8F0',
+          borderTopColor: BORDER_COLOR,
           elevation: 8,
           height: 80,
           paddingBottom: 5,

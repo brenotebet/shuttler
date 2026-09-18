@@ -27,7 +27,21 @@ import { useExternalCheckout } from '../src/hooks/useExternalCheckout';
 import { showToast } from '../src/components/Toast';
 import { validateUserText } from '../src/utils/profanity';
 import { SHUTTLER_API_URL } from '../config';
-import { PRIMARY_COLOR } from '../src/constants/theme';
+import {
+  PRIMARY_COLOR,
+  DANGER_COLOR,
+  WHITE,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_900,
+  BORDER_COLOR,
+} from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { getPlanLimits, planFor, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
@@ -72,6 +86,9 @@ const COMMON_TIMEZONES: { label: string; value: string }[] = [
   { label: 'Mexico City',             value: 'America/Mexico_City' },
 ];
 
+// Deliberately literal, independent of the app's current theme tokens — this
+// is a fixed menu of picker options, not a reflection of "the" brand color,
+// so it must not silently drift if PRIMARY_COLOR/DANGER_COLOR ever change.
 const COLOR_SWATCHES = [
   '#16a34a', // default green
   '#2563eb', // blue
@@ -174,7 +191,7 @@ function ProfileTab() {
         value={name}
         onChangeText={setName}
         placeholder="e.g. McKendree University"
-        placeholderTextColor="#aaa"
+        placeholderTextColor={GRAY_400}
         autoCapitalize="words"
       />
       <Text style={styles.hint}>Shown in the org selector for all users.</Text>
@@ -188,14 +205,14 @@ function ProfileTab() {
           <Image source={{ uri: logoUrl }} style={profileStyles.logoPreview} resizeMode="contain" />
         ) : (
           <>
-            <Icon name="add-photo-alternate" size={32} color="#9ca3af" />
+            <Icon name="add-photo-alternate" size={32} color={GRAY_400} />
             <Text style={profileStyles.logoHint}>Tap to upload logo</Text>
           </>
         )}
       </TouchableOpacity>
       {logoUrl ? (
         <TouchableOpacity onPress={() => setLogoUrl('')} style={{ alignSelf: 'flex-start', marginBottom: 8 }}>
-          <Text style={{ fontSize: 12, color: '#e53935' }}>Remove logo</Text>
+          <Text style={{ fontSize: 12, color: DANGER_COLOR }}>Remove logo</Text>
         </TouchableOpacity>
       ) : null}
       <Text style={styles.hint}>Square or landscape image. Displayed at up to 80×80 px.</Text>
@@ -223,7 +240,7 @@ function ProfileTab() {
           value={customColor}
           onChangeText={setCustomColor}
           placeholder="#16a34a"
-          placeholderTextColor="#aaa"
+          placeholderTextColor={GRAY_400}
           autoCapitalize="none"
           maxLength={7}
         />
@@ -245,21 +262,21 @@ const profileStyles = StyleSheet.create({
     width: '100%',
     height: 120,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderStyle: 'dashed',
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fafafa',
+    backgroundColor: GRAY_50,
     marginBottom: 8,
   },
   logoPreview: { width: '100%', height: '100%', borderRadius: 10 },
-  logoHint: { fontSize: 13, color: '#9ca3af', marginTop: 6 },
+  logoHint: { fontSize: 13, color: GRAY_400, marginTop: 6 },
   swatchRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 },
   swatch: { width: 36, height: 36, borderRadius: 18 },
-  swatchSelected: { borderWidth: 3, borderColor: '#111' },
+  swatchSelected: { borderWidth: 3, borderColor: GRAY_900 },
   hexRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
-  hexPreview: { width: 36, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb' },
+  hexPreview: { width: 36, height: 36, borderRadius: borderRadius.sm, borderWidth: 1, borderColor: GRAY_200 },
 });
 
 // ---- Auth Settings Tab ----
@@ -472,7 +489,7 @@ function AuthTab() {
         value={domains}
         onChangeText={setDomains}
         placeholder="e.g. mckendree.edu, university.edu"
-        placeholderTextColor="#aaa"
+        placeholderTextColor={GRAY_400}
         autoCapitalize="none"
         keyboardType="email-address"
       />
@@ -492,11 +509,11 @@ function AuthTab() {
         <>
           <Text style={styles.sectionLabel}>IdP Entity ID</Text>
           <TextInput style={styles.input} value={idpEntityId} onChangeText={setIdpEntityId}
-            placeholder="https://idp.example.com/saml" placeholderTextColor="#aaa" autoCapitalize="none" />
+            placeholder="https://idp.example.com/saml" placeholderTextColor={GRAY_400} autoCapitalize="none" />
 
           <Text style={styles.sectionLabel}>IdP SSO URL</Text>
           <TextInput style={styles.input} value={idpSsoUrl} onChangeText={setIdpSsoUrl}
-            placeholder="https://idp.example.com/saml/sso" placeholderTextColor="#aaa" autoCapitalize="none" keyboardType="url" />
+            placeholder="https://idp.example.com/saml/sso" placeholderTextColor={GRAY_400} autoCapitalize="none" keyboardType="url" />
 
           <Text style={styles.sectionLabel}>IdP Signing Certificate (PEM or base64)</Text>
           <TextInput
@@ -504,7 +521,7 @@ function AuthTab() {
             value={idpCert}
             onChangeText={setIdpCert}
             placeholder={certOnFile ? 'A certificate is already on file — paste one here only to replace it' : 'Paste the IdP certificate here'}
-            placeholderTextColor="#aaa"
+            placeholderTextColor={GRAY_400}
             multiline
             autoCapitalize="none"
             autoCorrect={false}
@@ -621,7 +638,7 @@ function ScheduleEditor({
   return (
     <View style={{ marginTop: 12 }}>
       <View style={hoursStyles.header}>
-        <Icon name="schedule" size={14} color="#6b7280" />
+        <Icon name="schedule" size={14} color={GRAY_500} />
         <Text style={hoursStyles.label}>Hours of Operation</Text>
       </View>
 
@@ -632,10 +649,10 @@ function ScheduleEditor({
             <Switch
               value={day.isOpen}
               onValueChange={(v) => update(key, { isOpen: v })}
-              trackColor={{ false: '#e5e7eb', true: primaryColor }}
-              thumbColor="#fff"
+              trackColor={{ false: GRAY_200, true: primaryColor }}
+              thumbColor={WHITE}
             />
-            <Text style={[hoursStyles.dayLabel, !day.isOpen && { color: '#bbb' }]}>{label}</Text>
+            <Text style={[hoursStyles.dayLabel, !day.isOpen && { color: GRAY_400 }]}>{label}</Text>
             {day.isOpen ? (
               <View style={hoursStyles.timeRow}>
                 <TouchableOpacity style={hoursStyles.timeBtn} onPress={() => openPicker(key, 'open')}>
@@ -678,32 +695,32 @@ function ScheduleEditor({
 
 const hoursStyles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  label: { flex: 1, fontSize: 12, fontWeight: '600', color: '#6b7280' },
+  label: { flex: 1, fontSize: 12, fontWeight: '600', color: GRAY_500 },
   dayRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5 },
-  dayLabel: { width: 32, fontSize: 13, fontWeight: '600', color: '#374151' },
+  dayLabel: { width: 32, fontSize: 13, fontWeight: '600', color: GRAY_700 },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
-  dash: { fontSize: 14, color: '#6b7280' },
+  dash: { fontSize: 14, color: GRAY_500 },
   timeBtn: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
+    borderColor: GRAY_200,
+    borderRadius: borderRadius.sm,
     paddingVertical: 7,
     paddingHorizontal: 6,
-    backgroundColor: '#fafafa',
+    backgroundColor: GRAY_50,
     alignItems: 'center',
   },
-  timeBtnText: { fontSize: 13, fontWeight: '600', color: '#111' },
-  closedLabel: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
+  timeBtnText: { fontSize: 13, fontWeight: '600', color: GRAY_900 },
+  closedLabel: { fontSize: 13, color: GRAY_400, fontStyle: 'italic' },
   pickerBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: GRAY_200,
   },
-  pickerCancel: { fontSize: 16, color: '#6b7280' },
+  pickerCancel: { fontSize: 16, color: GRAY_500 },
   pickerDone: { fontSize: 16, fontWeight: '700', color: PRIMARY_COLOR },
 });
 
@@ -719,13 +736,13 @@ const stopStyles = StyleSheet.create({
   manualToggleText: {
     flex: 1,
     fontSize: 12,
-    color: '#6b7280',
+    color: GRAY_500,
   },
   manualCoordsBox: {
-    backgroundColor: '#f9fafb',
+    backgroundColor: GRAY_50,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 10,
     marginBottom: 8,
     gap: 8,
@@ -741,12 +758,12 @@ const stopStyles = StyleSheet.create({
   },
   applyBtn: {
     backgroundColor: PRIMARY_COLOR,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingVertical: 9,
     alignItems: 'center',
   },
   applyBtnText: {
-    color: '#fff',
+    color: WHITE,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -754,9 +771,9 @@ const stopStyles = StyleSheet.create({
 
 const newStopStyles = StyleSheet.create({
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: 14,
     padding: 16,
     marginBottom: 16,
@@ -780,29 +797,29 @@ const newStopStyles = StyleSheet.create({
     flexShrink: 0,
   },
   stepBadgeInactive: {
-    backgroundColor: '#e5e7eb',
+    backgroundColor: GRAY_200,
   },
   stepNum: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#6b7280',
+    color: GRAY_500,
   },
   stepLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   stepHint: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: GRAY_400,
     marginLeft: 2,
   },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
+    backgroundColor: GRAY_50,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 11,
@@ -810,13 +827,13 @@ const newStopStyles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: '#111',
+    color: GRAY_900,
     padding: 0,
   },
   dropdown: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: 10,
     overflow: 'hidden',
     marginTop: -4,
@@ -827,14 +844,14 @@ const newStopStyles = StyleSheet.create({
     paddingVertical: 11,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: GRAY_100,
   },
   locationChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
@@ -845,7 +862,7 @@ const newStopStyles = StyleSheet.create({
   },
   tapHint: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
     textAlign: 'center',
     marginVertical: 2,
   },
@@ -858,16 +875,16 @@ const newStopStyles = StyleSheet.create({
   },
   manualToggleText: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   divider: {
     height: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     marginVertical: 4,
   },
   inputDisabled: {
-    backgroundColor: '#f9fafb',
-    color: '#9ca3af',
+    backgroundColor: GRAY_50,
+    color: GRAY_400,
   },
   addBtn: {
     flexDirection: 'row',
@@ -882,7 +899,7 @@ const newStopStyles = StyleSheet.create({
     opacity: 0.4,
   },
   addBtnText: {
-    color: '#fff',
+    color: WHITE,
     fontWeight: '700',
     fontSize: 15,
   },
@@ -995,9 +1012,9 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       } else {
         // Non-OK status — surface a hint in dev so the admin can diagnose
         if (__DEV__ && json.status !== 'ZERO_RESULTS') {
-          Alert.alert(
-            `Places API: ${json.status}`,
-            json.error_message ?? 'Check that the Places API is enabled for this key and that billing is active.',
+          showToast(
+            `Places API: ${json.status} — ${json.error_message ?? 'check that the Places API is enabled for this key and that billing is active.'}`,
+            'error',
           );
         }
         setSearchResults([]);
@@ -1292,7 +1309,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
           <View style={newStopStyles.stepHeader}>
             <View style={[newStopStyles.stepBadge, pendingCoords ? { backgroundColor: primaryColor } : newStopStyles.stepBadgeInactive]}>
               {pendingCoords
-                ? <Icon name="check" size={12} color="#fff" />
+                ? <Icon name="check" size={12} color={WHITE} />
                 : <Text style={newStopStyles.stepNum}>1</Text>}
             </View>
             <Text style={newStopStyles.stepLabel}>Find a location</Text>
@@ -1301,20 +1318,20 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
 
           {/* Search bar */}
           <View style={newStopStyles.searchRow}>
-            <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 6 }} />
+            <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 6 }} />
             <TextInput
               style={newStopStyles.searchInput}
               placeholder="Search address or place…"
               value={searchQuery}
               onChangeText={handleSearchChange}
-              placeholderTextColor="#aaa"
+              placeholderTextColor={GRAY_400}
               returnKeyType="search"
               autoCorrect={false}
             />
             {isSearching && <ActivityIndicator size="small" color={primaryColor} style={{ marginLeft: 6 }} />}
             {searchQuery.length > 0 && !isSearching && (
               <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                <Icon name="close" size={16} color="#9ca3af" style={{ marginLeft: 6 }} />
+                <Icon name="close" size={16} color={GRAY_400} style={{ marginLeft: 6 }} />
               </TouchableOpacity>
             )}
           </View>
@@ -1328,7 +1345,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                   style={newStopStyles.dropdownItem}
                   onPress={() => handleSelectPlace(s)}
                 >
-                  <Icon name="place" size={14} color="#9ca3af" style={{ marginRight: 8, marginTop: 1 }} />
+                  <Icon name="place" size={14} color={GRAY_400} style={{ marginRight: 8, marginTop: 1 }} />
                   <Text style={styles.searchDropdownText} numberOfLines={2}>{s.description}</Text>
                 </TouchableOpacity>
               ))}
@@ -1355,9 +1372,9 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
             style={newStopStyles.manualToggle}
             onPress={() => setShowManualCoords((v) => !v)}
           >
-            <Icon name="my-location" size={13} color="#9ca3af" />
+            <Icon name="my-location" size={13} color={GRAY_400} />
             <Text style={newStopStyles.manualToggleText}>Enter coordinates manually</Text>
-            <Icon name={showManualCoords ? 'expand-less' : 'expand-more'} size={16} color="#9ca3af" />
+            <Icon name={showManualCoords ? 'expand-less' : 'expand-more'} size={16} color={GRAY_400} />
           </TouchableOpacity>
 
           {showManualCoords && (
@@ -1369,7 +1386,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                   value={manualLat}
                   onChangeText={setManualLat}
                   keyboardType="numbers-and-punctuation"
-                  placeholderTextColor="#aaa"
+                  placeholderTextColor={GRAY_400}
                   returnKeyType="next"
                 />
                 <TextInput
@@ -1378,7 +1395,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                   value={manualLon}
                   onChangeText={setManualLon}
                   keyboardType="numbers-and-punctuation"
-                  placeholderTextColor="#aaa"
+                  placeholderTextColor={GRAY_400}
                   returnKeyType="done"
                   onSubmitEditing={handleApplyManualCoords}
                 />
@@ -1400,7 +1417,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
           <View style={[newStopStyles.stepHeader, !pendingCoords && newStopStyles.stepHeaderDisabled]}>
             <View style={[newStopStyles.stepBadge, pendingName.trim() && pendingCoords ? { backgroundColor: primaryColor } : newStopStyles.stepBadgeInactive]}>
               {pendingName.trim() && pendingCoords
-                ? <Icon name="check" size={12} color="#fff" />
+                ? <Icon name="check" size={12} color={WHITE} />
                 : <Text style={newStopStyles.stepNum}>2</Text>}
             </View>
             <Text style={newStopStyles.stepLabel}>Name this stop</Text>
@@ -1411,7 +1428,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
             placeholder={pendingCoords ? 'e.g. Main Entrance, Library Loop' : 'Pick a location first'}
             value={pendingName}
             onChangeText={setPendingName}
-            placeholderTextColor={pendingCoords ? '#aaa' : '#d1d5db'}
+            placeholderTextColor={pendingCoords ? GRAY_400 : GRAY_300}
             editable={!!pendingCoords}
           />
 
@@ -1420,7 +1437,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
             onPress={handleAddStop}
             disabled={!pendingName.trim() || !pendingCoords}
           >
-            <Icon name="add-location-alt" size={20} color="#fff" />
+            <Icon name="add-location-alt" size={20} color={WHITE} />
             <Text style={newStopStyles.addBtnText}>Add Stop</Text>
           </TouchableOpacity>
         </View>
@@ -1430,7 +1447,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
             <Icon name="place" size={18} color={primaryColor} />
             <Text style={styles.stopName} numberOfLines={1}>{stop.name}</Text>
             <TouchableOpacity onPress={() => handleDeleteStop(stop.id)}>
-              <Icon name="close" size={18} color="#e53935" />
+              <Icon name="close" size={18} color={DANGER_COLOR} />
             </TouchableOpacity>
           </View>
         ))}
@@ -1444,9 +1461,9 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
           onPress={() => setShowTzPicker(true)}
           activeOpacity={0.7}
         >
-          <Icon name="schedule" size={18} color="#6b7280" />
+          <Icon name="schedule" size={18} color={GRAY_500} />
           <Text style={styles.tzValue}>{timezone}</Text>
-          <Icon name="expand-more" size={20} color="#6b7280" />
+          <Icon name="expand-more" size={20} color={GRAY_500} />
         </TouchableOpacity>
 
         <BottomSheet
@@ -1457,7 +1474,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
           <View style={styles.tzModalHeader}>
             <Text style={styles.tzModalTitle}>Select Timezone</Text>
             <TouchableOpacity onPress={() => setShowTzPicker(false)}>
-              <Icon name="close" size={22} color="#374151" />
+              <Icon name="close" size={22} color={GRAY_700} />
             </TouchableOpacity>
           </View>
           <FlatList
@@ -1496,7 +1513,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
             <Icon
               name="add-circle"
               size={24}
-              color={routes.length >= planLimits.maxRoutes ? '#ccc' : primaryColor}
+              color={routes.length >= planLimits.maxRoutes ? GRAY_300 : primaryColor}
             />
           </TouchableOpacity>
         </View>
@@ -1511,10 +1528,10 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
               placeholder="Route name (e.g. Morning Loop)"
               value={newRouteName}
               onChangeText={setNewRouteName}
-              placeholderTextColor="#aaa"
+              placeholderTextColor={GRAY_400}
             />
             <TouchableOpacity style={[styles.addStopBtn, { backgroundColor: primaryColor }]} onPress={handleAddRoute}>
-              <Icon name="check" size={22} color="#fff" />
+              <Icon name="check" size={22} color={WHITE} />
             </TouchableOpacity>
           </View>
         )}
@@ -1530,9 +1547,9 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                 <Icon name="directions-bus" size={18} color={primaryColor} />
                 <Text style={styles.routeName}>{route.name}</Text>
                 <Text style={styles.routeStopCount}>{route.stopIds.length} stop{route.stopIds.length !== 1 ? 's' : ''}</Text>
-                <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={20} color="#888" />
+                <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={20} color={GRAY_500} />
                 <TouchableOpacity onPress={() => handleDeleteRoute(route.id)} style={styles.routeDeleteBtn}>
-                  <Icon name="delete-outline" size={18} color="#e53935" />
+                  <Icon name="delete-outline" size={18} color={DANGER_COLOR} />
                 </TouchableOpacity>
               </TouchableOpacity>
 
@@ -1549,13 +1566,13 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                         <Text style={styles.routeStopIndex}>{idx + 1}.</Text>
                         <Text style={styles.routeStopName}>{stop.name}</Text>
                         <TouchableOpacity onPress={() => handleMoveStop(route.id, stopId, 'up')} disabled={idx === 0}>
-                          <Icon name="arrow-upward" size={16} color={idx === 0 ? '#ccc' : '#555'} />
+                          <Icon name="arrow-upward" size={16} color={idx === 0 ? GRAY_300 : GRAY_700} />
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => handleMoveStop(route.id, stopId, 'down')} disabled={idx === route.stopIds.length - 1}>
-                          <Icon name="arrow-downward" size={16} color={idx === route.stopIds.length - 1 ? '#ccc' : '#555'} />
+                          <Icon name="arrow-downward" size={16} color={idx === route.stopIds.length - 1 ? GRAY_300 : GRAY_700} />
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => handleToggleStopInRoute(route.id, stopId)}>
-                          <Icon name="remove-circle-outline" size={18} color="#e53935" />
+                          <Icon name="remove-circle-outline" size={18} color={DANGER_COLOR} />
                         </TouchableOpacity>
                       </View>
                     );
@@ -1623,7 +1640,7 @@ const ROLE_LABELS: Record<string, string> = {
 const ROLE_COLORS: Record<string, string> = {
   student: '#3b82f6',
   driver: '#f59e0b',
-  admin: '#16a34a',
+  admin: PRIMARY_COLOR,
   parent: '#10b981',
 };
 
@@ -1863,8 +1880,8 @@ function UsersTab() {
               ]}
               onPress={() => setInviteRole(key)}
             >
-              <Icon name={icon} size={14} color={inviteRole === key ? '#fff' : '#6b7280'} />
-              <Text style={[usersStyles.roleChipText, inviteRole === key && { color: '#fff' }]}>
+              <Icon name={icon} size={14} color={inviteRole === key ? WHITE : GRAY_500} />
+              <Text style={[usersStyles.roleChipText, inviteRole === key && { color: WHITE }]}>
                 {label}
               </Text>
             </TouchableOpacity>
@@ -1882,8 +1899,8 @@ function UsersTab() {
               style={[usersStyles.inviteBtn, usersStyles.inviteBtnSecondary]}
               onPress={handleCopyId}
             >
-              <Icon name={copiedId ? 'check' : 'content-copy'} size={15} color={copiedId ? '#16a34a' : '#6b7280'} />
-              <Text style={[usersStyles.inviteBtnText, copiedId && { color: '#16a34a' }]}>
+              <Icon name={copiedId ? 'check' : 'content-copy'} size={15} color={copiedId ? PRIMARY_COLOR : GRAY_500} />
+              <Text style={[usersStyles.inviteBtnText, copiedId && { color: PRIMARY_COLOR }]}>
                 {copiedId ? 'Copied!' : 'Copy ID'}
               </Text>
             </TouchableOpacity>
@@ -1891,8 +1908,8 @@ function UsersTab() {
               style={[usersStyles.inviteBtn, { backgroundColor: primaryColor }]}
               onPress={handleShareInvite}
             >
-              <Icon name="share" size={15} color="#fff" />
-              <Text style={[usersStyles.inviteBtnText, { color: '#fff' }]}>Share invite</Text>
+              <Icon name="share" size={15} color={WHITE} />
+              <Text style={[usersStyles.inviteBtnText, { color: WHITE }]}>Share invite</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1908,11 +1925,11 @@ function UsersTab() {
 
       {members.length > 0 && (
         <View style={[newStopStyles.searchRow, { marginBottom: 4 }]}>
-          <Icon name="search" size={18} color="#9ca3af" style={{ marginRight: 8 }} />
+          <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 8 }} />
           <TextInput
             style={newStopStyles.searchInput}
             placeholder="Search by name or email…"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={GRAY_400}
             value={search}
             onChangeText={setSearch}
             autoCorrect={false}
@@ -1986,7 +2003,7 @@ function UsersTab() {
               style={[styles.removeUserBtn, (isSelf || isOwner) && usersStyles.removeDisabled]}
               disabled={isOwner}
             >
-              <Icon name="person-remove" size={18} color={(isSelf || isOwner) ? '#d1d5db' : '#e53935'} />
+              <Icon name="person-remove" size={18} color={(isSelf || isOwner) ? GRAY_300 : DANGER_COLOR} />
             </TouchableOpacity>
           </View>
         );
@@ -2043,8 +2060,8 @@ function UsersTab() {
           setRoutePickerTarget(null);
         }}
       >
-        <View style={[pickerSheetStyles.roleCircle, { backgroundColor: '#f3f4f6' }]}>
-          <Icon name="remove" size={14} color="#9ca3af" />
+        <View style={[pickerSheetStyles.roleCircle, { backgroundColor: GRAY_100 }]}>
+          <Icon name="remove" size={14} color={GRAY_400} />
         </View>
         <Text style={[pickerSheetStyles.optionLabel, !driverDefaults[routePickerTarget?.uid ?? ''] && pickerSheetStyles.optionLabelActive]}>
           No default route
@@ -2084,7 +2101,7 @@ const usersStyles = StyleSheet.create({
   inviteCard: {
     borderWidth: 1,
     borderColor: `${PRIMARY_COLOR}30`,
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     padding: 14,
     marginBottom: 16,
     gap: 12,
@@ -2106,12 +2123,12 @@ const usersStyles = StyleSheet.create({
   inviteTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 2,
   },
   inviteBody: {
     fontSize: 12,
-    color: '#6b7280',
+    color: GRAY_500,
   },
   roleChips: {
     flexDirection: 'row',
@@ -2123,15 +2140,15 @@ const usersStyles = StyleSheet.create({
     gap: 5,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+    borderColor: GRAY_200,
+    backgroundColor: GRAY_50,
   },
   roleChipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#6b7280',
+    color: GRAY_500,
   },
   inviteActions: {
     gap: 8,
@@ -2144,7 +2161,7 @@ const usersStyles = StyleSheet.create({
   orgIdLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -2169,13 +2186,13 @@ const usersStyles = StyleSheet.create({
   },
   inviteBtnSecondary: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+    borderColor: GRAY_200,
+    backgroundColor: GRAY_50,
   },
   inviteBtnText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#6b7280',
+    color: GRAY_500,
   },
   selfAvatar: {
     backgroundColor: `${PRIMARY_COLOR}25`,
@@ -2187,7 +2204,7 @@ const usersStyles = StyleSheet.create({
   },
   ownerBadge: {
     backgroundColor: '#fef3c7',
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
@@ -2198,7 +2215,7 @@ const usersStyles = StyleSheet.create({
   },
   youBadge: {
     backgroundColor: '#e0f2fe',
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
@@ -2219,7 +2236,7 @@ const pickerSheetStyles = StyleSheet.create({
   handle: {
     width: 40,
     height: 4,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: GRAY_200,
     borderRadius: 2,
     alignSelf: 'center',
     marginBottom: 20,
@@ -2227,13 +2244,13 @@ const pickerSheetStyles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     textAlign: 'center',
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     marginBottom: 12,
   },
@@ -2243,16 +2260,16 @@ const pickerSheetStyles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: GRAY_100,
   },
   optionLabel: {
     flex: 1,
     fontSize: 15,
-    color: '#374151',
+    color: GRAY_700,
   },
   optionLabelActive: {
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   roleCircle: {
     width: 34,
@@ -2269,13 +2286,13 @@ const pickerSheetStyles = StyleSheet.create({
     marginTop: 16,
     paddingVertical: 14,
     alignItems: 'center',
-    backgroundColor: '#f3f4f6',
-    borderRadius: 12,
+    backgroundColor: GRAY_100,
+    borderRadius: borderRadius.md,
   },
   cancelText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#374151',
+    color: GRAY_700,
   },
 });
 
@@ -2400,12 +2417,12 @@ function PlanDetailSheet({
         <TouchableOpacity
           style={[
             detailStyles.ctaBtn,
-            { backgroundColor: actionDisabled ? '#e5e7eb' : primaryColor },
+            { backgroundColor: actionDisabled ? GRAY_200 : primaryColor },
           ]}
           onPress={() => { if (!actionDisabled) { onAction(); onClose(); } }}
           disabled={actionDisabled}
         >
-          <Text style={[detailStyles.ctaBtnText, { color: actionDisabled ? '#9ca3af' : '#fff' }]}>
+          <Text style={[detailStyles.ctaBtnText, { color: actionDisabled ? GRAY_400 : WHITE }]}>
             {actionLabel}
           </Text>
         </TouchableOpacity>
@@ -2421,7 +2438,7 @@ const detailStyles = StyleSheet.create({
   },
   handle: {
     width: 40, height: 4,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: GRAY_200,
     borderRadius: 2,
     alignSelf: 'center',
     marginBottom: 18,
@@ -2431,7 +2448,7 @@ const detailStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     alignSelf: 'flex-start',
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 10,
     paddingVertical: 4,
     marginBottom: 10,
@@ -2443,7 +2460,7 @@ const detailStyles = StyleSheet.create({
   planName: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 4,
   },
   planPrice: {
@@ -2453,18 +2470,18 @@ const detailStyles = StyleSheet.create({
   },
   tagline: {
     fontSize: 14,
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 20,
   },
   divider: {
     height: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     marginVertical: 16,
   },
   compareNote: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 12,
@@ -2489,7 +2506,7 @@ const detailStyles = StyleSheet.create({
   featureText: {
     flex: 1,
     fontSize: 14,
-    color: '#374151',
+    color: GRAY_700,
     lineHeight: 20,
   },
   ctaBtn: {
@@ -2743,7 +2760,7 @@ function BillingTab() {
   const isActive = org?.subscriptionStatus === 'active';
   const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
   const dataUnlocked = org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false;
-  const statusColor = isActive || isTrialing ? '#2e7d32' : '#e53935';
+  const statusColor = isActive || isTrialing ? '#2e7d32' : DANGER_COLOR;
   const isApproved = org?.approved === true;
 
   const PLANS = [
@@ -2942,10 +2959,10 @@ function BillingTab() {
             disabled={isDeletingOrg}
           >
             {isDeletingOrg ? (
-              <ActivityIndicator size="small" color="#dc2626" />
+              <ActivityIndicator size="small" color={DANGER_COLOR} />
             ) : (
               <>
-                <Icon name="delete-forever" size={18} color="#dc2626" />
+                <Icon name="delete-forever" size={18} color={DANGER_COLOR} />
                 <Text style={dangerStyles.deleteBtnText}>Delete Organization</Text>
               </>
             )}
@@ -2972,7 +2989,7 @@ function BillingTab() {
           style={[confirmStyles.primaryBtn, { backgroundColor: primaryColor }]}
           onPress={() => { setConfirmation(null); navigation.navigate('AdminAnalytics'); }}
         >
-          <Icon name="bar-chart" size={18} color="#fff" />
+          <Icon name="bar-chart" size={18} color={WHITE} />
           <Text style={confirmStyles.primaryBtnText}>Go to Analytics</Text>
         </TouchableOpacity>
       )}
@@ -2998,13 +3015,13 @@ const dangerStyles = StyleSheet.create({
   label: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#dc2626',
+    color: DANGER_COLOR,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   hint: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 18,
   },
   deleteBtn: {
@@ -3013,15 +3030,15 @@ const dangerStyles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     borderWidth: 1.5,
-    borderColor: '#dc2626',
+    borderColor: DANGER_COLOR,
     borderRadius: 10,
     paddingVertical: 12,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   deleteBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#dc2626',
+    color: DANGER_COLOR,
   },
 });
 
@@ -3043,13 +3060,13 @@ const confirmStyles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#111',
+    color: GRAY_900,
     textAlign: 'center',
     marginBottom: 10,
   },
   body: {
     fontSize: 15,
-    color: '#6b7280',
+    color: GRAY_500,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 28,
@@ -3068,7 +3085,7 @@ const confirmStyles = StyleSheet.create({
   primaryBtnText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#fff',
+    color: WHITE,
   },
   secondaryBtn: {
     paddingVertical: 12,
@@ -3077,7 +3094,7 @@ const confirmStyles = StyleSheet.create({
   },
   secondaryBtnText: {
     fontSize: 15,
-    color: '#6b7280',
+    color: GRAY_500,
     fontWeight: '500',
   },
 });
@@ -3137,7 +3154,7 @@ function OperationsTab() {
           value={enabled}
           onValueChange={setEnabled}
           trackColor={{ true: primaryColor }}
-          thumbColor="#fff"
+          thumbColor={WHITE}
         />
       </View>
 
@@ -3192,10 +3209,10 @@ const opsStyles = StyleSheet.create({
   settingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: WHITE,
+    borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     padding: 14,
     marginBottom: 12,
     gap: 12,
@@ -3203,12 +3220,12 @@ const opsStyles = StyleSheet.create({
   settingLabel: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 2,
   },
   settingHint: {
     fontSize: 12,
-    color: '#6b7280',
+    color: GRAY_500,
     lineHeight: 16,
   },
   chipRow: {
@@ -3221,18 +3238,18 @@ const opsStyles = StyleSheet.create({
   chip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     borderWidth: 1.5,
-    borderColor: '#d1d5db',
-    backgroundColor: '#f9fafb',
+    borderColor: GRAY_300,
+    backgroundColor: GRAY_50,
   },
   chipText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#374151',
+    color: GRAY_700,
   },
   chipTextActive: {
-    color: '#fff',
+    color: WHITE,
   },
 });
 
@@ -3310,10 +3327,10 @@ export default function AdminOrgSetupScreen() {
               onPress={() => setActiveTab(t.key)}
             >
               <View style={styles.tabBarIconWrap}>
-                <Icon name={t.icon} size={20} color={activeTab === t.key ? primaryColor : '#aaa'} />
+                <Icon name={t.icon} size={20} color={activeTab === t.key ? primaryColor : GRAY_400} />
                 {tabStatus[t.key] === 'done' && (
                   <View style={[styles.tabBarBadge, { backgroundColor: primaryColor }]}>
-                    <Icon name="check" size={8} color="#fff" />
+                    <Icon name="check" size={8} color={WHITE} />
                   </View>
                 )}
                 {tabStatus[t.key] === 'attention' && (
@@ -3351,7 +3368,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.section,
     paddingVertical: spacing.item,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: BORDER_COLOR,
   },
   backButton: {
     padding: 4,
@@ -3360,21 +3377,21 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#6b7280',
+    color: GRAY_500,
     marginTop: 1,
   },
   headerProgressText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6b7280',
+    color: GRAY_500,
   },
   headerProgressBarBg: {
     height: 3,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
   },
   headerProgressBarFill: {
     height: '100%',
@@ -3382,8 +3399,8 @@ const styles = StyleSheet.create({
   tabBar: {
     height: 60,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    backgroundColor: '#fff',
+    borderBottomColor: GRAY_100,
+    backgroundColor: WHITE,
   },
   tabBarContent: {
     flexDirection: 'row',
@@ -3413,14 +3430,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: '#fff',
+    borderColor: WHITE,
   },
   tabBarBadgeAttention: {
     backgroundColor: '#d97706',
   },
   tabBarLabel: {
     fontSize: 11,
-    color: '#aaa',
+    color: GRAY_400,
   },
   tabBarLabelActive: {
     color: PRIMARY_COLOR,
@@ -3455,7 +3472,7 @@ const styles = StyleSheet.create({
     padding: spacing.section,
   },
   errorText: {
-    color: '#e53935',
+    color: DANGER_COLOR,
     textAlign: 'center',
     fontSize: 14,
   },
@@ -3464,7 +3481,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: GRAY_100,
     gap: 10,
   },
   memberAvatar: {
@@ -3491,12 +3508,12 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111',
+    color: GRAY_900,
     flexShrink: 1,
   },
   memberEmail: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginTop: 1,
   },
   roleBadge: {
@@ -3530,20 +3547,20 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#374151',
+    color: GRAY_700,
     marginBottom: 6,
     marginTop: 16,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: GRAY_200,
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.item,
     paddingVertical: Platform.OS === 'ios' ? 13 : 10,
     fontSize: 15,
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 0,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   certInput: {
     minHeight: 100,
@@ -3551,17 +3568,17 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginBottom: spacing.item,
   },
   tzRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#f9fafb',
+    backgroundColor: GRAY_50,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     paddingHorizontal: 12,
     paddingVertical: 11,
     marginBottom: 20,
@@ -3569,7 +3586,7 @@ const styles = StyleSheet.create({
   tzValue: {
     flex: 1,
     fontSize: 14,
-    color: '#111827',
+    color: GRAY_900,
     fontWeight: '500',
   },
   tzModalHeader: {
@@ -3578,12 +3595,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 18,
     borderBottomWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: GRAY_100,
   },
   tzModalTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: GRAY_900,
   },
   tzOption: {
     flexDirection: 'row',
@@ -3591,16 +3608,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 13,
     borderBottomWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: GRAY_100,
   },
   tzOptionLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: GRAY_900,
   },
   tzOptionValue: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
     marginTop: 1,
   },
   actionButton: {
@@ -3613,9 +3630,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.item,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: GRAY_200,
     marginBottom: 8,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   radioRowActive: {
     borderColor: PRIMARY_COLOR,
@@ -3626,7 +3643,7 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 9,
     borderWidth: 2,
-    borderColor: '#ccc',
+    borderColor: GRAY_300,
     marginRight: 10,
   },
   radioSelected: {
@@ -3635,7 +3652,7 @@ const styles = StyleSheet.create({
   },
   radioLabel: {
     fontSize: 14,
-    color: '#222',
+    color: GRAY_900,
   },
   infoBox: {
     backgroundColor: '#f0f4ff',
@@ -3650,23 +3667,23 @@ const styles = StyleSheet.create({
   },
   infoBoxLabel: {
     fontSize: 11,
-    color: '#666',
+    color: GRAY_600,
     marginTop: 6,
   },
   infoBoxValue: {
     fontSize: 13,
-    color: '#111',
+    color: GRAY_900,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   testPassedText: {
     fontSize: 13,
-    color: '#16a34a',
+    color: PRIMARY_COLOR,
     fontWeight: '600',
     marginTop: 8,
   },
   testFailedText: {
     fontSize: 13,
-    color: '#dc2626',
+    color: DANGER_COLOR,
     fontWeight: '600',
     marginTop: 8,
   },
@@ -3690,9 +3707,9 @@ const styles = StyleSheet.create({
   searchBarRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 12,
@@ -3701,13 +3718,13 @@ const styles = StyleSheet.create({
   searchBarInput: {
     flex: 1,
     fontSize: 14,
-    color: '#111',
+    color: GRAY_900,
     padding: 0,
   },
   searchDropdown: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     borderRadius: 10,
     marginBottom: 12,
     overflow: 'hidden',
@@ -3718,17 +3735,17 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: GRAY_100,
   },
   searchDropdownText: {
     flex: 1,
     fontSize: 13,
-    color: '#374151',
+    color: GRAY_700,
     lineHeight: 19,
   },
   coordPreview: {
     fontSize: 12,
-    color: '#6b7280',
+    color: GRAY_500,
     marginTop: 2,
     marginBottom: 4,
     paddingHorizontal: 2,
@@ -3736,8 +3753,8 @@ const styles = StyleSheet.create({
   addStopForm: {
     backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
+    borderColor: GRAY_200,
+    borderRadius: borderRadius.md,
     padding: 14,
     marginBottom: 16,
     gap: 10,
@@ -3766,7 +3783,7 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
   addStopBtnText: {
-    color: '#fff',
+    color: WHITE,
     fontWeight: '600',
     fontSize: 15,
   },
@@ -3776,16 +3793,16 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 12,
     marginBottom: 4,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#f0f0f0',
+    borderColor: GRAY_100,
     gap: 10,
   },
   stopName: {
     flex: 1,
     fontSize: 15,
-    color: '#222',
+    color: GRAY_900,
   },
   // Routes
   routesHeader: {
@@ -3796,13 +3813,13 @@ const styles = StyleSheet.create({
   },
   planLimitBadge: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginLeft: 'auto' as any,
     marginRight: 8,
   },
   routeCard: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: GRAY_200,
     borderRadius: borderRadius.md,
     marginBottom: 8,
     overflow: 'hidden',
@@ -3812,30 +3829,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 14,
     gap: 8,
-    backgroundColor: '#fafafa',
+    backgroundColor: GRAY_50,
   },
   routeName: {
     flex: 1,
     fontSize: 14,
     fontWeight: '600',
-    color: '#222',
+    color: GRAY_900,
   },
   routeStopCount: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
   },
   routeDeleteBtn: {
     paddingLeft: 4,
   },
   routeEditor: {
     padding: spacing.item,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
+    borderTopColor: GRAY_200,
   },
   routeEditorLabel: {
     fontSize: 12,
-    color: '#666',
+    color: GRAY_600,
     marginBottom: 8,
   },
   routeStopRow: {
@@ -3844,17 +3861,17 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     gap: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: GRAY_100,
   },
   routeStopIndex: {
     fontSize: 13,
-    color: '#999',
+    color: GRAY_400,
     width: 20,
   },
   routeStopName: {
     flex: 1,
     fontSize: 14,
-    color: '#222',
+    color: GRAY_900,
   },
   routeStopAvailable: {
     flexDirection: 'row',
@@ -3865,7 +3882,7 @@ const styles = StyleSheet.create({
   },
   // Billing
   statusCard: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     padding: spacing.section + 4,
     ...cardShadow,
@@ -3879,18 +3896,18 @@ const styles = StyleSheet.create({
   },
   statusLabel: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginBottom: 2,
   },
   statusPlanName: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
   },
   statusBadgeText: {
     fontSize: 12,
@@ -3904,16 +3921,16 @@ const styles = StyleSheet.create({
   },
   statusLimitItem: {
     fontSize: 13,
-    color: '#444',
+    color: GRAY_700,
   },
   trialNote: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginTop: spacing.item,
     lineHeight: 17,
   },
   planCard: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.xl,
     padding: spacing.section,
     ...cardShadow,
@@ -3938,13 +3955,13 @@ const styles = StyleSheet.create({
   planName: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
   },
   popularBadge: {
     backgroundColor: PRIMARY_COLOR + '20',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
   },
   popularBadgeText: {
     fontSize: 10,
@@ -3955,7 +3972,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#d1fae5',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
   },
   currentBadgeText: {
     fontSize: 10,
@@ -3970,7 +3987,7 @@ const styles = StyleSheet.create({
   },
   planDesc: {
     fontSize: 12,
-    color: '#888',
+    color: GRAY_500,
     marginTop: 2,
   },
   learnMoreBtn: {

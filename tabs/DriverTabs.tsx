@@ -6,7 +6,7 @@ import DriverScreen from '../screens/DriverScreen';
 import DriverMenuScreen from '../screens/DriverMenuScreen';
 import RoutesScreen from '../screens/RoutesScreen';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { CARD_BACKGROUND, TEXT_SECONDARY } from '../src/constants/theme';
+import { CARD_BACKGROUND, TEXT_SECONDARY, BORDER_COLOR } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAuth } from '../src/auth/AuthProvider';
 
@@ -23,7 +23,7 @@ export default function DriverTabs() {
         tabBarStyle: {
           backgroundColor: CARD_BACKGROUND,
           borderTopWidth: 1,
-          borderTopColor: '#E2E8F0',
+          borderTopColor: BORDER_COLOR,
           elevation: 8,
           height: 80,
           paddingBottom: 5,

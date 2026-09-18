@@ -3,6 +3,7 @@ import { Animated, StyleSheet, View } from 'react-native'
 import { Text } from '../../components/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { WHITE, BLACK } from '../constants/theme';
 
 export type ToastType = 'success' | 'error' | 'info';
 
@@ -57,7 +58,7 @@ function ToastPill({ toast, onGone }: { toast: ToastMessage; onGone: (id: number
       ]}
       pointerEvents="none"
     >
-      <Icon name={icon} size={18} color="#fff" />
+      <Icon name={icon} size={18} color={WHITE} />
       <Text style={styles.pillText}>{toast.message}</Text>
     </Animated.View>
   );
@@ -109,7 +110,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 16,
     borderRadius: 14,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.18,
     shadowRadius: 14,
@@ -123,7 +124,7 @@ const styles = StyleSheet.create({
   },
   pillText: {
     flex: 1,
-    color: '#fff',
+    color: WHITE,
     fontSize: 14,
     fontWeight: '500',
     lineHeight: 20,

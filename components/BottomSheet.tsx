@@ -7,6 +7,7 @@ import {
   ViewStyle,
 } from 'react-native';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
+import { WHITE } from '../src/constants/theme';
 
 type Props = {
   visible: boolean;
@@ -104,7 +105,7 @@ const styles = StyleSheet.create({
     right: 0,
   },
   sheet: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,

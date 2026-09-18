@@ -13,6 +13,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showToast } from '../src/components/Toast';
 import { spacing, borderRadius } from '../src/styles/common';
+import { WHITE, GRAY_100, GRAY_200, GRAY_400, GRAY_500, GRAY_900 } from '../src/constants/theme';
 
 type NotifPrefs = {
   busArriving: boolean;
@@ -181,8 +182,8 @@ export default function NotificationPrefsScreen() {
                 <Switch
                   value={prefs[row.key]}
                   onValueChange={(v) => toggle(row.key, v)}
-                  trackColor={{ false: '#e5e7eb', true: `${primaryColor}60` }}
-                  thumbColor={prefs[row.key] ? primaryColor : '#9ca3af'}
+                  trackColor={{ false: GRAY_200, true: `${primaryColor}60` }}
+                  thumbColor={prefs[row.key] ? primaryColor : GRAY_400}
                   disabled={saving}
                 />
               </View>
@@ -213,22 +214,22 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 6,
   },
   hint: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     marginBottom: 16,
     lineHeight: 18,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: GRAY_200,
     overflow: 'hidden',
     marginBottom: 16,
   },
@@ -240,7 +241,7 @@ const styles = StyleSheet.create({
   },
   rowBorder: {
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: GRAY_100,
   },
   iconWrap: {
     width: 38,
@@ -251,12 +252,12 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   rowText: { flex: 1 },
-  rowTitle: { fontSize: 14, fontWeight: '600', color: '#111827', marginBottom: 2 },
-  rowDesc: { fontSize: 12, color: '#6b7280', lineHeight: 16 },
-  savingText: { fontSize: 12, color: '#9ca3af', textAlign: 'center', marginBottom: 8 },
+  rowTitle: { fontSize: 14, fontWeight: '600', color: GRAY_900, marginBottom: 2 },
+  rowDesc: { fontSize: 12, color: GRAY_500, lineHeight: 16 },
+  savingText: { fontSize: 12, color: GRAY_400, textAlign: 'center', marginBottom: 8 },
   footer: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: GRAY_400,
     lineHeight: 18,
     textAlign: 'center',
     paddingHorizontal: 8,
@@ -277,11 +278,11 @@ const styles = StyleSheet.create({
   permBannerBody: { fontSize: 12, color: '#78350f', lineHeight: 17 },
   permBannerBtn: {
     backgroundColor: '#f59e0b',
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     paddingHorizontal: 10,
     paddingVertical: 7,
     alignSelf: 'flex-start',
     flexShrink: 0,
   },
-  permBannerBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
+  permBannerBtnText: { fontSize: 12, fontWeight: '700', color: WHITE },
 });

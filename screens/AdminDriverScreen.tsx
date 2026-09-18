@@ -13,6 +13,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { useDriver } from '../drivercontext/DriverContext';
+import { GRAY_500 } from '../src/constants/theme';
 import { useAuth } from '../src/auth/AuthProvider';
 import StopRequestCard from '../components/StopRequestCard';
 import { showAlert } from '../src/utils/alerts';
@@ -126,7 +127,7 @@ const styles = StyleSheet.create({
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   noRequests: {
     textAlign: 'center',
-    color: '#6b7280',
+    color: GRAY_500,
     fontSize: 16,
   },
   listContent: {

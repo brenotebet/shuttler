@@ -8,7 +8,15 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { auth, db } from '../firebase/firebaseconfig';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { CARD_BACKGROUND } from '../src/constants/theme';
+import {
+  CARD_BACKGROUND,
+  GRAY_100,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_700,
+  GRAY_900,
+} from '../src/constants/theme';
 import HeaderBar from '../components/HeaderBar';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import ScreenContainer from '../components/ScreenContainer';
@@ -100,7 +108,7 @@ export default function StudentHistoryScreen() {
                   <Icon
                     name={isCancelled ? 'cancel' : 'place'}
                     size={18}
-                    color={isCancelled ? '#9ca3af' : primaryColor}
+                    color={isCancelled ? GRAY_400 : primaryColor}
                   />
                 </View>
                 <View style={styles.cardContent}>
@@ -127,7 +135,7 @@ export default function StudentHistoryScreen() {
         }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Icon name="history" size={48} color="#d1d5db" />
+            <Icon name="history" size={48} color={GRAY_300} />
             {role === 'parent' && !watchUid ? (
               <>
                 <Text style={styles.emptyText}>No child linked yet.</Text>
@@ -190,7 +198,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   cardIconWrapCancelled: {
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
   },
   cardContent: {
     flex: 1,
@@ -205,13 +213,13 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#111',
+    color: GRAY_900,
   },
   cardTitleCancelled: {
-    color: '#6b7280',
+    color: GRAY_500,
   },
   cancelledBadge: {
-    backgroundColor: '#f3f4f6',
+    backgroundColor: GRAY_100,
     borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -219,21 +227,21 @@ const styles = StyleSheet.create({
   cancelledBadgeText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#9ca3af',
+    color: GRAY_400,
   },
   cardDetail: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
   },
   emptyText: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#374151',
+    color: GRAY_700,
     marginTop: 12,
   },
   emptyHint: {
     fontSize: 14,
-    color: '#6b7280',
+    color: GRAY_500,
     marginTop: 4,
     textAlign: 'center',
   },

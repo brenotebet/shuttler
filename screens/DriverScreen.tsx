@@ -32,7 +32,23 @@ import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
 import { notifyStudentArrived, notifyStudentApproaching, notifyStudentCompleted, notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
-import { BACKGROUND_COLOR } from '../src/constants/theme';
+import {
+  BACKGROUND_COLOR,
+  PRIMARY_COLOR,
+  DANGER_COLOR,
+  WHITE,
+  BLACK,
+  GRAY_50,
+  GRAY_100,
+  GRAY_200,
+  GRAY_300,
+  GRAY_400,
+  GRAY_500,
+  GRAY_600,
+  GRAY_700,
+  GRAY_900,
+  BORDER_COLOR,
+} from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
 import { getPlanLimits, planFor } from '../src/constants/planLimits';
@@ -40,6 +56,7 @@ import { useOrg, Stop } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+import { borderRadius } from '../src/styles/common';
 
 const STALE_WINDOW_SECONDS = 180;
 const ARRIVE_RADIUS_FT = 75;
@@ -1056,7 +1073,7 @@ export default function DriverScreen() {
             <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
             {activeRoute && (
               <Text style={styles.headerSubtitle}>
-                <Icon name="route" size={12} color="#6b7280" /> {activeRoute.name} · {routeOrderedStops.length} stop{routeOrderedStops.length !== 1 ? 's' : ''}
+                <Icon name="route" size={12} color={GRAY_500} /> {activeRoute.name} · {routeOrderedStops.length} stop{routeOrderedStops.length !== 1 ? 's' : ''}
               </Text>
             )}
           </View>
@@ -1138,9 +1155,9 @@ export default function DriverScreen() {
           }}
         >
           {isToggling ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={WHITE} />
           ) : (
-            <Icon name={isSharing ? 'gps-off' : 'gps-fixed'} size={22} color="#fff" />
+            <Icon name={isSharing ? 'gps-off' : 'gps-fixed'} size={22} color={WHITE} />
           )}
           <Text style={styles.shareButtonText}>
             {isToggling ? (isSharing ? 'Stopping...' : 'Starting...') : isSharing ? 'Stop Sharing' : 'Start Sharing'}
@@ -1175,9 +1192,9 @@ export default function DriverScreen() {
           <View style={styles.occupancyRow}>
             <Text style={styles.occupancyLabel}>Seats</Text>
             {([
-              { value: 'open', label: 'Available', color: '#16a34a' },
+              { value: 'open', label: 'Available', color: PRIMARY_COLOR },
               { value: 'filling', label: 'Filling up', color: '#d97706' },
-              { value: 'full', label: 'Full', color: '#dc2626' },
+              { value: 'full', label: 'Full', color: DANGER_COLOR },
             ] as const).map((opt) => {
               const selected = occupancy === opt.value;
               return (
@@ -1238,7 +1255,7 @@ export default function DriverScreen() {
 
         {!isSharing && hasLocationPermission && (
           <View style={styles.offlineBanner}>
-            <Icon name="gps-off" size={16} color="#374151" />
+            <Icon name="gps-off" size={16} color={GRAY_700} />
             <Text style={styles.offlineBannerText}>{"You are offline — tap \"Start Sharing\" to go online."}</Text>
           </View>
         )}
@@ -1351,7 +1368,7 @@ export default function DriverScreen() {
                       <Text style={styles.badgeText}>{stopRequests.length}</Text>
                     </View>
                     {stopRequests.length > 0 && (
-                      <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={18} color="#9ca3af" />
+                      <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={18} color={GRAY_400} />
                     )}
                   </View>
                 </TouchableOpacity>
@@ -1440,7 +1457,7 @@ export default function DriverScreen() {
                 <Text style={styles.feedMeta}>
                   {otherBusesDisplay.length} other bus{otherBusesDisplay.length !== 1 ? 'es' : ''} online
                 </Text>
-                <Icon name={showFleetOverview ? 'expand-less' : 'expand-more'} size={20} color="#9ca3af" />
+                <Icon name={showFleetOverview ? 'expand-less' : 'expand-more'} size={20} color={GRAY_400} />
               </View>
             </TouchableOpacity>
             {showFleetOverview && otherBusesDisplay.map((bus, idx) => (
@@ -1455,7 +1472,7 @@ export default function DriverScreen() {
                   <Icon
                     name="directions-bus"
                     size={16}
-                    color={bus.isFresh ? primaryColor : '#9ca3af'}
+                    color={bus.isFresh ? primaryColor : GRAY_400}
                   />
                   <Text style={styles.otherBusName}>{bus.driverName ?? 'Driver'}</Text>
                   {bus.routeName ? (
@@ -1465,9 +1482,9 @@ export default function DriverScreen() {
                   ) : null}
                 </View>
                 <View style={styles.otherBusStops}>
-                  <Icon name="place" size={13} color="#9ca3af" />
+                  <Icon name="place" size={13} color={GRAY_400} />
                   <Text style={styles.otherBusStopLabel}>{bus.currentStop ?? 'En route'}</Text>
-                  <Icon name="arrow-forward" size={13} color="#d1d5db" />
+                  <Icon name="arrow-forward" size={13} color={GRAY_300} />
                   <Text style={styles.otherBusStopLabel}>{bus.nextStop ?? '—'}</Text>
                 </View>
               </View>
@@ -1512,7 +1529,7 @@ export default function DriverScreen() {
               }}
               keyboardType="number-pad"
               placeholder="0"
-              placeholderTextColor="#bbb"
+              placeholderTextColor={GRAY_400}
               textAlign="center"
               selectTextOnFocus
             />
@@ -1557,7 +1574,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     backgroundColor: BACKGROUND_COLOR,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#ddd',
+    borderBottomColor: GRAY_300,
     flexDirection: 'column',
   },
   headerTopRow: {
@@ -1565,8 +1582,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  headerTitle: { fontSize: 22, fontWeight: '700', color: '#111' },
-  headerSubtitle: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  headerTitle: { fontSize: 22, fontWeight: '700', color: GRAY_900 },
+  headerSubtitle: { fontSize: 12, color: GRAY_500, marginTop: 2 },
   scrollContent: {
     paddingHorizontal: 14,
     gap: 12,
@@ -1576,11 +1593,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
   },
   shareButtonDisabled: { opacity: 0.65 },
   shareButtonText: {
-    color: '#fff',
+    color: WHITE,
     fontSize: 14,
     marginLeft: 6,
     fontWeight: '600',
@@ -1619,18 +1636,18 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   pastDueBannerText: { flex: 1, fontSize: 13, color: '#7c2d12', fontWeight: '500' },
-  pastDueBannerLink: { fontSize: 13, color: '#dc2626', fontWeight: '700' },
+  pastDueBannerLink: { fontSize: 13, color: DANGER_COLOR, fontWeight: '700' },
   offlineBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
+    borderColor: BORDER_COLOR,
+    borderRadius: borderRadius.md,
     padding: 14,
   },
-  offlineBannerText: { flex: 1, fontSize: 13, color: '#374151' },
+  offlineBannerText: { flex: 1, fontSize: 13, color: GRAY_700 },
   waitingBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1638,7 +1655,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fffbeb',
     borderWidth: 1,
     borderColor: '#fcd34d',
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     padding: 14,
   },
   waitingBannerText: { flex: 1, fontSize: 13, color: '#92400e', fontWeight: '500' },
@@ -1649,23 +1666,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#fef2f2',
     borderWidth: 1,
     borderColor: '#fecaca',
-    borderRadius: 12,
+    borderRadius: borderRadius.md,
     padding: 14,
   },
   permissionBannerText: { fontSize: 13, color: '#991b1b' },
-  permissionBannerLink: { fontSize: 13, color: '#dc2626', fontWeight: '700' },
+  permissionBannerLink: { fontSize: 13, color: DANGER_COLOR, fontWeight: '700' },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     padding: 14,
   },
   cardLarge: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     padding: 16,
   },
   shiftCard: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1.5,
@@ -1675,27 +1692,27 @@ const styles = StyleSheet.create({
   shiftChevron: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: borderRadius.lg,
     backgroundColor: '#f0f4ff',
     alignItems: 'center',
     justifyContent: 'center',
   },
   shiftCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  shiftStats: { flexDirection: 'row', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
+  shiftStats: { flexDirection: 'row', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: GRAY_100 },
   shiftStat: { flex: 1, alignItems: 'center' },
   shiftStatValue: { fontSize: 22, fontWeight: '700' },
-  shiftStatLabel: { fontSize: 11, color: '#9ca3af', marginTop: 3 },
-  shiftStatDivider: { width: 1, backgroundColor: '#e5e7eb', marginVertical: 4 },
-  cardTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6, color: '#111' },
+  shiftStatLabel: { fontSize: 11, color: GRAY_400, marginTop: 3 },
+  shiftStatDivider: { width: 1, backgroundColor: GRAY_200, marginVertical: 4 },
+  cardTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6, color: GRAY_900 },
   cardMainValue: { fontSize: 20, fontWeight: '700', marginBottom: 6 },
-  cardMeta: { fontSize: 14, color: '#4d4d4d', marginBottom: 2 },
+  cardMeta: { fontSize: 14, color: GRAY_700, marginBottom: 2 },
   actionButton: {
     marginTop: 12,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
   },
-  actionButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  actionButtonText: { color: WHITE, fontSize: 16, fontWeight: '600' },
   actionButtonDisabled: { opacity: 0.45 },
   feedWrap: {},
   feedRow: {
@@ -1703,50 +1720,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#ddd',
+    borderBottomColor: GRAY_300,
     gap: 10,
   },
   feedRowInfo: { flex: 1 },
-  feedStop: { fontSize: 15, fontWeight: '600', color: '#111' },
-  feedMeta: { fontSize: 13, color: '#666', marginTop: 2 },
-  feedStudent: { fontSize: 13, color: '#444', marginTop: 2 },
+  feedStop: { fontSize: 15, fontWeight: '600', color: GRAY_900 },
+  feedMeta: { fontSize: 13, color: GRAY_600, marginTop: 2 },
+  feedStudent: { fontSize: 13, color: GRAY_700, marginTop: 2 },
   feedSkipBtn: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: borderRadius.sm,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+    borderColor: GRAY_200,
+    backgroundColor: GRAY_50,
   },
-  feedSkipText: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
-  emptyText: { fontSize: 14, color: '#777', paddingVertical: 10 },
+  feedSkipText: { fontSize: 12, fontWeight: '600', color: GRAY_500 },
+  emptyText: { fontSize: 14, color: GRAY_500, paddingVertical: 10 },
   routePickerScroll: { marginBottom: 10 },
   routePickerContent: { gap: 8, paddingBottom: 4 },
   routeChip: {
     paddingHorizontal: 14,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     borderWidth: 1.5,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   routeChipSelected: {},
   routeChipText: { fontSize: 13, fontWeight: '600' },
-  routeChipTextSelected: { color: '#fff' },
-  routeSingleName: { fontSize: 13, fontWeight: '600', color: '#555', marginBottom: 8 },
+  routeChipTextSelected: { color: WHITE },
+  routeSingleName: { fontSize: 13, fontWeight: '600', color: GRAY_700, marginBottom: 8 },
   routeRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  routeIndex: { fontSize: 13, fontWeight: '700', color: '#aaa', minWidth: 20, textAlign: 'center' },
+  routeIndex: { fontSize: 13, fontWeight: '700', color: GRAY_400, minWidth: 20, textAlign: 'center' },
   routeRow: {
     paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e3e3e3',
+    borderBottomColor: GRAY_200,
   },
   routeCurrent: { backgroundColor: '#e9f5ff' },
   routeNext: { backgroundColor: '#f2fbf2' },
-  routeName: { fontSize: 14, fontWeight: '600', color: '#222' },
-  routeHint: { fontSize: 12, color: '#666', marginTop: 2 },
+  routeName: { fontSize: 14, fontWeight: '600', color: GRAY_900 },
+  routeHint: { fontSize: 12, color: GRAY_600, marginTop: 2 },
   routeRowRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   routeRequests: { paddingLeft: 30, paddingBottom: 4 },
   fleetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -1758,8 +1775,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
-  badgeText: { color: '#fff', fontWeight: '700' },
-  onlineHint: { textAlign: 'center', color: '#777', fontSize: 12, marginTop: 4 },
+  badgeText: { color: WHITE, fontWeight: '700' },
+  onlineHint: { textAlign: 'center', color: GRAY_500, fontSize: 12, marginTop: 4 },
   bottomCard: {
     position: 'absolute',
     left: 0,
@@ -1770,7 +1787,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    shadowColor: '#000',
+    shadowColor: BLACK,
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -1789,22 +1806,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  counterButtonText: { color: '#fff', fontSize: 26, fontWeight: '600', lineHeight: 30 },
-  countText: { fontSize: 32, marginHorizontal: 16, fontWeight: '700', color: '#111', minWidth: 64, textAlign: 'center' },
+  counterButtonText: { color: WHITE, fontSize: 26, fontWeight: '600', lineHeight: 30 },
+  countText: { fontSize: 32, marginHorizontal: 16, fontWeight: '700', color: GRAY_900, minWidth: 64, textAlign: 'center' },
   cancelButton: {
     borderWidth: 1.5,
-    borderColor: '#d1d5db',
+    borderColor: GRAY_300,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 12,
   },
-  cancelButtonText: { color: '#6b7280', fontSize: 16, fontWeight: '600' },
+  cancelButtonText: { color: GRAY_500, fontSize: 16, fontWeight: '600' },
 
   otherBusRow: {
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: GRAY_200,
   },
   otherBusHeader: {
     flexDirection: 'row',
@@ -1815,7 +1832,7 @@ const styles = StyleSheet.create({
   otherBusName: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     flex: 1,
   },
   otherBusRouteBadge: {
@@ -1834,7 +1851,7 @@ const styles = StyleSheet.create({
   },
   otherBusStopLabel: {
     fontSize: 13,
-    color: '#4b5563',
+    color: GRAY_600,
     fontWeight: '500',
   },
 
@@ -1854,22 +1871,22 @@ const styles = StyleSheet.create({
   occupancyLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#6b7280',
+    color: GRAY_500,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginRight: 2,
   },
   occupancyChip: {
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
-    borderRadius: 20,
+    borderColor: GRAY_200,
+    borderRadius: borderRadius.xl,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
   },
   occupancyChipText: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     fontWeight: '600',
   },
   breakButton: {
@@ -1878,7 +1895,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     borderWidth: 1.5,
   },
   breakButtonText: {
@@ -1892,7 +1909,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fef3c7',
     borderWidth: 1,
     borderColor: '#fcd34d',
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
@@ -1904,7 +1921,7 @@ const styles = StyleSheet.create({
   endBreakButton: {
     paddingHorizontal: 14,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: borderRadius.xl,
     borderWidth: 1.5,
   },
   endBreakButtonText: {
@@ -1919,7 +1936,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   breakSheet: {
-    backgroundColor: '#fff',
+    backgroundColor: WHITE,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 24,
@@ -1928,12 +1945,12 @@ const styles = StyleSheet.create({
   breakSheetTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111',
+    color: GRAY_900,
     marginBottom: 6,
   },
   breakSheetHint: {
     fontSize: 13,
-    color: '#6b7280',
+    color: GRAY_500,
     marginBottom: 20,
   },
   breakDurationRow: {
@@ -1958,7 +1975,7 @@ const styles = StyleSheet.create({
   },
   breakSheetCancelText: {
     fontSize: 16,
-    color: '#6b7280',
+    color: GRAY_500,
     fontWeight: '500',
   },
 });
