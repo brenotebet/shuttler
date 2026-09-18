@@ -108,6 +108,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    // If the server hasn't confirmed membership within this window, fall back to
+    // trusting a cache-only snapshot so a genuinely offline user isn't stuck on
+    // the splash forever. Cleared the moment a server snapshot arrives.
+    let cacheFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
     const unsub = onSnapshot(
       doc(db, 'orgs', resolvedOrgId, 'users', uid),
       (snap) => {
@@ -117,15 +122,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // waits for a server-confirmed miss — a stale cache can never sign
         // someone out, and a revoked member is evicted the moment the server
         // snapshot arrives.
+        //
+        // A cached doc can also be *stale in the other direction*: it may say
+        // "member" when the server would say "no longer a member" (rejected org,
+        // removed user, reused test device). Revealing the app on that cached
+        // role — then yanking it back once the server evicts — reads as a broken
+        // login flash. So a cache-only role holds the loading overlay up until
+        // the server confirms, or until cacheFallbackTimer fires (offline).
         if (snap.metadata.fromCache) {
           if (snap.exists()) {
             setRole(normalizeRole(snap.data()?.role));
             setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
             setPhone(snap.data()?.phone ?? null);
             setPhoneVerified(snap.data()?.phoneVerified === true);
-            setInitializing(false);
+            if (!cacheFallbackTimer) {
+              cacheFallbackTimer = setTimeout(() => setInitializing(false), 2000);
+            }
           }
           return;
+        }
+
+        if (cacheFallbackTimer) {
+          clearTimeout(cacheFallbackTimer);
+          cacheFallbackTimer = null;
         }
 
         if (snap.exists()) {
@@ -149,6 +168,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setInitializing(false);
       },
       (error) => {
+        if (cacheFallbackTimer) {
+          clearTimeout(cacheFallbackTimer);
+          cacheFallbackTimer = null;
+        }
         console.warn('[AuthProvider] user doc snapshot error:', (error as any).code, (error as any).message);
         setSigningOut(true);
         setRole(null);
@@ -158,7 +181,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       },
     );
 
-    return unsub;
+    return () => {
+      if (cacheFallbackTimer) clearTimeout(cacheFallbackTimer);
+      unsub();
+    };
   }, [user?.uid, resolvedOrgId, isLoadingOrg]);
 
   const reloadUser = useCallback(async () => {

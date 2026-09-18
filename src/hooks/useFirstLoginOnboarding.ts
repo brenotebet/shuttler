@@ -34,7 +34,12 @@ export function useFirstLoginOnboarding() {
     // and navigation would be invisible or race against the screen appearing.
     if (!user || !org || !onboardingRole || didNavigate.current || initializing || isLoadingOrg) return;
 
-    const key = `onboarding_seen_${org.orgId}_${user.uid}_${onboardingRole}`;
+    // Deliberately not role-scoped: a role stack switch (e.g. cache reporting
+    // 'student' before the server confirms 'admin') remounts this hook fresh
+    // with a new `didNavigate` ref, so a role-specific key would let the
+    // corrected role fire its own onboarding right after the wrong one already
+    // showed. One tour per user per org is the intent, not one per role seen.
+    const key = `onboarding_seen_${org.orgId}_${user.uid}`;
 
     // 600ms delay — long enough for the screen transition and overlay fade to complete.
     const timer = setTimeout(() => {
