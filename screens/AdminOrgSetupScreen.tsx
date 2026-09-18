@@ -303,7 +303,12 @@ function AuthTab() {
   // Deterministic from org.slug/orgId — an IT team can copy these before ever
   // saving a draft, no round trip to the server needed to reveal them.
   const spInfo = org
-    ? { acsUrl: `${SHUTTLER_API_URL}/saml/${org.slug}/acs`, spEntityId: `${SHUTTLER_API_URL}/orgs/${org.orgId}` }
+    ? {
+        acsUrl: `${SHUTTLER_API_URL}/saml/${org.slug}/acs`,
+        spEntityId: `${SHUTTLER_API_URL}/orgs/${org.orgId}`,
+        metadataUrl: `${SHUTTLER_API_URL}/saml/${org.slug}/metadata`,
+        loginUrl: `${SHUTTLER_API_URL}/saml/${org.slug}/login`,
+      }
     : null;
   // Fingerprints of the IdP fields at the moment of the last successful save
   // and the last successful test, so Test/Activate can tell when the admin
@@ -471,13 +476,22 @@ function AuthTab() {
           onPress={() => setAuthMethod(m)}
         >
           <View style={[styles.radio, authMethod === m && styles.radioSelected, authMethod === m && { borderColor: primaryColor, backgroundColor: primaryColor }]} />
-          <Text style={styles.radioLabel}>
-            {m === 'email'
-              ? 'Email / Password'
-              : m === 'phone'
-              ? 'Phone Number (SMS) — K-12 parents'
-              : 'SAML SSO (IT-managed)'}
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.radioLabel}>
+              {m === 'email'
+                ? 'Email / Password'
+                : m === 'phone'
+                ? 'Phone Number (SMS) — K-12 parents'
+                : 'SAML SSO (IT-managed)'}
+            </Text>
+            <Text style={styles.radioSublabel}>
+              {m === 'email'
+                ? 'Users sign up with an email and password. No setup needed — works right away.'
+                : m === 'phone'
+                ? 'Users sign in with a texted code. Good for younger students or parents without email.'
+                : 'Users sign in through your school’s identity provider (Okta, Azure AD, Shibboleth, etc). Requires the IdP details below, then a passing test, before it goes live.'}
+            </Text>
+          </View>
         </TouchableOpacity>
       ))}
 
@@ -497,11 +511,26 @@ function AuthTab() {
 
       {authMethod === 'saml' && spInfo && (
         <View style={styles.infoBox}>
-          <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Give these to your IT team:</Text>
+          <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Setup steps</Text>
+          <Text style={styles.hint}>
+            1. Give your IT team the ACS URL, SP Entity ID, and (optionally) the metadata URL below — most IdPs can import the metadata URL directly.{'\n'}
+            2. Enter your IdP's Entity ID, SSO URL, and signing certificate below, then tap Save Draft.{'\n'}
+            3. Tap Test Connection to try a real sign-in against your IdP without affecting live users.{'\n'}
+            4. If the test fails, open the Trace URL below in a desktop browser (not this app) to see exactly what your IdP sent. Pair it with a SAML tracer browser extension, or your browser's DevTools Network tab, to inspect the raw SAML request/response.{'\n'}
+            5. Once Test Connection passes, tap Activate SAML for All Users.
+          </Text>
+
+          <Text style={[styles.infoBoxTitle, { color: primaryColor, marginTop: spacing.item }]}>Give these to your IT team</Text>
           <Text style={styles.infoBoxLabel}>ACS URL</Text>
           <Text style={styles.infoBoxValue} selectable>{spInfo.acsUrl}</Text>
           <Text style={styles.infoBoxLabel}>SP Entity ID</Text>
           <Text style={styles.infoBoxValue} selectable>{spInfo.spEntityId}</Text>
+          <Text style={styles.infoBoxLabel}>SP Metadata URL</Text>
+          <Text style={styles.infoBoxValue} selectable>{spInfo.metadataUrl}</Text>
+
+          <Text style={[styles.infoBoxTitle, { color: primaryColor, marginTop: spacing.item }]}>Troubleshooting</Text>
+          <Text style={styles.infoBoxLabel}>Trace URL — open in a desktop browser after saving a draft</Text>
+          <Text style={styles.infoBoxValue} selectable>{spInfo.loginUrl}</Text>
         </View>
       )}
 
@@ -3653,6 +3682,11 @@ const styles = StyleSheet.create({
   radioLabel: {
     fontSize: 14,
     color: GRAY_900,
+  },
+  radioSublabel: {
+    fontSize: 12,
+    color: GRAY_500,
+    marginTop: 2,
   },
   infoBox: {
     backgroundColor: '#f0f4ff',
