@@ -1,6 +1,6 @@
 // screens/AdminDashboardScreen.tsx
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, TextInput, Share } from 'react-native'
+import { View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, TextInput } from 'react-native'
 import { Text } from '../components/Text';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -34,14 +34,12 @@ import {
   BORDER_COLOR,
 } from '../src/constants/theme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
-import { FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { FRESHNESS_WINDOW_SECONDS, STALE_WINDOW_SECONDS } from '../src/constants/stops';
 import HeaderBar from '../components/HeaderBar';
 import ScreenContainer from '../components/ScreenContainer';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
-
-const STALE_WINDOW_SECONDS = 180;
-const GPS_LOST_SECONDS = 60;
+import { shareCsvFile } from '../src/utils/exportCsv';
 
 function todayStart(): Date {
   const d = new Date();
@@ -342,10 +340,9 @@ export default function AdminDashboardScreen() {
           bus?.online === true &&
           secondsAgo !== null &&
           secondsAgo < STALE_WINDOW_SECONDS;
-        const isGpsLost =
-          isOnline && secondsAgo !== null && secondsAgo >= GPS_LOST_SECONDS;
         const isFresh =
           isOnline && secondsAgo !== null && secondsAgo < FRESHNESS_WINDOW_SECONDS;
+        const isGpsLost = isOnline && !isFresh;
 
         const sessionStartMs: number | null = bus?.sessionStartAt?.toMillis?.() ?? null;
         const onlineDurationMs =
@@ -556,7 +553,8 @@ export default function AdminDashboardScreen() {
         ...todayReqRows,
       ].join('\n');
 
-      await Share.share({ message: csv, title: 'Shuttler Export' });
+      const dateStamp = today.toISOString().slice(0, 10);
+      await shareCsvFile(csv, `shuttler-export-${dateStamp}.csv`, 'Shuttler Export');
     } catch (e) {
       console.error('CSV export failed', e);
       showAlert('Export failed. Check your connection and try again.', 'Error', 'error');

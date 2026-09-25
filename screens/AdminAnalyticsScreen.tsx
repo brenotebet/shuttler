@@ -1,6 +1,6 @@
 // screens/AdminAnalyticsScreen.tsx
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, ScrollView, Share, StyleSheet, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native'
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomSheet from '../components/BottomSheet';
@@ -10,6 +10,7 @@ import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showToast } from '../src/components/Toast';
+import { shareCsvFile } from '../src/utils/exportCsv';
 import { SHUTTLER_API_URL } from '../config';
 import { cardShadow, spacing, borderRadius } from '../src/styles/common';
 import {
@@ -319,10 +320,12 @@ function ExportButtons({ days, periodLabel, hint }: { days: number; periodLabel:
         throw new Error(body?.message ?? body?.error ?? 'Export failed');
       }
       const csv = await res.text();
-      await Share.share({
-        message: csv,
-        title: `${org?.name ?? 'Shuttler'} — ${type === 'boardings' ? 'Boardings' : 'Stop Requests'} (${periodLabel})`,
-      });
+      const label = type === 'boardings' ? 'Boardings' : 'Stop Requests';
+      await shareCsvFile(
+        csv,
+        `${type}-${days}d.csv`,
+        `${org?.name ?? 'Shuttler'} — ${label} (${periodLabel})`,
+      );
     } catch (e: any) {
       showToast(e?.message ?? 'Export failed. Please try again.', 'error');
     } finally {

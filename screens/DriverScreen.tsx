@@ -51,7 +51,7 @@ import {
   GRAY_900,
 } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
-import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS, STALE_WINDOW_SECONDS } from '../src/constants/stops';
 import { getPlanLimits, planFor } from '../src/constants/planLimits';
 import { useOrg, Stop } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
@@ -59,7 +59,6 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { borderRadius } from '../src/styles/common';
 
-const STALE_WINDOW_SECONDS = 180;
 const ARRIVE_RADIUS_FT = 75;
 const EXIT_RADIUS_FT = 180;
 const DWELL_SECONDS = 30;
@@ -686,28 +685,10 @@ export default function DriverScreen() {
         if (!req?.id || !isActiveStopStatus(req?.status)) return;
 
         if (isExpiredRequestAt(req, nowMs)) {
-          if (!expiryWritesInFlightRef.current.has(req.id)) {
-            expiryWritesInFlightRef.current.add(req.id);
-            void runTransaction(db, async (tx) => {
-              const ref = doc(db, 'orgs', orgId, 'stopRequests', req.id);
-              const snap = await tx.get(ref);
-              if (!snap.exists()) return;
-              const current = snap.data() as any;
-              if (!isActiveStopStatus(current?.status)) return;
-              if (!isExpiredRequestAt(current, Date.now())) return;
-              tx.update(ref, {
-                status: 'cancelled',
-                cancelledAt: serverTimestamp(),
-                cancelledReason: 'ttl_expired_15m',
-              });
-            })
-              .catch((err) => {
-                console.error('Failed to expire request from proximity loop', err);
-              })
-              .finally(() => {
-                expiryWritesInFlightRef.current.delete(req.id);
-              });
-          }
+          // Expiry itself is owned by the standalone TTL sweep below, which
+          // runs regardless of sharing state (this proximity loop only runs
+          // while isSharing is true). Just stop tracking proximity for a
+          // request that's about to be cancelled.
           delete proximityStateRef.current[req.id];
           return;
         }

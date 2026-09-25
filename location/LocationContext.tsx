@@ -23,6 +23,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { isRouteActive } from '../src/utils/scheduleUtils';
 import { notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 import { showAlert } from '../src/utils/alerts';
+import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
 
 type LocationContextType = {
   isSharing: boolean;
@@ -60,7 +61,6 @@ const EMA_ALPHA = 0.4;
 // we treat that as stale and force offline.
 const STARTUP_STALE_OFFLINE_MS = 2 * 60 * 1000; // 2 minutes
 
-const ONLINE_BUS_STALE_MS = 90 * 1000;
 
 function getTimestampMs(data: any): number | null {
   const updatedAtMs = typeof data?.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : null;
@@ -174,7 +174,7 @@ async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string, org
     if (data?.online !== true) return false;
     const tsMs = getTimestampMs(data);
     if (tsMs === null) return false;
-    return Date.now() - tsMs <= ONLINE_BUS_STALE_MS;
+    return Date.now() - tsMs <= ONLINE_BUS_STALE_SECONDS * 1000;
   });
 
   if (hasAnotherOnlineBus) return;
