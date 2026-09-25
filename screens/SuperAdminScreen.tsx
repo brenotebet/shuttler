@@ -57,10 +57,10 @@ export default function SuperAdminScreen() {
     fetchApplications();
   }, [fetchApplications]);
 
-  const handleApprove = async (orgId: string, name: string | null) => {
+  const handleApprove = async (orgId: string, name: string | null, founderEmail: string | null) => {
     Alert.alert(
       'Approve Org',
-      `Approve "${name ?? orgId}"? They will be able to subscribe and use Shuttler.`,
+      `Approve "${name ?? orgId}" (${founderEmail ?? 'no founder email on file'})? They will be able to subscribe and use Shuttler.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -88,10 +88,10 @@ export default function SuperAdminScreen() {
     );
   };
 
-  const handleReject = async (orgId: string, name: string | null) => {
+  const handleReject = async (orgId: string, name: string | null, founderEmail: string | null) => {
     Alert.alert(
       'Reject Org',
-      `Reject "${name ?? orgId}"? This cannot be undone.`,
+      `Reject "${name ?? orgId}" (${founderEmail ?? 'no founder email on file'})? This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -143,7 +143,7 @@ export default function SuperAdminScreen() {
           <TouchableOpacity
             style={[styles.button, styles.approveButton, isActing && styles.buttonDisabled]}
             disabled={isActing}
-            onPress={() => handleApprove(item.orgId, item.name)}
+            onPress={() => handleApprove(item.orgId, item.name, item.founderEmail)}
           >
             {isActing ? (
               <ActivityIndicator size="small" color={WHITE} />
@@ -154,7 +154,7 @@ export default function SuperAdminScreen() {
           <TouchableOpacity
             style={[styles.button, styles.rejectButton, isActing && styles.buttonDisabled]}
             disabled={isActing}
-            onPress={() => handleReject(item.orgId, item.name)}
+            onPress={() => handleReject(item.orgId, item.name, item.founderEmail)}
           >
             <Text style={styles.buttonText}>Reject</Text>
           </TouchableOpacity>

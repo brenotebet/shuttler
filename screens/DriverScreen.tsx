@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, View, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native'
 import { Text } from '../components/Text';
+import InfoBanner from '../components/InfoBanner';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -31,6 +32,7 @@ import {
 import { db, auth } from '../firebase/firebaseconfig';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
+import { showToast } from '../src/components/Toast';
 import { notifyStudentArrived, notifyStudentApproaching, notifyStudentCompleted, notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 import {
   BACKGROUND_COLOR,
@@ -47,7 +49,6 @@ import {
   GRAY_600,
   GRAY_700,
   GRAY_900,
-  BORDER_COLOR,
 } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
@@ -666,6 +667,9 @@ export default function DriverScreen() {
         if (studentUid) {
           void notifyStudentCompleted(orgId, studentUid, stopName ?? 'your stop');
         }
+        if (stopName) {
+          showToast(`Completed pickup at ${stopName}`, 'success');
+        }
       } catch (err) {
         console.error('Failed to complete stop request from proximity', err);
       } finally {
@@ -959,10 +963,17 @@ export default function DriverScreen() {
       return;
     }
 
-    const requestsAtStop = activeRequests.filter((req) => {
-      const stopId = req?.stop?.id ?? req?.stopId;
-      return stopId === nearest.id;
-    });
+    // Only close out as many requests as were actually counted as boarded —
+    // oldest first — so an under-count (bus fills up before everyone boards)
+    // leaves the remaining riders' requests untouched instead of silently
+    // marking them complete too.
+    const requestsAtStop = activeRequests
+      .filter((req) => {
+        const stopId = req?.stop?.id ?? req?.stopId;
+        return stopId === nearest.id;
+      })
+      .sort((a, b) => (a?.createdAt?.toMillis?.() ?? 0) - (b?.createdAt?.toMillis?.() ?? 0))
+      .slice(0, boardingCount);
 
     try {
       const batch = writeBatch(db);
@@ -1043,8 +1054,9 @@ export default function DriverScreen() {
             <Text style={styles.breakSheetTitle}>How long is your break?</Text>
             <Text style={styles.breakSheetHint}>
               {breaksTakenThisShift > 0
-                ? `${breaksTakenThisShift} of ${breakSettings?.breaksPerShift ?? 1} break${(breakSettings?.breaksPerShift ?? 1) > 1 ? 's' : ''} used this shift`
-                : 'Pending stop requests will be cancelled.'}
+                ? `${breaksTakenThisShift} of ${breakSettings?.breaksPerShift ?? 1} break${(breakSettings?.breaksPerShift ?? 1) > 1 ? 's' : ''} used this shift. `
+                : ''}
+              Pending stop requests will be cancelled.
             </Text>
             <View style={styles.breakDurationRow}>
               {breakDurationOptions.map((mins) => (
@@ -1088,6 +1100,18 @@ export default function DriverScreen() {
             setIsToggling(true);
             try {
               if (isSharing) {
+                if (activeRequests.length > 0) {
+                  await new Promise<void>((resolve, reject) => {
+                    Alert.alert(
+                      'Stop sharing your location?',
+                      `${activeRequests.length} rider${activeRequests.length !== 1 ? 's are' : ' is'} waiting on you. Going offline will cancel ${activeRequests.length !== 1 ? 'their requests' : 'their request'}.`,
+                      [
+                        { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
+                        { text: 'Stop Sharing', style: 'destructive', onPress: () => resolve() },
+                      ],
+                    );
+                  });
+                }
                 await stopSharing();
               } else {
                 // Check vehicle limit before going online
@@ -1218,65 +1242,66 @@ export default function DriverScreen() {
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + 12, paddingBottom: 140 }]}>
         {authRole === 'admin' && org?.reviewStatus === 'pending' && (
-          <View style={styles.pendingBanner}>
-            <Icon name="hourglass-empty" size={16} color="#92400e" />
-            <Text style={styles.pendingBannerText}>
-              Your Shuttler application is under review. You&apos;ll receive an email once it&apos;s approved.
-            </Text>
-          </View>
+          <InfoBanner
+            variant="warning"
+            icon="hourglass-empty"
+            title="Your Shuttler application is under review. You'll receive an email once it's approved."
+          />
         )}
 
         {authRole === 'admin' && orgStops.length === 0 && (
-          <TouchableOpacity
-            style={styles.noStopsBanner}
+          <InfoBanner
+            variant="purple"
+            icon="add-location-alt"
+            title="No stops configured yet. Tap to set up stops →"
             onPress={() => navigation.navigate('AdminOrgSetup')}
-            activeOpacity={0.8}
-          >
-            <Icon name="add-location-alt" size={16} color="#7c3aed" />
-            <Text style={styles.noStopsBannerText}>No stops configured yet. Tap to set up stops →</Text>
-          </TouchableOpacity>
+          />
         )}
 
         {org?.subscriptionStatus === 'past_due' && (
-          <View style={styles.pastDueBanner}>
-            <Icon name="warning" size={16} color="#7c2d12" />
-            <Text style={styles.pastDueBannerText}>
-              {authRole === 'admin'
+          <InfoBanner
+            variant="error"
+            icon="warning"
+            title={
+              authRole === 'admin'
                 ? 'Payment failed — subscription is past due.'
-                : 'Service may be interrupted — contact your administrator.'}
-            </Text>
-            {authRole === 'admin' && (
-              <TouchableOpacity onPress={() => navigation.navigate('AdminOrgSetup')}>
-                <Text style={styles.pastDueBannerLink}>Fix billing →</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+                : 'Service may be interrupted — contact your administrator.'
+            }
+            action={authRole === 'admin' ? { label: 'Fix billing →', onPress: () => navigation.navigate('AdminOrgSetup') } : undefined}
+          />
         )}
 
         {!isSharing && hasLocationPermission && (
-          <View style={styles.offlineBanner}>
-            <Icon name="gps-off" size={16} color={GRAY_700} />
-            <Text style={styles.offlineBannerText}>{"You are offline — tap \"Start Sharing\" to go online."}</Text>
-          </View>
+          <InfoBanner
+            variant="neutral"
+            icon="gps-off"
+            title={"You are offline — tap \"Start Sharing\" to go online."}
+          />
         )}
 
         {isSharing && !activeBusIds.includes(driverId) && hasLocationPermission && (
-          <View style={styles.waitingBanner}>
-            <ActivityIndicator size="small" color="#92400e" />
-            <Text style={styles.waitingBannerText}>Location sharing on — your position will appear on the map in a moment.</Text>
-          </View>
+          <InfoBanner
+            variant="warning"
+            loading
+            title="Location sharing on — your position will appear on the map in a moment."
+          />
+        )}
+
+        {isSharing && activeBusIds.includes(driverId) && !busOnline && hasLocationPermission && (
+          <InfoBanner
+            variant="error"
+            icon="signal-wifi-off"
+            title="Your position hasn't updated recently — riders may not see you. Check your connection."
+          />
         )}
 
         {!hasLocationPermission && (
-          <View style={styles.permissionBanner}>
-            <Icon name="location-off" size={16} color="#991b1b" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.permissionBannerText}>Location permission denied. Enable it to share your position.</Text>
-              <TouchableOpacity onPress={() => Linking.openSettings()} style={{ marginTop: 4 }}>
-                <Text style={styles.permissionBannerLink}>Open Settings →</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          <InfoBanner
+            variant="error"
+            icon="location-off"
+            title="Location permission denied. Enable it to share your position."
+            action={{ label: 'Open Settings →', onPress: () => Linking.openSettings() }}
+          />
         )}
 
         <View style={styles.cardLarge}>
@@ -1492,7 +1517,6 @@ export default function DriverScreen() {
           </View>
         )}
 
-        {isSharing && !busOnline && <Text style={styles.onlineHint}>Waiting for fresh driver GPS ping…</Text>}
       </ScrollView>
 
       {showBoardingCard && (
@@ -1540,9 +1564,9 @@ export default function DriverScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: primaryColor }, isSavingBoarding && styles.actionButtonDisabled]}
+            style={[styles.actionButton, { backgroundColor: primaryColor }, (isSavingBoarding || boardingCount === 0) && styles.actionButtonDisabled]}
             onPress={saveBoardingCount}
-            disabled={isSavingBoarding}
+            disabled={isSavingBoarding || boardingCount === 0}
           >
             <Text style={styles.actionButtonText}>{isSavingBoarding ? 'Saving…' : 'Save'}</Text>
           </TouchableOpacity>
@@ -1602,75 +1626,6 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     fontWeight: '600',
   },
-  pendingBanner: {
-    backgroundColor: '#fffbeb',
-    borderWidth: 1,
-    borderColor: '#fcd34d',
-    borderRadius: 10,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  pendingBannerText: { flex: 1, fontSize: 13, color: '#92400e', fontWeight: '500' },
-  noStopsBanner: {
-    backgroundColor: '#f5f3ff',
-    borderWidth: 1,
-    borderColor: '#c4b5fd',
-    borderRadius: 10,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  noStopsBannerText: { flex: 1, fontSize: 13, color: '#7c3aed', fontWeight: '600' },
-  pastDueBanner: {
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fca5a5',
-    borderRadius: 10,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  pastDueBannerText: { flex: 1, fontSize: 13, color: '#7c2d12', fontWeight: '500' },
-  pastDueBannerLink: { fontSize: 13, color: DANGER_COLOR, fontWeight: '700' },
-  offlineBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-    borderRadius: borderRadius.md,
-    padding: 14,
-  },
-  offlineBannerText: { flex: 1, fontSize: 13, color: GRAY_700 },
-  waitingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#fffbeb',
-    borderWidth: 1,
-    borderColor: '#fcd34d',
-    borderRadius: borderRadius.md,
-    padding: 14,
-  },
-  waitingBannerText: { flex: 1, fontSize: 13, color: '#92400e', fontWeight: '500' },
-  permissionBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    borderRadius: borderRadius.md,
-    padding: 14,
-  },
-  permissionBannerText: { fontSize: 13, color: '#991b1b' },
-  permissionBannerLink: { fontSize: 13, color: DANGER_COLOR, fontWeight: '700' },
   card: {
     backgroundColor: WHITE,
     borderRadius: 14,
@@ -1776,7 +1731,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   badgeText: { color: WHITE, fontWeight: '700' },
-  onlineHint: { textAlign: 'center', color: GRAY_500, fontSize: 12, marginTop: 4 },
   bottomCard: {
     position: 'absolute',
     left: 0,
@@ -1881,7 +1835,7 @@ const styles = StyleSheet.create({
     borderColor: GRAY_200,
     borderRadius: borderRadius.xl,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 11,
     backgroundColor: WHITE,
   },
   occupancyChipText: {

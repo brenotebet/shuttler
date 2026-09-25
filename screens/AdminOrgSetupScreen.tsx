@@ -460,7 +460,7 @@ function AuthTab() {
       `This changes how everyone in ${org.name} signs in — they'll use your IdP instead of email/password from now on. Make sure your IT team has confirmed the test login above.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Activate', style: 'destructive', onPress: activateSaml },
+        { text: 'Activate', style: 'default', onPress: activateSaml },
       ],
     );
   }, [org, activateSaml]);
@@ -1125,6 +1125,10 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       showToast('Tap the map or enter latitude and longitude.', 'error');
       return;
     }
+    if (stops.some((s) => s.name.trim().toLowerCase() === pendingName.trim().toLowerCase())) {
+      showToast('A stop with this name already exists.', 'error');
+      return;
+    }
     if (stops.length >= planLimits.maxStops) {
       const next = planFor('maxStops', stops.length + 1);
       Alert.alert(
@@ -1153,7 +1157,12 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   }, [pendingCoords, pendingName, stops.length, planLimits]);
 
   const handleDeleteStop = useCallback((id: string) => {
-    Alert.alert('Remove stop', 'Remove this stop?', [
+    const stop = stops.find((s) => s.id === id);
+    const affectedRoutes = routes.filter((r) => r.stopIds.includes(id));
+    const message = affectedRoutes.length > 0
+      ? `Remove "${stop?.name ?? 'this stop'}"? It will also be removed from ${affectedRoutes.length} route${affectedRoutes.length !== 1 ? 's' : ''}: ${affectedRoutes.map((r) => r.name).join(', ')}.`
+      : `Remove "${stop?.name ?? 'this stop'}"?`;
+    Alert.alert('Remove stop', message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
@@ -1167,10 +1176,27 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
         },
       },
     ]);
-  }, []);
+  }, [stops, routes]);
 
   const handleSaveAll = useCallback(async () => {
     if (!org) return;
+    const emptyRoutes = routes.filter((r) => r.stopIds.length === 0);
+    if (emptyRoutes.length > 0) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          Alert.alert(
+            'Route with no stops',
+            `${emptyRoutes.map((r) => `"${r.name}"`).join(', ')} ${emptyRoutes.length !== 1 ? 'have' : 'has'} no stops assigned. A driver on ${emptyRoutes.length !== 1 ? 'these routes' : 'this route'} won't see any stops to service.`,
+            [
+              { text: 'Go Back', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
+              { text: 'Save Anyway', onPress: () => resolve() },
+            ],
+          );
+        });
+      } catch {
+        return;
+      }
+    }
     const isFirstSave = !(org.stops?.length);
     setIsSaving(true);
     try {
@@ -1186,7 +1212,10 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       routesDirtyRef.current = false;
       await refreshOrg();
       if (isFirstSave && stops.length > 0) {
-        navigation.navigate('DriverHome');
+        // Keep the admin in the setup flow — invite a driver is the next
+        // checklist step — instead of dropping them onto the live map.
+        showToast('Stops saved — now invite a driver.', 'success');
+        navigation.navigate('AdminOrgSetup', { initialTab: 'users' });
       } else {
         showToast('Stops, routes, and map bounds updated.', 'success');
       }
@@ -1220,6 +1249,10 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       showToast(routeNameError, 'error');
       return;
     }
+    if (routes.some((r) => r.name.trim().toLowerCase() === newRouteName.trim().toLowerCase())) {
+      showToast('A route with this name already exists.', 'error');
+      return;
+    }
     if (routes.length >= planLimits.maxRoutes) {
       showRouteLimitAlert();
       return;
@@ -1233,15 +1266,20 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   }, [newRouteName, routes.length, planLimits, showRouteLimitAlert]);
 
   const handleDeleteRoute = useCallback((routeId: string) => {
-    Alert.alert('Delete route', 'Remove this route?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => setRoutes((prev) => prev.filter((r) => r.id !== routeId)),
-      },
-    ]);
-  }, []);
+    const route = routes.find((r) => r.id === routeId);
+    Alert.alert(
+      'Delete route',
+      `Remove "${route?.name ?? 'this route'}"? Any driver defaulted to it will need a new route assigned.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => setRoutes((prev) => prev.filter((r) => r.id !== routeId)),
+        },
+      ],
+    );
+  }, [routes]);
 
   const handleToggleStopInRoute = useCallback((routeId: string, stopId: string) => {
     setRoutes((prev) =>

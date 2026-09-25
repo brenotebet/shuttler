@@ -27,7 +27,7 @@ export default function StudentMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { role, displayName } = useAuth();
   const { primaryColor } = useOrgTheme();
-  const { org } = useOrg();
+  const { org, clearOrg } = useOrg();
   const isParent = role === 'parent';
   const firstName = displayName?.split(' ')[0] ?? null;
   const { fontScale } = useAccessibility();
@@ -125,6 +125,13 @@ export default function StudentMenuScreen() {
           onPress={() => navigation.navigate('AdminChat')}
         />
 
+        <MenuItem
+          icon="history"
+          title={isParent ? "Ride History" : "My Rides"}
+          description={isParent ? "See your children's completed rides" : 'See your completed rides'}
+          onPress={() => navigation.navigate('StudentHistory')}
+        />
+
 <MenuItem
           icon="help-outline"
           title="How to Use"
@@ -153,6 +160,13 @@ export default function StudentMenuScreen() {
         />
 
         <MenuItem
+          icon="campaign"
+          title="Service Alerts"
+          description="Check for active delays, detours, and notices"
+          onPress={() => navigation.navigate('Announcements')}
+        />
+
+        <MenuItem
           icon="accessibility"
           title="Accessibility"
           description="Adjust text size and motion preferences"
@@ -171,6 +185,13 @@ export default function StudentMenuScreen() {
           title="Legal"
           description="Terms of Service and Privacy Policy"
           onPress={() => navigation.navigate('Legal')}
+        />
+
+        <MenuItem
+          icon="swap-horiz"
+          title="Switch Organization"
+          description={org?.name ? `Currently: ${org.name}` : 'Switch to a different organization'}
+          onPress={() => clearOrg()}
         />
 
         <MenuItem

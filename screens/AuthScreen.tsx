@@ -55,6 +55,25 @@ type RouteT = RouteProp<RootStackParamList, 'Auth'>;
 
 // ---- SAML Panel ----
 
+// SSO errors carry internal/technical detail (exchange failures, Firebase
+// custom-token mismatches, IdP cancellations) meant for logs, not end users.
+// Map the known cases to plain copy and log the raw message for diagnosis.
+function friendlySsoError(e: any): string {
+  const message = typeof e?.message === 'string' ? e.message : '';
+  console.error('[SSO] sign-in error', message || e);
+
+  if (message.includes('Invalid or expired SAML handoff token') || message.includes('Missing SAML handoff token')) {
+    return 'Your sign-in link expired. Please try signing in again.';
+  }
+  if (message.includes('did not complete') || message.toLowerCase().includes('cancel')) {
+    return 'Sign-in was cancelled or did not finish. Please try again.';
+  }
+  if (message.includes('Failed to exchange SAML handoff token') || message.includes('Firebase sign-in failed')) {
+    return "We couldn't complete sign-in with your organization's SSO. Please try again — if it keeps happening, contact your administrator.";
+  }
+  return 'Something went wrong signing you in. Please try again.';
+}
+
 function SamlPanel({ orgSlug }: { orgSlug: string }) {
   const [isChecking, setIsChecking] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -82,7 +101,7 @@ function SamlPanel({ orgSlug }: { orgSlug: string }) {
       try {
         await trySamlHandoffLogin(url);
       } catch (e: any) {
-        showAlert(e?.message ?? 'SSO error', 'Sign In Error');
+        showAlert(friendlySsoError(e), 'Sign In Error');
       }
     });
 
@@ -99,7 +118,7 @@ function SamlPanel({ orgSlug }: { orgSlug: string }) {
       const ok = await trySamlHandoffLogin(redirectUrl);
       if (!ok) throw new Error('SSO finished but sign-in did not complete. Please try again.');
     } catch (e: any) {
-      showAlert(e?.message ?? 'Unknown SSO error', 'Sign In Error');
+      showAlert(friendlySsoError(e), 'Sign In Error');
     } finally {
       if (isMounted.current) setIsSubmitting(false);
     }
@@ -968,8 +987,10 @@ export default function AuthScreen() {
         return (
           <>
             <SamlPanel orgSlug={org.slug} />
-            <TouchableOpacity onPress={() => setAdminOverride(true)} style={styles.adminOverrideLink}>
-              <Text style={styles.adminOverrideLinkText}>Admin sign-in</Text>
+            <TouchableOpacity onPress={() => setAdminOverride(true)} style={styles.samlAdminOverrideLink}>
+              <Text style={[styles.samlAdminOverrideLinkText, { color: primaryColor }]}>
+                Trouble with SSO? Sign in with email instead →
+              </Text>
             </TouchableOpacity>
           </>
         );
@@ -1335,6 +1356,14 @@ const styles = StyleSheet.create({
   adminOverrideLinkText: {
     fontSize: 12,
     color: GRAY_400,
+  },
+  samlAdminOverrideLink: {
+    alignSelf: 'center',
+    paddingVertical: 16,
+  },
+  samlAdminOverrideLinkText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   socialDisclaimer: {
     fontSize: 11,

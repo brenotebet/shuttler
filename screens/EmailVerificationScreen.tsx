@@ -33,6 +33,7 @@ export default function EmailVerificationScreen() {
   // Sign out on hardware back press (Android) — there's no previous screen to go to
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      showAlert('Signed out — sign in again to verify your email.', 'Signed out');
       signOut(auth).catch(() => {});
       return true;
     });

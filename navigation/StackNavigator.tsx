@@ -190,6 +190,7 @@ export default function StackNavigator() {
           <Stack.Screen name="Legal" component={LegalScreen} />
           <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
           <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
+          <Stack.Screen name="Announcements" component={AnnouncementsScreen} />
           <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
         </Stack.Navigator>
       );
@@ -249,6 +250,7 @@ export default function StackNavigator() {
         <Stack.Screen name="Legal" component={LegalScreen} />
         <Stack.Screen name="Accessibility" component={AccessibilityScreen} />
         <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
+        <Stack.Screen name="Announcements" component={AnnouncementsScreen} />
         <Stack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
       </Stack.Navigator>
     );

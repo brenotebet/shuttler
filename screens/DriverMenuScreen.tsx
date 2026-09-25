@@ -211,7 +211,7 @@ export default function DriverMenuScreen() {
   const { stopSharing, isSharing } = useLocationSharing();
   const { role, displayName } = useAuth();
   const firstName = displayName?.split(' ')[0] ?? null;
-  const { org } = useOrg();
+  const { org, clearOrg } = useOrg();
   const { fontScale } = useAccessibility();
   const profileStatus = useProfileStatus();
   const needsSetup = role === 'admin' && (org?.stops?.length ?? 0) === 0;
@@ -321,6 +321,13 @@ export default function DriverMenuScreen() {
           onPress={() => navigation.navigate('Announcements')}
         />
 
+        <MenuItem
+          icon="history"
+          title="Ride History"
+          description="See your past shifts and completed pickups"
+          onPress={() => navigation.navigate('DriverHistory')}
+        />
+
         {role === 'admin' && (
           <View style={styles.sectionDivider}>
             <Text style={styles.sectionLabel}>Admin</Text>
@@ -401,6 +408,13 @@ export default function DriverMenuScreen() {
           title="Legal"
           description="Terms of Service and Privacy Policy"
           onPress={() => navigation.navigate('Legal')}
+        />
+
+        <MenuItem
+          icon="swap-horiz"
+          title="Switch Organization"
+          description={org?.name ? `Currently: ${org.name}` : 'Switch to a different organization'}
+          onPress={() => clearOrg()}
         />
 
         <MenuItem

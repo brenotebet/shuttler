@@ -1,7 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Image, FlatList, TouchableWithoutFeedback, Dimensions, Alert, Modal, Linking } from 'react-native'
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Image, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking } from 'react-native'
 import { Text } from '../components/Text';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -73,6 +73,7 @@ import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/uti
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
+import ConfirmSheet from '../components/ConfirmSheet';
 import { borderRadius } from '../src/styles/common';
 
 // Bus marker stays visible as long as online:true in Firestore.
@@ -310,6 +311,13 @@ export default function MapScreen() {
   const [childProfiles, setChildProfiles] = useState<ChildProfile[]>([]);
   const [selectedChild, setSelectedChild] = useState<ChildProfile | null>(null);
   const [showChildPicker, setShowChildPicker] = useState(false);
+  // Backs the "Request pickup" and "Cancel request?" confirmations — a single
+  // sheet-driven state instead of native Alert.alert, so confirms read the
+  // same way as the rest of this screen's modals (PickupConfirmModal, the
+  // child picker).
+  const [confirmSheet, setConfirmSheet] = useState<
+    { type: 'request'; entry: RequestableStop } | { type: 'cancelRequest' } | null
+  >(null);
 
   const [request, setRequest] = useState<any>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -1702,6 +1710,34 @@ const handleRequest = async (entry: RequestableStop) => {
   }
 };
 
+// Shared by the stop list row and the map pin so both ask the same
+// "Request pickup at X?" question before calling handleRequest.
+const confirmAndRequest = (entry: RequestableStop) => {
+  setConfirmSheet({ type: 'request', entry });
+};
+
+const handleConfirmSheetConfirm = async () => {
+  const pending = confirmSheet;
+  setConfirmSheet(null);
+  if (!pending) return;
+
+  if (pending.type === 'request') {
+    setSelectedStopKey(pending.entry.key);
+    handleRequest(pending.entry);
+    return;
+  }
+
+  // cancelRequest
+  if (!requestId || !orgId) return;
+  await updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), { status: 'cancelled' });
+  setRequest(null);
+  setRequestId(null);
+  setRouteCoords([]);
+  fullRouteRef.current = [];
+  setEta(null);
+  setStopsBefore(null);
+};
+
   // Org hasn't configured stops + boundaries yet — show a friendly placeholder
   const orgReady = !!(org && org.mapBoundingBox && (org.stops?.length ?? 0) >= 2);
   if (org && !orgReady) {
@@ -1870,28 +1906,14 @@ const handleRequest = async (entry: RequestableStop) => {
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     style={styles.locationItem}
-                    onPress={() => {
-                      const routeLabel = item.routeName ? ` · ${item.routeName}` : '';
-                      Alert.alert(
-                        'Request pickup',
-                        `Request a pickup at ${item.stop.name}${routeLabel}?`,
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          {
-                            text: 'Request',
-                            onPress: () => {
-                              setSelectedStopKey(item.key);
-                              handleRequest(item);
-                            },
-                          },
-                        ],
-                      );
-                    }}
+                    onPress={() => confirmAndRequest(item)}
                   >
-                    <Text style={styles.locationText}>{item.stop.name}</Text>
-                    {item.routeName ? (
+                    <Text style={styles.locationText}>
+                      {item.stop.name}{item.routeName ? ` — ${item.routeName}` : ''}
+                    </Text>
+                    {item.routeName && item.position !== null ? (
                       <Text style={styles.locationRouteMeta}>
-                        {item.position !== null ? `Stop ${item.position} of ${item.totalStops} · ` : ''}{item.routeName}
+                        Stop {item.position} of {item.totalStops}
                       </Text>
                     ) : null}
                   </TouchableOpacity>
@@ -1948,6 +1970,16 @@ const handleRequest = async (entry: RequestableStop) => {
             anchor={{ x: 0.5, y: 1 }}
             zIndex={2}
             tracksViewChanges={false}
+            onPress={() => {
+              const matches = requestableStops.filter((e) => e.stop.id === stop.id);
+              if (matches.length === 1) {
+                confirmAndRequest(matches[0]);
+              } else if (matches.length > 1) {
+                // Stop is served by more than one route — let the rider pick which.
+                setSelectedStopKey(null);
+                setShowLocationList(true);
+              }
+            }}
           >
             <MapMarker label={stop.name} />
           </Marker>
@@ -2010,7 +2042,12 @@ const handleRequest = async (entry: RequestableStop) => {
                       <View style={styles.busCloudInner}>
                         <View style={styles.busCloudHeader}>
                           <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
-                          <TouchableOpacity onPress={closeSelectedBus} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                          <TouchableOpacity
+                            onPress={closeSelectedBus}
+                            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Close bus info"
+                          >
                             <Icon name="close" size={18} color={GRAY_400} />
                           </TouchableOpacity>
                         </View>
@@ -2120,16 +2157,34 @@ const handleRequest = async (entry: RequestableStop) => {
           },
         ]}
       >
-        <TouchableOpacity style={styles.fab} onPress={centerOnUser} activeOpacity={0.9}>
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={centerOnUser}
+          activeOpacity={0.9}
+          accessibilityRole="button"
+          accessibilityLabel="Center on my location"
+        >
           <Icon name="my-location" size={22} color={GRAY_900} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.fab} onPress={fitStops} activeOpacity={0.9}>
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={fitStops}
+          activeOpacity={0.9}
+          accessibilityRole="button"
+          accessibilityLabel="Show all stops"
+        >
           <Icon name="map" size={22} color={GRAY_900} />
         </TouchableOpacity>
 
         {rideActive && (
-          <TouchableOpacity style={[styles.fabPrimary, { backgroundColor: primaryColor }]} onPress={fitActiveRide} activeOpacity={0.9}>
+          <TouchableOpacity
+            style={[styles.fabPrimary, { backgroundColor: primaryColor }]}
+            onPress={fitActiveRide}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Fit map to active ride"
+          >
             <Icon name="alt-route" size={22} color={WHITE} />
             <Text style={styles.fabPrimaryText}>Fit</Text>
           </TouchableOpacity>
@@ -2251,29 +2306,7 @@ const handleRequest = async (entry: RequestableStop) => {
             {visibleRequest.studentUid === studentUid && (visibleRequest.status === 'accepted' || visibleRequest.status === 'pending') && (
               <TouchableOpacity
                 style={styles.cancelButton}
-                onPress={() => {
-                  Alert.alert(
-                    'Cancel request?',
-                    'Are you sure you want to cancel your stop request?',
-                    [
-                      { text: 'Keep it', style: 'cancel' },
-                      {
-                        text: 'Cancel request',
-                        style: 'destructive',
-                        onPress: async () => {
-                          if (!requestId || !orgId) return;
-                          await updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), { status: 'cancelled' });
-                          setRequest(null);
-                          setRequestId(null);
-                          setRouteCoords([]);
-                          fullRouteRef.current = [];
-                          setEta(null);
-                          setStopsBefore(null);
-                        },
-                      },
-                    ],
-                  );
-                }}
+                onPress={() => setConfirmSheet({ type: 'cancelRequest' })}
               >
                 <Text style={styles.cancelButtonText}>Cancel Request</Text>
               </TouchableOpacity>
@@ -2324,10 +2357,30 @@ const handleRequest = async (entry: RequestableStop) => {
           orgId={orgId}
           studentUid={studentUid}
           stopName={request.stop?.name ?? 'your stop'}
+          childName={role === 'parent' ? request.childName ?? null : null}
           primaryColor={primaryColor}
           onDone={() => setShowPickupConfirm(false)}
         />
       )}
+
+      <ConfirmSheet
+        visible={!!confirmSheet}
+        primaryColor={primaryColor}
+        icon={confirmSheet?.type === 'cancelRequest' ? 'cancel' : 'directions-bus'}
+        title={confirmSheet?.type === 'cancelRequest' ? 'Cancel request?' : 'Request pickup'}
+        message={
+          confirmSheet?.type === 'cancelRequest'
+            ? 'Are you sure you want to cancel your stop request?'
+            : confirmSheet?.type === 'request'
+              ? `Request a pickup at ${confirmSheet.entry.stop.name}${confirmSheet.entry.routeName ? ` · ${confirmSheet.entry.routeName}` : ''}?`
+              : undefined
+        }
+        confirmLabel={confirmSheet?.type === 'cancelRequest' ? 'Cancel request' : 'Request'}
+        cancelLabel={confirmSheet?.type === 'cancelRequest' ? 'Keep it' : 'Cancel'}
+        destructive={confirmSheet?.type === 'cancelRequest'}
+        onConfirm={handleConfirmSheetConfirm}
+        onCancel={() => setConfirmSheet(null)}
+      />
 
     </SafeAreaView>
   );

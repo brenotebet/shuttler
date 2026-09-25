@@ -16,6 +16,15 @@ function toOnboardingRole(role: string | null | undefined): OnboardingRole | nul
   return null;
 }
 
+// This hook mounts independently on up to 4 screens (Map, DriverScreen,
+// DriverMenuScreen, AdminOrgSetupScreen). If two happen to mount within the
+// same 600ms window (e.g. a tab switch right at app startup), each has its
+// own per-instance `didNavigate` ref and would otherwise both pass the
+// AsyncStorage "seen" check before either writes it, firing two navigations.
+// This module-level lock makes the check-and-navigate atomic across every
+// instance for a given user+org, regardless of how many are mounted.
+const inFlightKeys = new Set<string>();
+
 export function useFirstLoginOnboarding() {
   const { user, role, initializing } = useAuth();
   const { org, isLoadingOrg } = useOrg();
@@ -44,13 +53,23 @@ export function useFirstLoginOnboarding() {
     // 600ms delay — long enough for the screen transition and overlay fade to complete.
     const timer = setTimeout(() => {
       if (toOnboardingRole(role) !== onboardingRole || didNavigate.current) return;
+      // Another mounted instance is already mid-check for this same key — bail
+      // rather than race it.
+      if (inFlightKeys.has(key)) return;
+      inFlightKeys.add(key);
       AsyncStorage.getItem(key).then((seen) => {
         if (!seen && !didNavigate.current && toOnboardingRole(role) === onboardingRole) {
           didNavigate.current = true;
           AsyncStorage.setItem(key, '1').catch(() => {});
-          navigation.navigate('HowToUse', { role: onboardingRole, isOnboarding: true });
+          // Only the founding admin (org has no stops yet) is walked through org
+          // setup — an admin invited into an already-configured org would otherwise
+          // see setup instructions referencing a screen that isn't open.
+          const isOnboarding = onboardingRole !== 'admin' || (org.stops?.length ?? 0) === 0;
+          navigation.navigate('HowToUse', { role: onboardingRole, isOnboarding });
         }
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => {
+        inFlightKeys.delete(key);
+      });
     }, 600);
 
     return () => clearTimeout(timer);

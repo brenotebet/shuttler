@@ -559,6 +559,7 @@ export default function AdminDashboardScreen() {
       await Share.share({ message: csv, title: 'Shuttler Export' });
     } catch (e) {
       console.error('CSV export failed', e);
+      showAlert('Export failed. Check your connection and try again.', 'Error', 'error');
     } finally {
       setIsExporting(false);
     }
@@ -625,7 +626,7 @@ export default function AdminDashboardScreen() {
             </Text>
             <TouchableOpacity
               style={[styles.driversEmptyBtn, { borderColor: primaryColor }]}
-              onPress={() => navigation.navigate('AdminOrgSetup')}
+              onPress={() => navigation.navigate('AdminOrgSetup', { initialTab: 'users' })}
             >
               <Icon name="person-add" size={16} color={primaryColor} />
               <Text style={[styles.driversEmptyBtnText, { color: primaryColor }]}>Go to Org Setup</Text>

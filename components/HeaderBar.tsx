@@ -24,7 +24,12 @@ function HeaderBar({ title, showBack = true, onBack }: HeaderBarProps) {
   return (
     <View style={styles.container}>
       {showBack ? (
-        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+        <TouchableOpacity
+          onPress={handleBack}
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <MaterialIcons name="arrow-back" size={24} color={primaryColor} />
         </TouchableOpacity>
       ) : (

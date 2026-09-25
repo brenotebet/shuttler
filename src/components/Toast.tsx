@@ -11,6 +11,7 @@ interface ToastMessage {
   id: number;
   message: string;
   type: ToastType;
+  durationMs: number;
 }
 
 let _show: ((message: string, type: ToastType, durationMs: number) => void) | null = null;
@@ -39,7 +40,7 @@ function ToastPill({ toast, onGone }: { toast: ToastMessage; onGone: (id: number
         Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }),
         Animated.timing(translateY, { toValue: -8, duration: 220, useNativeDriver: true }),
       ]).start(() => onGone(toast.id));
-    }, 3000);
+    }, toast.durationMs);
     return () => clearTimeout(timer);
   }, []);
 
@@ -71,9 +72,9 @@ export function ToastContainer() {
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    _show = (message, type, _durationMs) => {
+    _show = (message, type, durationMs) => {
       const id = ++_nextId;
-      setToasts((prev) => [...prev, { id, message, type }]);
+      setToasts((prev) => [...prev, { id, message, type, durationMs }]);
     };
     return () => { _show = null; };
   }, []);

@@ -27,6 +27,7 @@ interface Props {
   orgId: string;
   studentUid: string;
   stopName: string;
+  childName?: string | null;
   primaryColor: string;
   onDone: () => void;
 }
@@ -63,6 +64,7 @@ export default function PickupConfirmModal({
   orgId,
   studentUid,
   stopName,
+  childName,
   primaryColor,
   onDone,
 }: Props) {
@@ -166,7 +168,7 @@ export default function PickupConfirmModal({
                 <Icon name="directions-bus" size={40} color={primaryColor} />
               </View>
 
-              <Text style={styles.title}>Were you picked up?</Text>
+              <Text style={styles.title}>{childName ? `Was ${childName} picked up?` : 'Were you picked up?'}</Text>
               <Text style={styles.subtitle}>
                 The driver marked a boarding at{'\n'}
                 <Text style={{ fontWeight: '700' }}>{stopName}</Text>
@@ -178,7 +180,7 @@ export default function PickupConfirmModal({
                 disabled={saving}
               >
                 <Icon name="check-circle" size={20} color={WHITE} />
-                <Text style={styles.primaryBtnText}>Yes, I'm on the bus!</Text>
+                <Text style={styles.primaryBtnText}>{childName ? `Yes, they're on the bus!` : "Yes, I'm on the bus!"}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity

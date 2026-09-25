@@ -61,8 +61,11 @@ const DURATION_OPTIONS: { value: number | null; label: string }[] = [
 ];
 
 export default function AnnouncementsScreen() {
-  const { orgId } = useAuth();
+  const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
+  // Riders can look up active alerts but only drivers/admins can post or clear them
+  // (also enforced server-side) — the posting form and Clear action are hidden for them.
+  const canManage = role === 'admin' || role === 'driver';
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -160,75 +163,79 @@ export default function AnnouncementsScreen() {
       <ScreenContainer padded={false}>
         <HeaderBar title="Service Alerts" />
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.sectionLabel}>Post an Alert</Text>
-          <Text style={styles.hint}>
-            Riders see this instantly as a banner on their live map and get a push notification.
-          </Text>
+          {canManage && (
+            <>
+              <Text style={styles.sectionLabel}>Post an Alert</Text>
+              <Text style={styles.hint}>
+                Riders see this instantly as a banner on their live map and get a push notification.
+              </Text>
 
-          <View style={styles.card}>
-            <Text style={styles.fieldLabel}>Type</Text>
-            <View style={styles.chipRow}>
-              {SEVERITY_OPTIONS.map((opt) => {
-                const selected = severity === opt.value;
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[styles.chip, selected && { backgroundColor: `${opt.color}15`, borderColor: opt.color }]}
-                    onPress={() => setSeverity(opt.value)}
-                  >
-                    <Icon name={opt.icon} size={16} color={selected ? opt.color : GRAY_500} />
-                    <Text style={[styles.chipText, selected && { color: opt.color, fontWeight: '700' }]}>
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+              <View style={styles.card}>
+                <Text style={styles.fieldLabel}>Type</Text>
+                <View style={styles.chipRow}>
+                  {SEVERITY_OPTIONS.map((opt) => {
+                    const selected = severity === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.chip, selected && { backgroundColor: `${opt.color}15`, borderColor: opt.color }]}
+                        onPress={() => setSeverity(opt.value)}
+                      >
+                        <Icon name={opt.icon} size={16} color={selected ? opt.color : GRAY_500} />
+                        <Text style={[styles.chipText, selected && { color: opt.color, fontWeight: '700' }]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
 
-            <FormField
-              label="Title"
-              value={title}
-              onChangeText={setTitle}
-              placeholder="e.g. Main Loop running 15 min late"
-              maxLength={80}
-            />
-            <FormField
-              label="Details (optional)"
-              value={body}
-              onChangeText={setBody}
-              placeholder="What riders should do"
-              multiline
-              maxLength={300}
-              style={styles.detailsInput}
-            />
+                <FormField
+                  label="Title"
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="e.g. Main Loop running 15 min late"
+                  maxLength={80}
+                />
+                <FormField
+                  label="Details (optional)"
+                  value={body}
+                  onChangeText={setBody}
+                  placeholder="What riders should do"
+                  multiline
+                  maxLength={300}
+                  style={styles.detailsInput}
+                />
 
-            <Text style={styles.fieldLabel}>Show for</Text>
-            <View style={styles.chipRow}>
-              {DURATION_OPTIONS.map((opt) => {
-                const selected = durationMinutes === opt.value;
-                return (
-                  <TouchableOpacity
-                    key={opt.label}
-                    style={[styles.chip, selected && { backgroundColor: `${primaryColor}15`, borderColor: primaryColor }]}
-                    onPress={() => setDurationMinutes(opt.value)}
-                  >
-                    <Text style={[styles.chipText, selected && { color: primaryColor, fontWeight: '700' }]}>
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                <Text style={styles.fieldLabel}>Show for</Text>
+                <View style={styles.chipRow}>
+                  {DURATION_OPTIONS.map((opt) => {
+                    const selected = durationMinutes === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.label}
+                        style={[styles.chip, selected && { backgroundColor: `${primaryColor}15`, borderColor: primaryColor }]}
+                        onPress={() => setDurationMinutes(opt.value)}
+                      >
+                        <Text style={[styles.chipText, selected && { color: primaryColor, fontWeight: '700' }]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
 
-            <AppButton
-              label={posting ? 'Posting…' : 'Post Alert'}
-              onPress={post}
-              disabled={!title.trim() || posting}
-              style={{ marginTop: 14 }}
-            />
-          </View>
+                <AppButton
+                  label={posting ? 'Posting…' : 'Post Alert'}
+                  onPress={post}
+                  disabled={!title.trim() || posting}
+                  style={{ marginTop: 14 }}
+                />
+              </View>
+            </>
+          )}
 
-          <Text style={[styles.sectionLabel, { marginTop: 28 }]}>Active Alerts</Text>
+          <Text style={[styles.sectionLabel, canManage && { marginTop: 28 }]}>Active Alerts</Text>
           {loadingAlerts ? (
             <ActivityIndicator color={primaryColor} style={{ marginTop: 16 }} />
           ) : activeAlerts.length === 0 ? (
@@ -255,17 +262,19 @@ export default function AnnouncementsScreen() {
                           : 'Until cleared'}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.clearBtn, { borderColor: `${primaryColor}50` }]}
-                    onPress={() => clearAlert(a.id)}
-                    disabled={clearingId === a.id}
-                  >
-                    {clearingId === a.id ? (
-                      <ActivityIndicator size="small" color={primaryColor} />
-                    ) : (
-                      <Text style={[styles.clearBtnText, { color: primaryColor }]}>Clear</Text>
-                    )}
-                  </TouchableOpacity>
+                  {canManage && (
+                    <TouchableOpacity
+                      style={[styles.clearBtn, { borderColor: `${primaryColor}50` }]}
+                      onPress={() => clearAlert(a.id)}
+                      disabled={clearingId === a.id}
+                    >
+                      {clearingId === a.id ? (
+                        <ActivityIndicator size="small" color={primaryColor} />
+                      ) : (
+                        <Text style={[styles.clearBtnText, { color: primaryColor }]}>Clear</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
                 </View>
               );
             })
