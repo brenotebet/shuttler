@@ -433,9 +433,12 @@ const ALLOWED_ORIGINS = isProduction
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow server-to-server (no origin) and whitelisted browsers
+    // Allow server-to-server (no origin) and whitelisted browsers.
+    // Other origins get no CORS headers (the browser blocks their XHR reads)
+    // rather than an error — throwing here 500s legitimate cross-origin form
+    // POSTs, e.g. the IdP's SAML HTTP-POST binding to /saml/:orgSlug/acs.
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-    cb(new Error(`CORS: ${origin} not allowed`));
+    cb(null, false);
   },
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
