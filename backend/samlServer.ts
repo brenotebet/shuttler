@@ -694,23 +694,28 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
   const { uid, orgId, attributes } = payload;
 
   try {
-    const email =
-      normalizeString((attributes as any).email) ||
-      normalizeString((attributes as any).mail) ||
-      undefined;
+    const email = pickAttribute(attributes, ['email', 'mail', 'emailAddress']);
 
-    const givenName =
-      normalizeString((attributes as any).givenName) ||
-      normalizeString((attributes as any).Fname) ||
-      undefined;
+    // Attribute names vary by IdP (e.g. Quicklaunch sends fname/lname), so
+    // pickAttribute matches case-insensitively across common aliases.
+    const givenName = pickAttribute(attributes, [
+      'givenName', 'fname', 'firstName', 'first_name',
+      'urn:oid:2.5.4.42',
+      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname',
+    ]);
 
-    const lastName =
-      normalizeString((attributes as any).lastName) ||
-      normalizeString((attributes as any).Lname) ||
-      undefined;
+    const lastName = pickAttribute(attributes, [
+      'lastName', 'lname', 'last_name', 'sn', 'surname',
+      'urn:oid:2.5.4.4',
+      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname',
+    ]);
 
     const displayName =
-      normalizeString((attributes as any).displayName) ||
+      pickAttribute(attributes, [
+        'displayName', 'name', 'cn',
+        'urn:oid:2.16.840.1.113730.3.1.241',
+        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name',
+      ]) ||
       [givenName, lastName].filter(Boolean).join(' ') ||
       undefined;
 
@@ -718,21 +723,34 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
     const firebaseToken = await admin.auth().createCustomToken(uid, { orgId, email, displayName });
 
     // Upsert user doc in org subcollection
-    await admin.firestore()
+    const userRef = admin.firestore()
       .collection('orgs').doc(orgId)
-      .collection('users').doc(uid)
-      .set(
+      .collection('users').doc(uid);
+
+    await admin.firestore().runTransaction(async (tx) => {
+      const existing = await tx.get(userRef);
+      tx.set(
+        userRef,
         {
           uid,
           orgId,
           email: email ?? null,
-          displayName: displayName ?? null,
-          role: 'student', // SAML users start as student; admin can promote
+          // Only write a name the IdP actually sent, so a missing attribute
+          // doesn't erase a name the user entered on their profile.
+          ...(displayName ? { displayName } : {}),
           lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          // Role and createdAt are set only on first login, so an admin's
+          // promotion (or an existing admin signing in via SSO) isn't reset.
+          ...(existing.exists
+            ? {}
+            : {
+                role: 'student', // SAML users start as student; admin can promote
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              }),
         },
         { merge: true },
       );
+    });
 
     return res.json({ firebaseToken });
   } catch (e) {
@@ -745,8 +763,8 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
 // round trip through startSamlLogin() — without the two side effects a real
 // login would have: it never mints a Firebase session (so it can't hijack the
 // admin's own active app session) and never touches the org's users
-// subcollection (so it can't demote an existing admin to 'student' the way
-// /saml/exchange's unconditional role write would).
+// subcollection (so a test run never creates a user record for the admin's
+// IdP identity).
 app.post('/saml/:orgSlug/test-verify', async (req: Request, res: Response) => {
   const clientIp = req.ip ?? 'unknown';
   if (samlTestVerifyLimit(clientIp)) {
@@ -3396,6 +3414,17 @@ function normalizeAudience(audience: unknown): string[] {
   if (!audience) return [];
   if (Array.isArray(audience)) return audience.map((v) => String(v));
   return [String(audience)];
+}
+
+/** First non-empty attribute matching any of `keys`, compared case-insensitively. */
+function pickAttribute(attributes: Record<string, unknown>, keys: string[]): string | undefined {
+  const wanted = new Set(keys.map((k) => k.toLowerCase()));
+  for (const [key, value] of Object.entries(attributes)) {
+    if (!wanted.has(key.toLowerCase())) continue;
+    const normalized = normalizeString(value)?.trim();
+    if (normalized) return normalized;
+  }
+  return undefined;
 }
 
 function normalizeString(value: unknown): string | undefined {
