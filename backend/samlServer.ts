@@ -694,30 +694,7 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
   const { uid, orgId, attributes } = payload;
 
   try {
-    const email = pickAttribute(attributes, ['email', 'mail', 'emailAddress']);
-
-    // Attribute names vary by IdP (e.g. Quicklaunch sends fname/lname), so
-    // pickAttribute matches case-insensitively across common aliases.
-    const givenName = pickAttribute(attributes, [
-      'givenName', 'fname', 'firstName', 'first_name',
-      'urn:oid:2.5.4.42',
-      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname',
-    ]);
-
-    const lastName = pickAttribute(attributes, [
-      'lastName', 'lname', 'last_name', 'sn', 'surname',
-      'urn:oid:2.5.4.4',
-      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname',
-    ]);
-
-    const displayName =
-      pickAttribute(attributes, [
-        'displayName', 'name', 'cn',
-        'urn:oid:2.16.840.1.113730.3.1.241',
-        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name',
-      ]) ||
-      [givenName, lastName].filter(Boolean).join(' ') ||
-      undefined;
+    const { email, displayName } = extractSamlProfile(attributes);
 
     // Embed orgId as a custom claim so AuthProvider can read it on re-launch
     const firebaseToken = await admin.auth().createCustomToken(uid, { orgId, email, displayName });
@@ -777,13 +754,16 @@ app.post('/saml/:orgSlug/test-verify', async (req: Request, res: Response) => {
   const payload = await consumeHandoffToken(String(samlToken));
   if (!payload) return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
 
-  const { attributes } = payload;
-  const email =
-    normalizeString((attributes as any).email) ||
-    normalizeString((attributes as any).mail) ||
-    undefined;
+  const { email, displayName } = extractSamlProfile(payload.attributes);
 
-  return res.json({ ok: true, email: email ?? null });
+  // Lets the setup screen warn the admin about attributes their IdP isn't
+  // releasing, before real users sign in with blank profiles.
+  const missingAttributes = [
+    !email && 'email',
+    !displayName && 'first and last name',
+  ].filter(Boolean);
+
+  return res.json({ ok: true, email: email ?? null, displayName: displayName ?? null, missingAttributes });
 });
 
 app.get('/saml/:orgSlug/metadata', async (req: Request, res: Response) => {
@@ -3414,6 +3394,36 @@ function normalizeAudience(audience: unknown): string[] {
   if (!audience) return [];
   if (Array.isArray(audience)) return audience.map((v) => String(v));
   return [String(audience)];
+}
+
+/** Profile fields from a SAML assertion's attributes, tolerant of IdP naming. */
+function extractSamlProfile(attributes: Record<string, unknown>) {
+  const email = pickAttribute(attributes, ['email', 'mail', 'emailAddress']);
+
+  // Attribute names vary by IdP (e.g. Quicklaunch sends fname/lname), so
+  // pickAttribute matches case-insensitively across common aliases.
+  const givenName = pickAttribute(attributes, [
+    'givenName', 'fname', 'firstName', 'first_name',
+    'urn:oid:2.5.4.42',
+    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname',
+  ]);
+
+  const lastName = pickAttribute(attributes, [
+    'lastName', 'lname', 'last_name', 'sn', 'surname',
+    'urn:oid:2.5.4.4',
+    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname',
+  ]);
+
+  const displayName =
+    pickAttribute(attributes, [
+      'displayName', 'name', 'cn',
+      'urn:oid:2.16.840.1.113730.3.1.241',
+      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name',
+    ]) ||
+    [givenName, lastName].filter(Boolean).join(' ') ||
+    undefined;
+
+  return { email, givenName, lastName, displayName };
 }
 
 /** First non-empty attribute matching any of `keys`, compared case-insensitively. */

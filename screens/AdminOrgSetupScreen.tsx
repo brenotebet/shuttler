@@ -319,6 +319,7 @@ function AuthTab() {
   const [testedConfigKey, setTestedConfigKey] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testEmail, setTestEmail] = useState<string | null>(null);
+  const [testMissingAttributes, setTestMissingAttributes] = useState<string[]>([]);
 
   const currentConfigKey = JSON.stringify({ idpEntityId, idpSsoUrl, idpCert });
   const isDraftCurrent = authMethod === 'saml' && savedConfigKey === currentConfigKey;
@@ -402,6 +403,7 @@ function AuthTab() {
     if (!org) return;
     setTestStatus('testing');
     setTestError(null);
+    setTestMissingAttributes([]);
     try {
       const redirectUrl = await startSamlLogin(org.slug);
       if (!redirectUrl) {
@@ -422,6 +424,7 @@ function AuthTab() {
       setTestStatus('passed');
       setTestedConfigKey(currentConfigKey);
       setTestEmail(data.email ?? null);
+      setTestMissingAttributes(Array.isArray(data.missingAttributes) ? data.missingAttributes : []);
     } catch (e: any) {
       setTestStatus('failed');
       setTestError(e?.message ?? 'Unknown error during test login.');
@@ -513,11 +516,10 @@ function AuthTab() {
         <View style={styles.infoBox}>
           <Text style={[styles.infoBoxTitle, { color: primaryColor }]}>Setup steps</Text>
           <Text style={styles.hint}>
-            1. Give your IT team the ACS URL, SP Entity ID, and (optionally) the metadata URL below — most IdPs can import the metadata URL directly.{'\n'}
-            2. Enter your IdP's Entity ID, SSO URL, and signing certificate below, then tap Save Draft.{'\n'}
-            3. Tap Test Connection to try a real sign-in against your IdP without affecting live users.{'\n'}
-            4. If the test fails, open the Trace URL below in a desktop browser (not this app) to see exactly what your IdP sent. Pair it with a SAML tracer browser extension, or your browser's DevTools Network tab, to inspect the raw SAML request/response.{'\n'}
-            5. Once Test Connection passes, tap Activate SAML for All Users.
+            1. Send your IT team the URLs and attributes listed below. Most IdPs can import the metadata URL directly.{'\n'}
+            2. Paste the Entity ID, SSO URL, and signing certificate they give you into the fields below, then tap Save Draft.{'\n'}
+            3. Tap Test Connection to sign in once with your own school account. Live users aren't affected.{'\n'}
+            4. When the test passes, tap Activate SAML for All Users.
           </Text>
 
           <Text style={[styles.infoBoxTitle, { color: primaryColor, marginTop: spacing.item }]}>Give these to your IT team</Text>
@@ -527,9 +529,15 @@ function AuthTab() {
           <Text style={styles.infoBoxValue} selectable>{spInfo.spEntityId}</Text>
           <Text style={styles.infoBoxLabel}>SP Metadata URL</Text>
           <Text style={styles.infoBoxValue} selectable>{spInfo.metadataUrl}</Text>
+          <Text style={styles.infoBoxLabel}>Attributes to send</Text>
+          <Text style={styles.hint}>
+            • Email (required){'\n'}
+            • First name and last name, so users' names show up in Shuttler{'\n'}
+            Common names like email, fname/firstName, and lname/lastName all work.
+          </Text>
 
           <Text style={[styles.infoBoxTitle, { color: primaryColor, marginTop: spacing.item }]}>Troubleshooting</Text>
-          <Text style={styles.infoBoxLabel}>Trace URL — open in a desktop browser after saving a draft</Text>
+          <Text style={styles.infoBoxLabel}>Trace URL — if the test fails, open this in a desktop browser (with a SAML tracer extension or DevTools) to see what your IdP sent</Text>
           <Text style={styles.infoBoxValue} selectable>{spInfo.loginUrl}</Text>
         </View>
       )}
@@ -584,6 +592,11 @@ function AuthTab() {
           {testStatus === 'passed' && isTestCurrent && (
             <Text style={styles.testPassedText}>
               ✅ Test succeeded{testEmail ? ` — verified ${testEmail} via your IdP` : ''}
+            </Text>
+          )}
+          {testStatus === 'passed' && isTestCurrent && testMissingAttributes.length > 0 && (
+            <Text style={styles.testWarningText}>
+              ⚠️ Your IdP didn't send: {testMissingAttributes.join(', ')}. Ask your IT team to add {testMissingAttributes.length > 1 ? 'these attributes' : 'this attribute'}, or users' profiles will be incomplete.
             </Text>
           )}
           {testStatus === 'failed' && (
@@ -3760,6 +3773,12 @@ const styles = StyleSheet.create({
   testFailedText: {
     fontSize: 13,
     color: DANGER_COLOR,
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  testWarningText: {
+    fontSize: 13,
+    color: GRAY_700,
     fontWeight: '600',
     marginTop: 8,
   },
