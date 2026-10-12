@@ -464,11 +464,27 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
       // Verify this account belongs to the selected org.
       const userRef = doc(db, 'orgs', orgId, 'users', cred.user.uid);
       let memberExists = false;
+      let memberRole: unknown;
       try {
         const snap = await getDoc(userRef);
         memberExists = snap.exists();
+        memberRole = snap.data()?.role;
       } catch {
         // permission-denied — not a member of this org
+      }
+
+      // The SSO / phone-org email escape hatch is for admins only — a student
+      // with a leftover email/password account must not use it to skip the
+      // org's real sign-in method.
+      if (memberExists && adminOnly && memberRole !== 'admin') {
+        await signOut(auth);
+        showAlert(
+          org?.authMethod === 'saml'
+            ? 'Email sign-in is only available to administrators. Please use "Continue with SSO".'
+            : 'Email sign-in is only available to administrators. Please use phone sign-in.',
+          'Admins Only',
+        );
+        return;
       }
 
       if (!memberExists) {
@@ -504,7 +520,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password, orgId]);
+  }, [email, password, orgId, adminOnly, org?.authMethod]);
 
   const handleSignUp = useCallback(async () => {
     setFormError(null);
@@ -743,7 +759,9 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
         </TouchableOpacity>
       )}
 
-      {(() => {
+      {!adminOnly && (() => {
+        // Google/Apple are never offered on the admin-only escape hatch for
+        // SSO / phone orgs — the backend rejects them for those orgs anyway.
         // Apple availability must never depend on the Google config — if the
         // Google client ID is missing from a build, hiding Apple with it would
         // violate App Review guideline 4.8 (Sign in with Apple parity).

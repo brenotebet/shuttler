@@ -30,6 +30,7 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
+import { emailRegistrationRejection, socialSignInRejection } from './authPolicy';
 
 /**
  * Shuttler multi-tenant backend
@@ -949,12 +950,17 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Org subscription is not active' });
     }
 
+    const isFounder =
+      typeof org.founderEmail === 'string' &&
+      org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
+
     // Phone-auth orgs (K-12) use SMS OTP for parents — email registration is
     // not available. Admins sign in with existing email accounts, not new ones.
-    if (org.authMethod === 'phone') {
-      return res.status(403).json({
-        error: 'This organization uses phone sign-in. Please use the phone sign-in option to access the app.',
-      });
+    // SAML orgs only take the founder's admin account; everyone else must come
+    // through the IdP, or this endpoint would be an SSO bypass.
+    const registrationError = emailRegistrationRejection(org.authMethod, isFounder);
+    if (registrationError) {
+      return res.status(403).json({ error: registrationError });
     }
 
     // Enforce allowed email domains if the org has configured them.
@@ -1008,9 +1014,6 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     try {
       console.log(`[register] Writing user doc → orgs/${orgId}/users/${authUser.uid}`);
-      const isFounder =
-        typeof org.founderEmail === 'string' &&
-        org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
       const role = isFounder ? 'admin' : 'student';
 
       await admin.firestore()
@@ -2941,6 +2944,15 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
     const displayName = authUser.displayName ?? null;
     const orgData = orgDoc.data()!;
 
+    // The org's authMethod decides which providers may sign in — e.g. a SAML
+    // org must never accept Google/Apple, or SSO is trivially bypassed.
+    // Checked for existing members too, not just new signups.
+    const provider = (req as any).claims?.firebase?.sign_in_provider as string | undefined;
+    const providerError = socialSignInRejection(orgData.authMethod, provider);
+    if (providerError) {
+      return res.status(403).json({ error: providerError });
+    }
+
     // Domain restriction check — must happen before user doc creation.
     const allowedDomains: string[] = orgData.allowedEmailDomains ?? [];
     if (allowedDomains.length > 0 && email) {
@@ -2992,10 +3004,10 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
       // Create the user doc via Admin SDK (bypasses Firestore security
       // rules, which would otherwise block new users from creating their own doc
       // because orgIsActive() requires existing membership to read the org doc).
-      // Callers may request 'parent' role (phone auth); anything else defaults to 'student'.
+      // Phone sign-ins may request the 'parent' role; anything else defaults to 'student'.
       // 'admin' is never accepted from the client.
       const { role: requestedRole } = req.body as { role?: string };
-      const role = requestedRole === 'parent' ? 'parent' : 'student';
+      const role = requestedRole === 'parent' && provider === 'phone' ? 'parent' : 'student';
       isNew = true;
       await userRef.set({
         uid,
