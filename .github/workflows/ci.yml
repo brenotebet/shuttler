@@ -22,6 +22,10 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      # The backend has its own package.json (cors, node-cron, @anthropic-ai/sdk…)
+      - name: Install backend dependencies
+        run: npm ci --prefix backend
+
       # ── Mobile TypeScript ──────────────────────────────────
       - name: Typecheck mobile
         run: npx tsc --noEmit
