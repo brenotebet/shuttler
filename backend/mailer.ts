@@ -44,6 +44,22 @@ export async function sendEmail({ to, subject, html }: SendOptions): Promise<voi
 
 // ---------- Shared layout & components ----------
 
+// Escapes text for HTML content and quoted attributes. Template values include
+// names and org names from the public org-application form, admin-entered
+// stop names and AI-generated text — never interpolate them unescaped.
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function firstNameOf(name: string): string {
+  return escapeHtml((name.split(' ')[0] || name).trim());
+}
+
 function layout(content: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -134,11 +150,11 @@ export function emailVerificationTemplate(opts: {
   verifyUrl: string;
   orgName: string;
 }): string {
-  const firstName = (opts.name.split(' ')[0] || opts.name).trim();
+  const firstName = firstNameOf(opts.name);
   return layout(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">Verify your email address</h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
-      Hi ${firstName}, welcome to <strong>${opts.orgName}</strong> on Shuttler!
+      Hi ${firstName}, welcome to <strong>${escapeHtml(opts.orgName)}</strong> on Shuttler!
       Tap the button below to confirm your email and activate your account.
     </p>
     <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6;">
@@ -154,12 +170,12 @@ export function passwordResetTemplate(opts: {
   resetUrl: string;
   orgName: string;
 }): string {
-  const firstName = (opts.name.split(' ')[0] || opts.name).trim();
+  const firstName = firstNameOf(opts.name);
   return layout(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">Reset your password</h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
       Hi ${firstName}, we received a request to reset the password for your
-      <strong>${opts.orgName}</strong> Shuttler account.
+      <strong>${escapeHtml(opts.orgName)}</strong> Shuttler account.
     </p>
     <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6;">
       This link expires in <strong>1 hour</strong>.
@@ -175,18 +191,19 @@ export function welcomeTemplate(opts: {
   orgName: string;
   role: string;
 }): string {
-  const firstName = (opts.name.split(' ')[0] || opts.name).trim();
-  const roleLabel = opts.role === 'admin' ? 'administrator' : opts.role;
+  const firstName = firstNameOf(opts.name);
+  const roleLabel = escapeHtml(opts.role === 'admin' ? 'administrator' : opts.role);
+  const orgName = escapeHtml(opts.orgName);
   return layout(`
-    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">Welcome to ${opts.orgName}!</h1>
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">Welcome to ${orgName}!</h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
       Hi ${firstName}, your account is set up. You&rsquo;ve been added as a
-      <strong>${roleLabel}</strong> for <strong>${opts.orgName}</strong> on Shuttler.
+      <strong>${roleLabel}</strong> for <strong>${orgName}</strong> on Shuttler.
     </p>
     ${infoBox('Getting started', `
       <ul style="margin:0;padding:0 0 0 18px;font-size:14px;color:#374151;line-height:2.1;">
         <li>Download or open the Shuttler app</li>
-        <li>Select <strong>${opts.orgName}</strong> as your organization</li>
+        <li>Select <strong>${orgName}</strong> as your organization</li>
         <li>Sign in with your email and password</li>
       </ul>
     `)}
@@ -200,11 +217,11 @@ export function orgApplicationReceivedTemplate(opts: {
   contactName: string;
   orgName: string;
 }): string {
-  const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
+  const firstName = firstNameOf(opts.contactName);
   return layout(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">Application received</h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
-      Hi ${firstName}, thanks for applying to use Shuttler for <strong>${opts.orgName}</strong>.
+      Hi ${firstName}, thanks for applying to use Shuttler for <strong>${escapeHtml(opts.orgName)}</strong>.
       We&rsquo;ll review your application within <strong>1 business day</strong> and email you once it&rsquo;s approved.
     </p>
     ${infoBox('While you wait', `
@@ -224,16 +241,17 @@ export function orgRejectedTemplate(opts: {
   orgName: string;
   reason?: string | null;
 }): string {
-  const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
+  const firstName = firstNameOf(opts.contactName);
+  const orgName = escapeHtml(opts.orgName);
   return layout(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">
-      Application update for ${opts.orgName}
+      Application update for ${orgName}
     </h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
       Hi ${firstName}, thank you for applying to Shuttler. After reviewing your application
-      for <strong>${opts.orgName}</strong>, we&rsquo;re unable to approve it at this time.
+      for <strong>${orgName}</strong>, we&rsquo;re unable to approve it at this time.
     </p>
-    ${opts.reason ? infoBox('Reason', `<p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">${opts.reason}</p>`, '#fef2f2', '#fecaca', '#991b1b') : ''}
+    ${opts.reason ? infoBox('Reason', `<p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">${escapeHtml(opts.reason)}</p>`, '#fef2f2', '#fecaca', '#991b1b') : ''}
     <p style="margin:0 0 16px;font-size:14px;color:#6b7280;line-height:1.7;">
       If you believe this is a mistake or would like to discuss your application, please
       reply to this email and we&rsquo;ll get back to you.
@@ -246,13 +264,13 @@ export function orgApprovedTemplate(opts: {
   orgName: string;
   setPasswordUrl?: string | null;
 }): string {
-  const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
+  const firstName = firstNameOf(opts.contactName);
   return layout(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">
       Your organization is approved &#127881;
     </h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
-      Hi ${firstName}, great news &mdash; <strong>${opts.orgName}</strong> has been approved on
+      Hi ${firstName}, great news &mdash; <strong>${escapeHtml(opts.orgName)}</strong> has been approved on
       Shuttler. One last step: set a password for your admin account below.
     </p>
     ${infoBox('Next steps', `
@@ -277,28 +295,30 @@ export function subscriptionConfirmedTemplate(opts: {
   planLabel: string;
   amount: string;
 }): string {
-  const firstName = (opts.contactName.split(' ')[0] || opts.contactName).trim();
+  const firstName = firstNameOf(opts.contactName);
+  const planLabel = escapeHtml(opts.planLabel);
+  const orgName = escapeHtml(opts.orgName);
   return layout(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">
       Payment confirmed &#9989;
     </h1>
     <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.7;">
-      Hi ${firstName}, your <strong>${opts.planLabel}</strong> subscription for
-      <strong>${opts.orgName}</strong> is now active. Thank you for subscribing to Shuttler!
+      Hi ${firstName}, your <strong>${planLabel}</strong> subscription for
+      <strong>${orgName}</strong> is now active. Thank you for subscribing to Shuttler!
     </p>
     ${infoBox('Subscription details', `
       <table cellpadding="0" cellspacing="0" style="width:100%;">
         <tr>
           <td style="font-size:14px;color:#6b7280;padding:4px 0;">Plan</td>
-          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${opts.planLabel}</td>
+          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${planLabel}</td>
         </tr>
         <tr>
           <td style="font-size:14px;color:#6b7280;padding:4px 0;">Organisation</td>
-          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${opts.orgName}</td>
+          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${orgName}</td>
         </tr>
         <tr>
           <td style="font-size:14px;color:#6b7280;padding:4px 0;">Amount</td>
-          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${opts.amount}/month</td>
+          <td style="font-size:14px;color:#111827;font-weight:600;text-align:right;">${escapeHtml(opts.amount)}/month</td>
         </tr>
       </table>
     `)}
@@ -317,15 +337,15 @@ export function weeklyDigestTemplate(opts: {
   topStop: string | null;
   narrative: string;
 }): string {
-  const firstName = (opts.adminName.split(' ')[0] || opts.adminName).trim();
+  const firstName = firstNameOf(opts.adminName);
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const topStopLabel = opts.topStop ? opts.topStop.split(' (')[0].trim() : '&mdash;';
+  const topStopLabel = opts.topStop ? escapeHtml(opts.topStop.split(' (')[0].trim()) : '&mdash;';
 
   return layout(`
     <h1 style="margin:0 0 4px;font-size:22px;font-weight:700;color:#111827;">Your weekly summary</h1>
     <p style="margin:0 0 24px;font-size:13px;color:#9ca3af;">Week ending ${today}</p>
     <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.7;">
-      Hi ${firstName}, here&rsquo;s what happened at <strong>${opts.orgName}</strong> this week.
+      Hi ${firstName}, here&rsquo;s what happened at <strong>${escapeHtml(opts.orgName)}</strong> this week.
     </p>
 
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;border-collapse:separate;border-spacing:8px 0;">
@@ -351,7 +371,7 @@ export function weeklyDigestTemplate(opts: {
       </tr>
     </table>
 
-    ${opts.narrative ? infoBox('AI Insights', `<p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">${opts.narrative}</p>`) : ''}
+    ${opts.narrative ? infoBox('AI Insights', `<p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">${escapeHtml(opts.narrative)}</p>`) : ''}
 
     <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;line-height:1.6;">
       View full analytics in the Shuttler app under <strong>Dashboard</strong>.

@@ -40,6 +40,7 @@ import ScreenContainer from '../components/ScreenContainer';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { showAlert } from '../src/utils/alerts';
 import { shareCsvFile } from '../src/utils/exportCsv';
+import { csvRow } from '../src/utils/csv';
 
 function todayStart(): Date {
   const d = new Date();
@@ -499,7 +500,7 @@ export default function AdminDashboardScreen() {
 
         if (cutoffMs > 0 && createdAtMs < cutoffMs) return; // enforce retention window
 
-        boardingRows.push([d.id, driverUid, stopName, count, createdAtIso].join(','));
+        boardingRows.push(csvRow([d.id, driverUid, stopName, count, createdAtIso]));
 
         if (driverUid) {
           if (!driverTotals[driverUid]) driverTotals[driverUid] = { all: 0, today: 0 };
@@ -513,11 +514,11 @@ export default function AdminDashboardScreen() {
 
       const driverSummary = drivers.map((driver) => {
         const totals = driverTotals[driver.uid] ?? { all: 0, today: 0 };
-        return [driver.uid, (driver as any).displayName ?? (driver as any).email ?? '', totals.all, totals.today].join(',');
+        return csvRow([driver.uid, (driver as any).displayName ?? (driver as any).email ?? '', totals.all, totals.today]);
       });
       const stopRows = Object.entries(stopSummary)
         .sort((a, b) => b[1].count - a[1].count)
-        .map(([sid, { name, count }]) => [sid, name, count].join(','));
+        .map(([sid, { name, count }]) => csvRow([sid, name, count]));
 
       const todayReqRows = reqSnap.docs
         .filter((d) => {
@@ -526,7 +527,7 @@ export default function AdminDashboardScreen() {
         })
         .map((d) => {
           const data = d.data() as any;
-          return [d.id, data.studentEmail ?? '', data.stop?.name ?? '', data.status ?? '', data.createdAt?.toDate?.()?.toISOString() ?? ''].join(',');
+          return csvRow([d.id, data.studentEmail ?? '', data.stop?.name ?? '', data.status ?? '', data.createdAt?.toDate?.()?.toISOString() ?? '']);
         });
 
       const rangeNote = extendedRetention
