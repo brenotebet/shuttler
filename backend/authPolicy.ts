@@ -9,6 +9,8 @@
 // The phone-org email/password escape hatch is enforced on the client (only
 // admins may use it) — Firebase password sign-in never touches this server.
 
+import { createHash } from 'crypto';
+
 const SOCIAL_PROVIDERS = ['google.com', 'apple.com'];
 const SOCIAL_AUTH_METHODS = ['email', 'google', 'email+google'];
 
@@ -69,4 +71,34 @@ export function inheritedSsoRole(previousRoles: unknown[]): 'admin' | 'driver' |
   if (previousRoles.includes('admin')) return 'admin';
   if (previousRoles.includes('driver')) return 'driver';
   return null;
+}
+
+/**
+ * The Firebase uid for an SSO identity: a hash of the org and the IdP's
+ * subject (uid/email/NameID attribute). Namespacing by org means one org's
+ * IdP can never assert a uid that belongs to another org — or to any
+ * non-SSO account — which a raw subject used as the uid allowed.
+ */
+export function ssoUid(orgId: string, idpSubject: string): string {
+  return `saml_${createHash('sha256').update(`${orgId}\n${idpSubject}`).digest('hex')}`;
+}
+
+// Profile fields an SSO identity keeps from the account(s) it takes over.
+// Role and ownership are handled separately (inheritedSsoRole).
+const CARRIED_OVER_FIELDS = [
+  'displayName', 'phone', 'phoneVerified', 'notificationPrefs',
+  'defaultRouteId', 'agreedToTermsAt', 'createdAt',
+];
+
+/**
+ * Merges the profile of the account(s) an SSO identity takes over: for each
+ * carried-over field, the first account (in the order given) that has it wins.
+ */
+export function carriedOverProfile(previousProfiles: Record<string, unknown>[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const field of CARRIED_OVER_FIELDS) {
+    const source = previousProfiles.find((p) => p[field] !== undefined && p[field] !== null);
+    if (source) merged[field] = source[field];
+  }
+  return merged;
 }

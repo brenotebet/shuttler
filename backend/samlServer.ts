@@ -30,7 +30,13 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
-import { emailRegistrationRejection, inheritedSsoRole, socialSignInRejection } from './authPolicy';
+import {
+  carriedOverProfile,
+  emailRegistrationRejection,
+  inheritedSsoRole,
+  socialSignInRejection,
+  ssoUid,
+} from './authPolicy';
 
 /**
  * Shuttler multi-tenant backend
@@ -712,7 +718,11 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
   const payload = await consumeHandoffToken(String(samlToken));
   if (!payload) return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
 
-  const { uid, orgId, attributes } = payload;
+  const { uid: idpSubject, orgId, attributes } = payload;
+  // Never use the IdP's subject as the Firebase uid directly — any org's IdP
+  // could then mint a session for any uid (another org's admin, a super
+  // admin). Namespaced per org instead.
+  const uid = ssoUid(orgId, idpSubject);
 
   try {
     // A saved-but-not-activated SAML draft is testable through
@@ -731,33 +741,50 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
     // Upsert user doc in org subcollection
     const orgRef = admin.firestore().collection('orgs').doc(orgId);
     const userRef = orgRef.collection('users').doc(uid);
+    let previousUids: string[] = [];
 
     await admin.firestore().runTransaction(async (tx) => {
       const existing = await tx.get(userRef);
 
-      // SAML orgs are SSO-only, admins included. The first time an SSO
-      // identity signs in, it takes over any pre-SSO account in this org with
-      // the same email (e.g. the founder's email/password admin login): it
-      // inherits that account's role and org ownership, and the old membership
-      // is removed so its password login can't be used to bypass SSO. The
-      // email comes from this org's signed IdP assertion, so it's trusted
-      // within this org only.
-      let previousAccounts: admin.firestore.QueryDocumentSnapshot[] = [];
+      // The first time an SSO identity signs in, it takes over this org's
+      // previous account(s) for the same person:
+      //  - the legacy SSO account keyed by the raw IdP subject, from before
+      //    uids were namespaced per org, and
+      //  - any account with the same email — SAML orgs are SSO-only, admins
+      //    included, so e.g. the founder's email/password admin login.
+      // It inherits their role, profile and org ownership, and the old
+      // memberships are removed so they can't be used to bypass SSO. The
+      // subject and email come from this org's signed IdP assertion, so
+      // they're trusted within this org only.
+      const previousAccounts: admin.firestore.DocumentSnapshot[] = [];
       let ownerUid: string | undefined;
-      if (!existing.exists && email) {
+      if (!existing.exists) {
         ownerUid = (await tx.get(orgRef)).data()?.ownerUid;
-        // Member emails are stored lowercase (see backfill-lowercase-emails.js);
-        // the raw form also matches anything written before that.
-        const emails = Array.from(new Set([email, email.toLowerCase()]));
-        const matches = await tx.get(orgRef.collection('users').where('email', 'in', emails));
-        previousAccounts = matches.docs.filter((d) => d.id !== uid);
+        // A subject that isn't a valid doc id never had a legacy account.
+        if (idpSubject.length <= 128 && !idpSubject.includes('/') && idpSubject !== '.' && idpSubject !== '..') {
+          const legacy = await tx.get(orgRef.collection('users').doc(idpSubject));
+          if (legacy.exists) previousAccounts.push(legacy);
+        }
+        if (email) {
+          // Member emails are stored lowercase (see backfill-lowercase-emails.js);
+          // the raw form also matches anything written before that.
+          const emails = Array.from(new Set([email, email.toLowerCase()]));
+          const matches = await tx.get(orgRef.collection('users').where('email', 'in', emails));
+          for (const d of matches.docs) {
+            if (d.id !== uid && !previousAccounts.some((p) => p.id === d.id)) previousAccounts.push(d);
+          }
+        }
       }
-      const previousUids = previousAccounts.map((d) => d.id);
-      const inheritedRole = inheritedSsoRole(previousAccounts.map((d) => d.data().role));
+      previousUids = previousAccounts.map((d) => d.id);
+      const previousProfiles = previousAccounts.map((d) => d.data() ?? {});
+      const inheritedRole = inheritedSsoRole(previousProfiles.map((p) => p.role));
+      const carried = existing.exists ? {} : carriedOverProfile(previousProfiles);
 
       tx.set(
         userRef,
         {
+          // Profile from the account(s) taken over; anything below wins.
+          ...carried,
           uid,
           orgId,
           email: email ? email.toLowerCase() : null,
@@ -773,7 +800,7 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
                 // SAML users start as student (admin can promote) unless they
                 // inherit a role from a pre-SSO account above.
                 role: inheritedRole ?? 'student',
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                createdAt: carried.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
                 ...(previousUids.length > 0 ? { ssoLinkedFrom: previousUids } : {}),
               }),
         },
@@ -790,9 +817,18 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
         if (inheritedRole === 'admin') {
           tx.update(orgRef, { adminUids: admin.firestore.FieldValue.arrayUnion(uid) });
         }
-        console.log(`[saml/exchange] SSO uid=${uid} took over pre-SSO account(s) ${previousUids.join(', ')} in org ${orgId} (role=${inheritedRole ?? 'student'})`);
+        console.log(`[saml/exchange] SSO uid=${uid} took over account(s) ${previousUids.join(', ')} in org ${orgId} (role=${inheritedRole ?? 'student'})`);
       }
     });
+
+    if (previousUids.length > 0) {
+      // Best-effort and off the sign-in path: a failure only leaves old
+      // history under the old uid, and the user doc's ssoLinkedFrom records
+      // what to re-run.
+      reassignMemberHistory(orgId, previousUids, uid).catch((e) =>
+        console.error(`[saml/exchange] history reassignment failed for org ${orgId} ${previousUids.join(', ')} → ${uid}:`, e),
+      );
+    }
 
     return res.json({ firebaseToken });
   } catch (e) {
@@ -800,6 +836,50 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Failed to mint Firebase token.' });
   }
 });
+
+// Points a member's history at their new uid after /saml/exchange took over
+// their previous account(s), so ride stats, shift history and announcements
+// stay attributed to them. Idempotent — safe to re-run with the same uids.
+const MEMBER_HISTORY_FIELDS: Record<string, string[]> = {
+  stopRequests: ['studentUid', 'driverUid'],
+  feedback: ['studentUid'],
+  driverSessions: ['driverUid'],
+  boardingCounts: ['driverUid'],
+  announcements: ['createdBy', 'deactivatedBy'],
+};
+
+async function reassignMemberHistory(orgId: string, fromUids: string[], toUid: string): Promise<void> {
+  const db = admin.firestore();
+  const orgRef = db.collection('orgs').doc(orgId);
+
+  for (const fromUid of fromUids) {
+    for (const [collection, fields] of Object.entries(MEMBER_HISTORY_FIELDS)) {
+      for (const field of fields) {
+        const snap = await orgRef.collection(collection).where(field, '==', fromUid).get();
+        for (let i = 0; i < snap.docs.length; i += 450) {
+          const batch = db.batch();
+          snap.docs.slice(i, i + 450).forEach((d) => batch.update(d.ref, { [field]: toUid }));
+          await batch.commit();
+        }
+      }
+    }
+
+    // Keep the name others see, unless the new uid already wrote its own.
+    const oldPublic = orgRef.collection('publicUsers').doc(fromUid);
+    const [oldPublicSnap, newPublicSnap] = await Promise.all([
+      oldPublic.get(),
+      orgRef.collection('publicUsers').doc(toUid).get(),
+    ]);
+    if (oldPublicSnap.exists) {
+      if (!newPublicSnap.exists) await newPublicSnap.ref.set(oldPublicSnap.data()!);
+      await oldPublic.delete();
+    }
+
+    // A bus doc is live position state for the old session, not history.
+    await orgRef.collection('buses').doc(fromUid).delete();
+  }
+  console.log(`[saml/exchange] reassigned history in org ${orgId}: ${fromUids.join(', ')} → ${toUid}`);
+}
 
 // Lets an admin prove a draft SAML config actually works — a real SP-initiated
 // round trip through startSamlLogin() — without the two side effects a real
