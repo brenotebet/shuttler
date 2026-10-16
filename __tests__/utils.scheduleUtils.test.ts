@@ -72,6 +72,36 @@ describe('isRouteActive', () => {
     const noon = new Date('2026-07-25T12:00:00Z');
     expect(() => isRouteActive(routeWith(ALWAYS_OPEN), noon, 'Not/A_Zone')).not.toThrow();
   });
+
+  describe('overnight windows (close earlier than open)', () => {
+    // Friday-only night shuttle, 22:00 Friday → 02:00 Saturday.
+    const FRIDAY_NIGHTS: WeekSchedule = {
+      ...WEEKDAYS_9_TO_5,
+      monday:   { isOpen: false, open: '09:00', close: '17:00' },
+      tuesday:  { isOpen: false, open: '09:00', close: '17:00' },
+      wednesday:{ isOpen: false, open: '09:00', close: '17:00' },
+      thursday: { isOpen: false, open: '09:00', close: '17:00' },
+      friday:   { isOpen: true,  open: '22:00', close: '02:00' },
+    };
+
+    it('is active from opening until midnight on the open day', () => {
+      expect(isRouteActive(routeWith(FRIDAY_NIGHTS), new Date('2026-07-24T23:30:00Z'), 'UTC')).toBe(true);
+    });
+
+    it("is active after midnight until the previous day's close", () => {
+      expect(isRouteActive(routeWith(FRIDAY_NIGHTS), new Date('2026-07-25T01:30:00Z'), 'UTC')).toBe(true);
+    });
+
+    it('is inactive at/after the overnight close and before the next opening', () => {
+      expect(isRouteActive(routeWith(FRIDAY_NIGHTS), new Date('2026-07-25T02:00:00Z'), 'UTC')).toBe(false);
+      expect(isRouteActive(routeWith(FRIDAY_NIGHTS), new Date('2026-07-24T21:00:00Z'), 'UTC')).toBe(false);
+    });
+
+    it("doesn't spill into the next morning when the overnight day is closed", () => {
+      // Thursday is closed, so early Friday has no tail from Thursday night.
+      expect(isRouteActive(routeWith(FRIDAY_NIGHTS), new Date('2026-07-24T01:00:00Z'), 'UTC')).toBe(false);
+    });
+  });
 });
 
 describe('formatTime12h', () => {

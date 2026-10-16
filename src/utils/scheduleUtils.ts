@@ -60,8 +60,18 @@ export function isRouteActive(
   if (!route?.schedule) return true; // no schedule = always active
   const { key, cur } = getDayAndMinutes(now, timezone);
   const day: DaySchedule = route.schedule[key];
-  if (!day.isOpen) return false;
-  return cur >= toMinutes(day.open) && cur < toMinutes(day.close);
+  if (day.isOpen) {
+    const open = toMinutes(day.open);
+    const close = toMinutes(day.close);
+    // close < open is an overnight window (e.g. a 22:00–02:00 night shuttle):
+    // today's part runs from open until midnight.
+    if (close < open ? cur >= open : cur >= open && cur < close) return true;
+  }
+  // The after-midnight tail of yesterday's overnight window.
+  const yesterday: DaySchedule = route.schedule[DAY_KEYS[(DAY_KEYS.indexOf(key) + 6) % 7]];
+  return yesterday.isOpen
+    && toMinutes(yesterday.close) < toMinutes(yesterday.open)
+    && cur < toMinutes(yesterday.close);
 }
 
 export function formatTime12h(hhmm: string): string {
