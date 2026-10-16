@@ -33,6 +33,13 @@ describe('containsProfanity', () => {
     expect(containsProfanity('f-u-c-k off')).toBe(true);
   });
 
+  it('catches letter-doubling obfuscation', () => {
+    expect(containsProfanity('fuuuck')).toBe(true);
+    expect(containsProfanity('shiiit')).toBe(true);
+    expect(containsProfanity('biiitch')).toBe(true);
+    expect(containsProfanity('ffffuck off')).toBe(true);
+  });
+
   it('does NOT flag innocent words containing bad substrings (Scunthorpe problem)', () => {
     expect(containsProfanity('class schedule')).toBe(false);
     expect(containsProfanity('AI assistant')).toBe(false);

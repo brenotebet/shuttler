@@ -31,8 +31,11 @@ function normalizeLeet(input: string): string {
     .join('');
 }
 
+// Each letter may repeat (catches emphasis obfuscation like "fuuuck",
+// "shiiit") and/or be separated by any run of non-letters (catches
+// "f.u.c.k" or "f u c k"). Mirror any change here in src/utils/profanity.ts.
 const MATCHERS: RegExp[] = BLOCKLIST.map((word) => {
-  const spaced = word.split('').join('[^a-z]*');
+  const spaced = word.split('').map((ch) => `${ch}+`).join('[^a-z]*');
   return new RegExp(`(?:^|[^a-z])${spaced}(?:[^a-z]|$)`, 'i');
 });
 

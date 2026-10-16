@@ -38,11 +38,13 @@ function normalizeLeet(input: string): string {
     .join('');
 }
 
-// Build one matcher per word. Letters may be separated by any run of
-// non-letters (spaces, dots, dashes), and the whole match must sit on word
-// boundaries so it never fires inside a larger alphabetic word.
+// Build one matcher per word. Each letter may repeat (catches emphasis
+// obfuscation like "fuuuck", "shiiit") and/or be separated by any run of
+// non-letters (spaces, dots, dashes, catching "f.u.c.k" or "f u c k"), and the
+// whole match must sit on word boundaries so it never fires inside a larger
+// alphabetic word.
 const MATCHERS: RegExp[] = BLOCKLIST.map((word) => {
-  const spaced = word.split('').join('[^a-z]*');
+  const spaced = word.split('').map((ch) => `${ch}+`).join('[^a-z]*');
   return new RegExp(`(?:^|[^a-z])${spaced}(?:[^a-z]|$)`, 'i');
 });
 
