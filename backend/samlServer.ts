@@ -1157,7 +1157,12 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     try {
       console.log(`[register] Writing user doc → orgs/${orgId}/users/${authUser.uid}`);
+      // Founder admin only for an org that has no owner yet. The email isn't
+      // verified at this point, and founderEmail can be (re)set later from the
+      // super-admin panel — on an owned org that would let whoever registers
+      // the address first take the org over.
       const isFounder =
+        !org.ownerUid &&
         typeof org.founderEmail === 'string' &&
         org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
       const role = isFounder ? 'admin' : 'student';
