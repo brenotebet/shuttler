@@ -30,6 +30,7 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
+import { dataAddonAction, mainSubscriptionAction } from './billingPolicy';
 import {
   carriedOverProfile,
   emailRegistrationRejection,
@@ -593,7 +594,7 @@ app.get('/orgs/by-id/:orgId', async (req: Request, res: Response) => {
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
     const data = orgDoc.data()!;
     // Strip sensitive fields before returning to clients
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
+    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, dataAddonSubscriptionId: _das, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
     return res.json(safe);
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
@@ -608,7 +609,7 @@ app.get('/orgs/:slug', async (req: Request, res: Response) => {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org document missing' });
     const data = orgDoc.data()!;
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
+    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, dataAddonSubscriptionId: _das, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
     return res.json(safe);
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
@@ -1792,13 +1793,8 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     return res.status(400).send(`Webhook Error: ${err}`);
   }
 
-  const subscriptionEventTypes = [
-    'customer.subscription.created',
-    'customer.subscription.updated',
-    'customer.subscription.deleted',
-  ];
   const handledTypes = [
-    ...subscriptionEventTypes,
+    ...SUBSCRIPTION_EVENT_TYPES,
     'checkout.session.completed',
     'invoice.payment_failed',
   ];
@@ -1807,162 +1803,242 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     return res.json({ received: true });
   }
 
-  // Idempotency: skip events already processed (Stripe retries on non-2xx)
+  // Idempotency: claim the event atomically so concurrent deliveries of the
+  // same event can't both run. If handling then fails, the claim is released
+  // and a 500 makes Stripe retry — otherwise a transient error would drop
+  // the update for good.
   const eventDocRef = admin.firestore().collection('processedWebhookEvents').doc(event.id);
   try {
-    const alreadyProcessed = await eventDocRef.get();
-    if (alreadyProcessed.exists) {
-      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`);
-      return res.json({ received: true });
-    }
-    await eventDocRef.set({
+    await eventDocRef.create({
       type: event.type,
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-  } catch (idempErr) {
-    console.warn('[webhook] Could not check idempotency record — proceeding:', idempErr);
+  } catch (claimErr: any) {
+    if (claimErr?.code === 6) { // ALREADY_EXISTS
+      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`);
+      return res.json({ received: true });
+    }
+    console.warn('[webhook] Could not record idempotency claim — proceeding:', claimErr);
   }
 
   try {
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const orgId = session.metadata?.orgId;
-      const eventType: string = session.metadata?.type ?? '';
-      if (!orgId) {
-        console.warn('[webhook] checkout.session.completed missing orgId in metadata');
-        return res.json({ received: true });
-      }
-
-      // Data add-on purchase
-      if (eventType === 'data_addon') {
-        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-        const currentPlan = orgSnap.data()?.subscriptionPlan ?? 'starter';
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          dataAddonActive: true,
-          entitlements: computeEntitlements(currentPlan, true),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        console.log(`[webhook] data_addon activated for org ${orgId}`);
-        return res.json({ received: true });
-      }
-
-      const plan: string = session.metadata?.plan ?? 'starter';
-
-      // Retrieve the subscription so we get the real status
-      const subId = typeof session.subscription === 'string'
-        ? session.subscription
-        : (session.subscription as any)?.id;
-
-      if (subId) {
-        const sub = await stripe.subscriptions.retrieve(subId);
-        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-        const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          subscriptionStatus: sub.status,
-          stripeSubscriptionId: sub.id,
-          subscriptionPlan: plan,
-          entitlements: computeEntitlements(plan, dataAddonActive),
-          currentPeriodEnd: (sub as any).current_period_end
-            ? new Date((sub as any).current_period_end * 1000)
-            : null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-
-      // Confirmation email — fire and forget
-      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
-      const orgData = orgDoc.exists ? orgDoc.data()! : {};
-      const founderEmail: string | null = session.customer_details?.email ?? orgData.founderEmail ?? null;
-      const orgName: string = orgData.name ?? orgId;
-      const PLAN_LABELS: Record<string, string> = { starter: 'Starter', campus: 'Campus', enterprise: 'Enterprise' };
-      const PLAN_AMOUNTS: Record<string, string> = { starter: '$149', campus: '$299', enterprise: 'From $499' };
-      if (founderEmail) {
-        sendEmail({
-          to: founderEmail,
-          subject: `Your Shuttler ${PLAN_LABELS[plan] ?? plan} subscription is active`,
-          html: subscriptionConfirmedTemplate({
-            contactName: session.customer_details?.name ?? founderEmail,
-            orgName,
-            planLabel: PLAN_LABELS[plan] ?? plan,
-            amount: PLAN_AMOUNTS[plan] ?? '—',
-          }),
-        }).catch((err) => console.error('[webhook] confirmation email failed:', err));
-      }
-
-    } else if (subscriptionEventTypes.includes(event.type)) {
-      const subscription = event.data.object as Stripe.Subscription;
-      const orgId = subscription.metadata?.orgId;
-      const subType: string = subscription.metadata?.type ?? '';
-      if (!orgId) {
-        console.warn(`[webhook] ${event.type} missing orgId in subscription metadata (sub: ${subscription.id})`);
-        return res.json({ received: true });
-      }
-
-      if (event.type === 'customer.subscription.deleted') {
-        if (subType === 'data_addon') {
-          const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-          const currentPlan = orgSnap.data()?.subscriptionPlan ?? 'starter';
-          await admin.firestore().collection('orgs').doc(orgId).update({
-            dataAddonActive: false,
-            entitlements: computeEntitlements(currentPlan, false),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          console.log(`[webhook] data_addon deactivated for org ${orgId}`);
-        } else {
-          // Preserve data access for an org that still pays for the add-on —
-          // the add-on is a separate subscription and isn't canceled here.
-          const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-          const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
-          await admin.firestore().collection('orgs').doc(orgId).update({
-            subscriptionStatus: 'canceled',
-            entitlements: computeEntitlements('starter', dataAddonActive),
-            limitOverrides: admin.firestore.FieldValue.delete(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        }
-      } else if (subType !== 'data_addon') {
-        const updatedPlan = subscription.metadata?.plan ?? 'starter';
-        // Negotiated vehicle cap for Enterprise deals — set maxVehicles on the
-        // subscription's metadata in the Stripe dashboard. Absent/invalid metadata
-        // clears the override so the plan-tier default applies.
-        const maxVehicles = parseInt(subscription.metadata?.maxVehicles ?? '', 10);
-        const limitOverrides = Number.isInteger(maxVehicles) && maxVehicles > 0
-          ? { maxVehicles }
-          : admin.firestore.FieldValue.delete();
-        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-        const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          subscriptionStatus: subscription.status,
-          stripeSubscriptionId: subscription.id,
-          subscriptionPlan: updatedPlan,
-          limitOverrides,
-          entitlements: computeEntitlements(updatedPlan, dataAddonActive),
-          currentPeriodEnd: (subscription as any).current_period_end
-            ? new Date((subscription as any).current_period_end * 1000)
-            : null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-    } else if (event.type === 'invoice.payment_failed') {
-      const invoice = event.data.object as Stripe.Invoice;
-      const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
-      if (!subId) return res.json({ received: true });
-
-      const sub = await stripe.subscriptions.retrieve(subId);
-      const orgId = sub.metadata?.orgId;
-      if (!orgId) return res.json({ received: true });
-
-      await admin.firestore().collection('orgs').doc(orgId).update({
-        subscriptionStatus: 'past_due',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+    await handleStripeEvent(event);
+  } catch (e: any) {
+    // A subscription that no longer exists in Stripe will never resolve —
+    // retrying would just fail for days.
+    if ((e?.code ?? e?.raw?.code) === 'resource_missing') {
+      console.error(`[webhook] ${event.id} (${event.type}) references a missing Stripe object — not retrying:`, e?.message);
+      return res.json({ received: true });
     }
-  } catch (e) {
-    console.error('[webhook] handler error:', e);
+    console.error(`[webhook] handler error for ${event.id} (${event.type}) — releasing claim so Stripe retries:`, e);
+    await eventDocRef.delete().catch(() => {});
+    return res.status(500).json({ error: 'Webhook handler failed' });
   }
 
   return res.json({ received: true });
 });
+
+const SUBSCRIPTION_EVENT_TYPES = [
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+];
+
+async function handleStripeEvent(event: Stripe.Event): Promise<void> {
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const orgId = session.metadata?.orgId;
+    if (!orgId) {
+      console.warn('[webhook] checkout.session.completed missing orgId in metadata');
+      return;
+    }
+
+    const subId = typeof session.subscription === 'string'
+      ? session.subscription
+      : (session.subscription as any)?.id;
+
+    // Data add-on purchase — only turned on once its subscription is
+    // actually live (checkout can complete with payment still pending; the
+    // subscription's later update event finishes the job).
+    if (session.metadata?.type === 'data_addon') {
+      if (subId) await syncDataAddon(orgId, await stripe.subscriptions.retrieve(subId), false);
+      return;
+    }
+
+    const plan: string = session.metadata?.plan ?? 'starter';
+
+    // Retrieve the subscription so we get the real status
+    if (subId) {
+      const sub = await stripe.subscriptions.retrieve(subId);
+      const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+      if (!orgSnap.exists) {
+        console.warn(`[webhook] checkout.session.completed for missing org ${orgId}`);
+        return;
+      }
+      const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
+      await orgSnap.ref.update({
+        subscriptionStatus: sub.status,
+        stripeSubscriptionId: sub.id,
+        subscriptionPlan: plan,
+        entitlements: computeEntitlements(plan, dataAddonActive),
+        currentPeriodEnd: (sub as any).current_period_end
+          ? new Date((sub as any).current_period_end * 1000)
+          : null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    // Confirmation email — fire and forget
+    const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+    const orgData = orgDoc.exists ? orgDoc.data()! : {};
+    const founderEmail: string | null = session.customer_details?.email ?? orgData.founderEmail ?? null;
+    const orgName: string = orgData.name ?? orgId;
+    const PLAN_LABELS: Record<string, string> = { starter: 'Starter', campus: 'Campus', enterprise: 'Enterprise' };
+    const PLAN_AMOUNTS: Record<string, string> = { starter: '$149', campus: '$299', enterprise: 'From $499' };
+    if (founderEmail) {
+      sendEmail({
+        to: founderEmail,
+        subject: `Your Shuttler ${PLAN_LABELS[plan] ?? plan} subscription is active`,
+        html: subscriptionConfirmedTemplate({
+          contactName: session.customer_details?.name ?? founderEmail,
+          orgName,
+          planLabel: PLAN_LABELS[plan] ?? plan,
+          amount: PLAN_AMOUNTS[plan] ?? '—',
+        }),
+      }).catch((err) => console.error('[webhook] confirmation email failed:', err));
+    }
+    return;
+  }
+
+  if (SUBSCRIPTION_EVENT_TYPES.includes(event.type)) {
+    const eventSub = event.data.object as Stripe.Subscription;
+    const orgId = eventSub.metadata?.orgId;
+    if (!orgId) {
+      console.warn(`[webhook] ${event.type} missing orgId in subscription metadata (sub: ${eventSub.id})`);
+      return;
+    }
+
+    // Stripe doesn't guarantee event order, so act on the subscription's
+    // current state rather than this event's snapshot — a late "updated"
+    // event must not reactivate a subscription that's since been canceled.
+    const sub = await stripe.subscriptions.retrieve(eventSub.id);
+    const deleted = event.type === 'customer.subscription.deleted';
+
+    if (sub.metadata?.type === 'data_addon') {
+      await syncDataAddon(orgId, sub, deleted);
+    } else {
+      await syncMainSubscription(orgId, sub, deleted);
+    }
+    return;
+  }
+
+  if (event.type === 'invoice.payment_failed') {
+    const invoice = event.data.object as Stripe.Invoice;
+    const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+    if (!subId) return;
+
+    const sub = await stripe.subscriptions.retrieve(subId);
+    const orgId = sub.metadata?.orgId;
+    if (!orgId) return;
+
+    // The add-on is billed on its own subscription — its failed payment says
+    // nothing about the main plan. Its status change arrives as a
+    // customer.subscription.updated event, which syncDataAddon handles.
+    if (sub.metadata?.type === 'data_addon') return;
+
+    const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (!orgSnap.exists) return;
+    const currentSubId: string | undefined = orgSnap.data()?.stripeSubscriptionId;
+    if (currentSubId && currentSubId !== sub.id) {
+      console.log(`[webhook] payment failed on non-current subscription ${sub.id} for org ${orgId} — ignoring`);
+      return;
+    }
+
+    await orgSnap.ref.update({
+      subscriptionStatus: 'past_due',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+}
+
+// Mirrors the org's main-plan subscription onto the org doc — see
+// mainSubscriptionAction for which subscription counts as the org's.
+async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, deleted: boolean): Promise<void> {
+  const orgRef = admin.firestore().collection('orgs').doc(orgId);
+  const orgSnap = await orgRef.get();
+  if (!orgSnap.exists) {
+    console.warn(`[webhook] subscription ${sub.id} for missing org ${orgId}`);
+    return;
+  }
+  const org = orgSnap.data()!;
+
+  const action = mainSubscriptionAction(org.stripeSubscriptionId, sub, deleted);
+  if (action === 'ignore') {
+    console.log(`[webhook] subscription ${sub.id} (${sub.status}) isn't org ${orgId}'s current one (${org.stripeSubscriptionId}) — ignoring`);
+    return;
+  }
+
+  const dataAddonActive = org.dataAddonActive ?? false;
+  if (action === 'cancel') {
+    // Preserve data access for an org that still pays for the add-on —
+    // the add-on is a separate subscription and isn't canceled here.
+    await orgRef.update({
+      subscriptionStatus: 'canceled',
+      entitlements: computeEntitlements('starter', dataAddonActive),
+      limitOverrides: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return;
+  }
+
+  const updatedPlan = sub.metadata?.plan ?? 'starter';
+  // Negotiated vehicle cap for Enterprise deals — set maxVehicles on the
+  // subscription's metadata in the Stripe dashboard. Absent/invalid metadata
+  // clears the override so the plan-tier default applies.
+  const maxVehicles = parseInt(sub.metadata?.maxVehicles ?? '', 10);
+  const limitOverrides = Number.isInteger(maxVehicles) && maxVehicles > 0
+    ? { maxVehicles }
+    : admin.firestore.FieldValue.delete();
+  await orgRef.update({
+    subscriptionStatus: sub.status,
+    stripeSubscriptionId: sub.id,
+    subscriptionPlan: updatedPlan,
+    limitOverrides,
+    entitlements: computeEntitlements(updatedPlan, dataAddonActive),
+    currentPeriodEnd: (sub as any).current_period_end
+      ? new Date((sub as any).current_period_end * 1000)
+      : null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+// Turns the data add-on on or off from its subscription's current state —
+// see dataAddonAction. The org's add-on subscription id is recorded so an
+// old or duplicate add-on subscription ending can't switch it off.
+async function syncDataAddon(orgId: string, sub: Stripe.Subscription, deleted: boolean): Promise<void> {
+  const orgRef = admin.firestore().collection('orgs').doc(orgId);
+  const orgSnap = await orgRef.get();
+  if (!orgSnap.exists) {
+    console.warn(`[webhook] data add-on subscription ${sub.id} for missing org ${orgId}`);
+    return;
+  }
+  const org = orgSnap.data()!;
+
+  const action = dataAddonAction(org.dataAddonSubscriptionId, sub, deleted);
+  if (action === 'ignore') {
+    console.log(`[webhook] data add-on subscription ${sub.id} (${sub.status}) for org ${orgId} — no change`);
+    return;
+  }
+
+  const active = action === 'activate';
+  await orgRef.update({
+    dataAddonActive: active,
+    dataAddonSubscriptionId: active ? sub.id : admin.firestore.FieldValue.delete(),
+    entitlements: computeEntitlements(org.subscriptionPlan ?? 'starter', active),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  console.log(`[webhook] data_addon ${active ? 'activated' : 'deactivated'} for org ${orgId} (sub ${sub.id})`);
+}
 
 // ---- Internal: approve org application ----
 
