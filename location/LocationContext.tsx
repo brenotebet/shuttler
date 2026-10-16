@@ -6,6 +6,7 @@ import * as Notifications from 'expo-notifications';
 import {
   addDoc,
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -205,6 +206,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const [isSharing, setIsSharing] = useState(false);
 
   const watchSub = useRef<Location.LocationSubscription | null>(null);
+  // A ref, not state: isSharing/watchSub only flip after several awaits, so a
+  // double tap could otherwise start two GPS watches (one orphaned forever)
+  // and two driverSessions docs.
+  const startingRef = useRef(false);
   const currentUid = useRef<string | null>(null);
   const currentRouteIdRef = useRef<string | null>(null);
   const sessionDocId = useRef<string | null>(null);
@@ -228,6 +233,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   // its interval on every org snapshot (org?.routes is a new array reference each time).
   const orgRoutesRef = useRef(org?.routes ?? []);
   orgRoutesRef.current = org?.routes ?? [];
+  // Same for the timezone, so a mid-shift timezone change is honored by the
+  // schedule auto-stop instead of the value captured when sharing started.
+  const orgTimezoneRef = useRef(org?.timezone);
+  orgTimezoneRef.current = org?.timezone;
 
   const notifyStillOn = () => {
     Notifications.scheduleNotificationAsync({
@@ -266,12 +275,16 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
   const markOffline = async (uid: string) => {
     if (!orgId) return;
-    // delete is forbidden by rules; set online=false instead
+    // Doc delete is forbidden by rules; set online=false and clear the last
+    // known position instead — otherwise it stays readable by every org
+    // member (admins, other drivers) indefinitely after the shift ends.
     const busRef = doc(db, 'orgs', orgId, 'buses', uid);
     await setDoc(
       busRef,
       {
         online: false,
+        latitude: deleteField(),
+        longitude: deleteField(),
         lastSeen: serverTimestamp(),
         updatedAt: serverTimestamp(),
       },
@@ -362,8 +375,16 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }, [isSharing]);
 
   const startSharing = async (routeId?: string) => {
-    if (isSharing || watchSub.current) return;
+    if (isSharing || watchSub.current || startingRef.current) return;
+    startingRef.current = true;
+    try {
+      await beginSharing(routeId);
+    } finally {
+      startingRef.current = false;
+    }
+  };
 
+  const beginSharing = async (routeId?: string) => {
     const uid = requireUid();
     currentUid.current = uid;
     currentRouteIdRef.current = routeId ?? null;
@@ -502,6 +523,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   const stopSharing = async () => {
     const uid = currentUid.current;
     if (!uid) return;
+    // Claim the stop up front: a concurrent call (a manual tap racing an
+    // inactivity/schedule auto-stop) bails out instead of cancelling riders'
+    // requests twice, and GPS callbacks during teardown stop writing.
+    currentUid.current = null;
 
     // Close session doc before anything else so the timestamp is accurate
     if (sessionDocId.current && sessionOrgId.current) {
@@ -643,7 +668,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       const routeId = currentRouteIdRef.current;
       if (routeId) {
         const route = orgRoutesRef.current.find((r) => r.id === routeId) ?? null;
-        if (route?.schedule && !isRouteActive(route, new Date(), org?.timezone)) {
+        if (route?.schedule && !isRouteActive(route, new Date(), orgTimezoneRef.current)) {
           Notifications.scheduleNotificationAsync({
             content: {
               title: 'Location Sharing Stopped',
