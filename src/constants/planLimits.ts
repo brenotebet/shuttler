@@ -16,6 +16,8 @@ export type PlanLimitOverrides = {
   maxStops?: number;
 };
 
+// maxRoutes/maxStops are also enforced in firestore.rules (planListLimit) —
+// keep the two in sync.
 export const PLAN_LIMITS: Record<PlanKey, PlanLimits> = {
   trial:      { maxVehicles: 3,        maxRoutes: 1,        maxStops: 10,       label: 'Trial',      price: 'Free trial' },
   starter:    { maxVehicles: 3,        maxRoutes: 1,        maxStops: 10,       label: 'Starter',    price: '$149/mo' },

@@ -56,6 +56,32 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/orgs/$(orgId)).data.ownerUid == uid;
     }
 
+    // Stop/route caps by plan — mirrors getPlanLimits in
+    // src/constants/planLimits.ts, keep in sync. Trial (incl. canceled/unpaid,
+    // which fall back to trial) and Starter: 10 stops, 1 route. Campus and
+    // Enterprise: unlimited. limitOverrides (Enterprise deals) win on a paid plan.
+    function planListLimit(org, limitKey) {
+      let plan = org.get('subscriptionPlan', null);
+      let onTrial = plan == null || plan == ''
+        || org.get('subscriptionStatus', null) in ['trialing', 'canceled', 'unpaid'];
+      let override = org.get('limitOverrides', {}).get(limitKey, 0);
+      let starterLimit = limitKey == 'maxStops' ? 10 : 1;
+      return onTrial ? starterLimit
+        : ((override is number && override > 0) ? override
+          : (plan in ['campus', 'enterprise'] ? 1000000 : starterLimit));
+    }
+
+    // The app enforces plan limits only in its UI, so an admin could write
+    // past them straight to Firestore. Growing a list is capped; shrinking or
+    // editing one that's already over (e.g. after a downgrade) stays allowed
+    // so a downgraded org isn't locked out of its own stops.
+    function listWithinPlanLimit(field, limitKey) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field])
+        || (request.resource.data[field] is list
+            && (request.resource.data[field].size() <= planListLimit(resource.data, limitKey)
+                || request.resource.data[field].size() <= resource.data.get(field, []).size()));
+    }
+
     // ---------- Public org slug lookup (org selector screen) ----------
     // Anyone (unauthenticated) can list orgs to find their school/venue.
     // Server-side admin SDK writes these — clients cannot.
@@ -88,7 +114,9 @@ service cloud.firestore {
         && isAdmin(orgId)
         && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['stops', 'routes', 'mapCenter', 'mapBoundingBox', 'logoUrl',
-                      'primaryColor', 'name', 'timezone', 'updatedAt']);
+                      'primaryColor', 'name', 'timezone', 'updatedAt'])
+        && listWithinPlanLimit('stops', 'maxStops')
+        && listWithinPlanLimit('routes', 'maxRoutes');
 
       allow create, delete: if false;
     }
