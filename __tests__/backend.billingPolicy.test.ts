@@ -2,7 +2,12 @@
 // Tests for how Stripe subscription state maps onto an org's billing fields
 // (POST /stripe/webhook).
 
-import { dataAddonAction, mainSubscriptionAction } from '../backend/billingPolicy';
+import {
+  dataAddonAction,
+  isLiveSubscription,
+  mainSubscriptionAction,
+  planForSubscription,
+} from '../backend/billingPolicy';
 
 describe('mainSubscriptionAction', () => {
   it("mirrors the org's current subscription", () => {
@@ -63,5 +68,39 @@ describe('dataAddonAction', () => {
 
   it('ignores an old add-on subscription ending', () => {
     expect(dataAddonAction('sub_Y', { id: 'sub_X', status: 'canceled' }, true)).toBe('ignore');
+  });
+});
+
+describe('isLiveSubscription', () => {
+  it('treats active, trialing and past-due subscriptions as live', () => {
+    expect(isLiveSubscription('active')).toBe(true);
+    expect(isLiveSubscription('trialing')).toBe(true);
+    expect(isLiveSubscription('past_due')).toBe(true);
+  });
+
+  it('lets ended or never-started subscriptions go through a new checkout', () => {
+    for (const status of ['canceled', 'unpaid', 'incomplete', 'incomplete_expired']) {
+      expect(isLiveSubscription(status)).toBe(false);
+    }
+  });
+});
+
+describe('planForSubscription', () => {
+  const PRICES = { starter: 'price_starter', campus: 'price_campus', enterprise: '' };
+
+  it('reads the plan from the price, not stale metadata, after a portal plan switch', () => {
+    expect(planForSubscription(['price_campus'], PRICES, 'starter')).toBe('campus');
+  });
+
+  it('falls back to metadata for a custom (e.g. Enterprise) price', () => {
+    expect(planForSubscription(['price_custom_deal'], PRICES, 'enterprise')).toBe('enterprise');
+  });
+
+  it('defaults to starter with no match and no metadata', () => {
+    expect(planForSubscription(['price_custom_deal'], PRICES, undefined)).toBe('starter');
+  });
+
+  it('never matches an unconfigured (empty) price id', () => {
+    expect(planForSubscription([''], PRICES, 'campus')).toBe('campus');
   });
 });

@@ -30,7 +30,7 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
-import { dataAddonAction, mainSubscriptionAction } from './billingPolicy';
+import { dataAddonAction, isLiveSubscription, mainSubscriptionAction, planForSubscription } from './billingPolicy';
 import {
   carriedOverProfile,
   emailRegistrationRejection,
@@ -1609,6 +1609,20 @@ app.patch(
 
 // ---- Billing ----
 
+// The org's current subscription if it's still live, else null — including
+// when the stored id no longer exists in Stripe (e.g. after an account
+// migration), so the org can simply subscribe again.
+async function retrieveLiveSubscription(subId: string | undefined): Promise<Stripe.Subscription | null> {
+  if (!subId) return null;
+  try {
+    const sub = await stripe.subscriptions.retrieve(subId);
+    return isLiveSubscription(sub.status) ? sub : null;
+  } catch (e: any) {
+    if ((e?.code ?? e?.raw?.code) === 'resource_missing') return null;
+    throw e;
+  }
+}
+
 // The client only ever sends 'shuttler://billing' as returnUrl, but it's
 // client-supplied and gets embedded directly into Stripe's success/cancel/
 // return URLs — whitelist the scheme so a tampered request can't redirect a
@@ -1623,6 +1637,7 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
   if (!isAllowedReturnUrl(returnUrl)) {
     return res.status(400).json({ error: 'Invalid returnUrl' });
   }
+  let openingPlanChange = false;
 
   try {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
@@ -1634,17 +1649,52 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
       return res.status(403).json({ error: 'Not authorized' });
     }
 
+    const priceId = PLAN_PRICE_IDS[plan];
+    if (!priceId) {
+      console.error(`[billing] Missing price ID for plan "${plan}". Set STRIPE_PRICE_${plan.toUpperCase()} in Railway env vars.`);
+      return res.status(400).json({ error: `Plan "${plan}" is not configured. Please contact support.` });
+    }
+
+    // An org that already pays for a plan switches plans on that same
+    // subscription. A second checkout would create a second subscription and
+    // the old one would keep billing. The customer portal opens straight on
+    // Stripe's confirmation page for this one change — prorated, with the
+    // card on file.
+    const currentSub = await retrieveLiveSubscription(org.stripeSubscriptionId);
+    if (currentSub) {
+      const planPriceIds = Object.values(PLAN_PRICE_IDS).filter(Boolean);
+      const planItem = currentSub.items.data.find((i) => planPriceIds.includes(i.price.id));
+      if (!planItem) {
+        // A custom-priced deal set up in the Stripe dashboard (e.g. Enterprise).
+        return res.status(409).json({ error: 'Your plan was set up by the Shuttler team. Contact support@shuttler.net to change it.' });
+      }
+      if (planItem.price.id === priceId) {
+        return res.status(409).json({ error: "You're already on this plan." });
+      }
+      openingPlanChange = true;
+      const portal = await stripe.billingPortal.sessions.create({
+        customer: typeof currentSub.customer === 'string' ? currentSub.customer : currentSub.customer.id,
+        return_url: returnUrl,
+        flow_data: {
+          type: 'subscription_update_confirm',
+          subscription_update_confirm: {
+            subscription: currentSub.id,
+            items: [{ id: planItem.id, price: priceId, quantity: 1 }],
+          },
+          after_completion: {
+            type: 'redirect',
+            redirect: { return_url: `${returnUrl}?plan_changed=1` },
+          },
+        },
+      });
+      return res.json({ url: portal.url, mode: 'plan_change' });
+    }
+
     let customerId: string = org.stripeCustomerId;
     if (!customerId) {
       const customer = await stripe.customers.create({ name: org.name, metadata: { orgId } });
       customerId = customer.id;
       await admin.firestore().collection('orgs').doc(orgId).update({ stripeCustomerId: customerId });
-    }
-
-    const priceId = PLAN_PRICE_IDS[plan];
-    if (!priceId) {
-      console.error(`[billing] Missing price ID for plan "${plan}". Set STRIPE_PRICE_${plan.toUpperCase()} in Railway env vars.`);
-      return res.status(400).json({ error: `Plan "${plan}" is not configured. Please contact support.` });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -1666,6 +1716,12 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
     const message: string = e?.message ?? '';
     if (type === 'StripeAuthenticationError' || message.includes('API key')) {
       return res.status(500).json({ error: 'Payment service is misconfigured. Please contact support.' });
+    }
+    // Plan switching isn't enabled (or the plan's price isn't listed) in the
+    // Stripe customer portal settings.
+    if (openingPlanChange && type === 'StripeInvalidRequestError') {
+      console.error('[billing] Plan change portal session failed — enable "Customers can switch plans" with all plan prices in Stripe → Settings → Billing → Customer portal.');
+      return res.status(500).json({ error: "Plan changes aren't available yet. Please contact support@shuttler.net." });
     }
     // Stored stripeCustomerId no longer exists in the active Stripe account
     // (e.g. stale ID after a Stripe account migration).
@@ -1742,6 +1798,11 @@ app.post('/billing/create-addon-checkout-session', requireAuth, async (req: Requ
     const userDoc = await admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid).get();
     if (!userDoc.exists || userDoc.data()!.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // A second add-on checkout would bill the org twice for the same thing.
+    if (org.dataAddonActive) {
+      return res.status(409).json({ error: 'Data Analytics is already active for your organization.' });
     }
 
     if (!STRIPE_PRICE_DATA_ADDON) {
@@ -1991,7 +2052,8 @@ async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, del
     return;
   }
 
-  const updatedPlan = sub.metadata?.plan ?? 'starter';
+  // From the price — a plan switched in the customer portal keeps its old metadata.plan.
+  const updatedPlan = planForSubscription(sub.items.data.map((i) => i.price.id), PLAN_PRICE_IDS, sub.metadata?.plan);
   // Negotiated vehicle cap for Enterprise deals — set maxVehicles on the
   // subscription's metadata in the Stripe dashboard. Absent/invalid metadata
   // clears the override so the plan-tier default applies.

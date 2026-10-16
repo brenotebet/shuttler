@@ -53,3 +53,27 @@ export function dataAddonAction(
   if (LIVE_STATUSES.includes(sub.status)) return 'activate';
   return 'ignore';
 }
+
+/** Whether an org with a subscription in this state should change plan on it
+ *  rather than start a new checkout (which would create a second, separately
+ *  billed subscription). */
+export function isLiveSubscription(status: string): boolean {
+  return [...LIVE_STATUSES, 'past_due'].includes(status);
+}
+
+/**
+ * The plan a subscription is on, from its prices. A plan switched in the
+ * Stripe customer portal keeps its old metadata.plan, so metadata is only the
+ * fallback — for a price that isn't one of `planPriceIds` (e.g. a custom
+ * Enterprise deal set up in the Stripe dashboard).
+ */
+export function planForSubscription(
+  itemPriceIds: string[],
+  planPriceIds: Record<string, string>,
+  metadataPlan: string | undefined,
+): string {
+  for (const [plan, priceId] of Object.entries(planPriceIds)) {
+    if (priceId && itemPriceIds.includes(priceId)) return plan;
+  }
+  return metadataPlan ?? 'starter';
+}

@@ -2663,31 +2663,43 @@ function BillingTab() {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ orgId: org.orgId, plan, returnUrl: 'shuttler://billing' }),
         });
-        const { url, error } = await res.json();
+        // mode 'plan_change': the org already has a subscription, so the
+        // backend opens Stripe's confirm-plan-change page instead of a new
+        // checkout (which would bill a second subscription).
+        const { url, error, mode } = await res.json();
         if (error) throw new Error(error);
+        const isPlanChange = mode === 'plan_change';
 
         browserOpenRef.current = true;
         const result = await openExternalCheckout(
           url,
-          "You'll complete your plan upgrade on shuttler.net in Safari, then return to Shuttler automatically.",
+          isPlanChange
+            ? "You'll confirm your plan change with Stripe in Safari — it uses the card on file and shows the prorated amount — then return to Shuttler automatically."
+            : "You'll complete your plan upgrade on shuttler.net in Safari, then return to Shuttler automatically.",
         );
         const confirmed = finishBrowserSession();
 
         // Browser closed (no redirect) — user dismissed without touching Stripe.
         if (result.type !== 'success') return;
 
-        // Stripe cancel button redirects to cancel_url (shuttler://billing, no session_id).
-        // Stripe success redirects to success_url (shuttler://billing?session_id=...).
+        // Stripe cancel/back redirects to shuttler://billing with no params.
+        // Success redirects to shuttler://billing?session_id=... (checkout)
+        // or shuttler://billing?plan_changed=1 (plan change).
         const redirectedUrl = (result as any).url as string | undefined;
-        if (!redirectedUrl?.includes('session_id=')) {
-          if (!confirmed) showToast("Checkout canceled — you haven't been charged.", 'info');
+        if (!redirectedUrl?.includes('session_id=') && !redirectedUrl?.includes('plan_changed=')) {
+          if (!confirmed) {
+            showToast(
+              isPlanChange ? 'Plan change canceled — your plan is unchanged.' : "Checkout canceled — you haven't been charged.",
+              'info',
+            );
+          }
           return;
         }
 
         // Payment confirmed — unlock the UI immediately.
         // The Firestore live listener fires the confirmation sheet as soon as
         // the webhook updates the org doc. Background polls are a safety net.
-        if (!confirmed) showToast('Payment received — activating your plan…', 'success');
+        if (!confirmed) showToast(isPlanChange ? 'Plan change confirmed — updating your plan…' : 'Payment received — activating your plan…', 'success');
         void refreshOrg();
         setTimeout(() => void refreshOrg(), 3000);
         setTimeout(() => void refreshOrg(), 7000);
@@ -2937,7 +2949,7 @@ function BillingTab() {
               </TouchableOpacity>
             </View>
             <AppButton
-              label={isCurrent ? 'Active' : (!isApproved ? 'Pending' : (isLoading ? '…' : 'Subscribe'))}
+              label={isCurrent ? 'Active' : (!isApproved ? 'Pending' : (isLoading ? '…' : (isActive ? 'Switch' : 'Subscribe')))}
               onPress={() => !isCurrent && isApproved && openCheckout(plan.key)}
               disabled={isLoading || isCurrent || !isApproved}
               style={styles.planButton}
@@ -3012,8 +3024,8 @@ function BillingTab() {
         actionLabel={
           detailPlan === 'data_addon' ? 'Add Data Analytics — $49/mo'
           : detailPlan === 'enterprise' ? 'Contact Us'
-          : detailPlan === 'campus' ? 'Subscribe — $299/mo'
-          : 'Subscribe — $149/mo'
+          : detailPlan === 'campus' ? `${isActive ? 'Switch to Campus' : 'Subscribe'} — $299/mo`
+          : `${isActive ? 'Switch to Starter' : 'Subscribe'} — $149/mo`
         }
         actionDisabled={
           isLoading || !isApproved ||
