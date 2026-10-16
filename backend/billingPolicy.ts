@@ -11,7 +11,12 @@ export type SubscriptionState = { id: string; status: string };
 // A subscription that should drive the org's plan or add-on.
 const LIVE_STATUSES = ['active', 'trialing'];
 // A subscription that has ended for good.
-const ENDED_STATUSES = ['canceled', 'unpaid', 'incomplete_expired'];
+const ENDED_STATUSES = ['canceled', 'unpaid'];
+// A subscription whose first payment never completed (e.g. a bank debit still
+// processing, or abandoned and expired). It never took effect, so it can
+// neither take over the org (locking a trial org out with a non-live status)
+// nor end anything (e.g. an add-on paid for before ids were recorded).
+const NEVER_PAID_STATUSES = ['incomplete', 'incomplete_expired'];
 
 /**
  * What a main-plan subscription change should do to an org whose current
@@ -27,6 +32,7 @@ export function mainSubscriptionAction(
   sub: SubscriptionState,
   deleted: boolean,
 ): 'apply' | 'cancel' | 'ignore' {
+  if (NEVER_PAID_STATUSES.includes(sub.status)) return 'ignore';
   const isCurrent = !currentSubId || currentSubId === sub.id;
   if (deleted || sub.status === 'canceled') return isCurrent ? 'cancel' : 'ignore';
   if (isCurrent) return 'apply';
@@ -48,6 +54,7 @@ export function dataAddonAction(
   sub: SubscriptionState,
   deleted: boolean,
 ): 'activate' | 'deactivate' | 'ignore' {
+  if (NEVER_PAID_STATUSES.includes(sub.status)) return 'ignore';
   const isCurrent = !currentAddonSubId || currentAddonSubId === sub.id;
   if (deleted || ENDED_STATUSES.includes(sub.status)) return isCurrent ? 'deactivate' : 'ignore';
   if (LIVE_STATUSES.includes(sub.status)) return 'activate';

@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const FONT_SCALE_KEY = 'shuttler_font_scale';
@@ -41,8 +41,15 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
     AsyncStorage.setItem(REDUCE_MOTION_KEY, value ? 'true' : 'false');
   }, []);
 
+  // Every <Text> in the app consumes this context — a fresh object each render
+  // would re-render all of them even when nothing changed.
+  const value = useMemo(
+    () => ({ fontScale, setFontScale, reduceMotion, setReduceMotion }),
+    [fontScale, setFontScale, reduceMotion, setReduceMotion],
+  );
+
   return (
-    <AccessibilityContext.Provider value={{ fontScale, setFontScale, reduceMotion, setReduceMotion }}>
+    <AccessibilityContext.Provider value={value}>
       {children}
     </AccessibilityContext.Provider>
   );

@@ -12,6 +12,7 @@ import 'dotenv/config';
 import * as Sentry from '@sentry/node';
 import {
   sendEmail,
+  escapeHtml,
   emailVerificationTemplate,
   passwordResetTemplate,
   welcomeTemplate,
@@ -33,8 +34,10 @@ import { containsProfanity } from './profanity';
 import { dataAddonAction, isLiveSubscription, mainSubscriptionAction, planForSubscription } from './billingPolicy';
 import {
   carriedOverProfile,
+  emailDomain,
   emailRegistrationRejection,
   inheritedSsoRole,
+  legacySsoAccountMatches,
   socialSignInRejection,
   ssoUid,
 } from './authPolicy';
@@ -245,6 +248,15 @@ const announcementLimit = createRateLimiter(60_000, 5);
 const superAdminLimit = createRateLimiter(60_000, 30);
 // Keyed by uid, not IP — every rider on a campus network can share one IP.
 const stopRequestPushLimit = createRateLimiter(60_000, 3);
+// Shared by the four driver-triggered rider notifications (stop-arrived,
+// bus-approaching, stop-request-cancelled, stop-completed). Keyed by
+// driver+rider, not driver alone: one driver legitimately fans out to many
+// riders at once (e.g. going offline cancels every pending request in the
+// org), but no rider should get more than a handful from one driver a minute.
+const driverNotifyLimit = createRateLimiter(60_000, 10);
+// Keyed by uid. The app's resend button has a 30s cooldown, but that's
+// client-side only — this stops a scripted caller burning mailer quota.
+const verificationEmailLimit = createRateLimiter(60_000, 3);
 
 // ---------- Org helpers ----------
 
@@ -435,8 +447,6 @@ const app = express();
 // is the proxy's address and every per-IP rate limiter shares one bucket.
 app.set('trust proxy', 1);
 
-Sentry.setupExpressErrorHandler(app);
-
 // CORS — allow the admin web dashboard and (in dev only) local dev servers
 const isProduction = process.env.NODE_ENV === 'production';
 const configuredOrigins = (process.env.ADMIN_ORIGIN ?? '')
@@ -507,7 +517,7 @@ app.post('/api/waitlist', async (req: Request, res: Response) => {
         <p style="color:#666;margin-bottom:24px;">Someone just joined the Shuttler waitlist.</p>
         <div style="background:#f5f5f8;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
           <p style="margin:0;font-size:13px;color:#888;font-family:monospace;margin-bottom:4px;">EMAIL</p>
-          <p style="margin:0;font-size:18px;font-weight:500;">${email}</p>
+          <p style="margin:0;font-size:18px;font-weight:500;">${escapeHtml(email)}</p>
         </div>
         <p style="color:#888;font-size:13px;">View all leads in your Firebase console under <code>waitlist/</code>.</p>
       </div>`,
@@ -672,7 +682,7 @@ app.post('/saml/:orgSlug/acs', async (req: Request, res: Response) => {
         console.error('SAML ACS: no email attribute but org restricts email domains', { orgId: config.orgId });
         return res.status(403).json({ error: 'SAML assertion has no email attribute, but this organization only allows specific email domains. Ask your IT team to release the email attribute.' });
       }
-      const domain = email.split('@')[1]?.toLowerCase() ?? '';
+      const domain = emailDomain(email);
       if (!config.allowedEmailDomains.includes(domain)) {
         console.error('SAML ACS: email domain not allowed', { domain, orgId: config.orgId });
         return res.status(403).json({ error: 'Email domain not permitted for this organization' });
@@ -764,7 +774,7 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
         // A subject that isn't a valid doc id never had a legacy account.
         if (idpSubject.length <= 128 && !idpSubject.includes('/') && idpSubject !== '.' && idpSubject !== '..') {
           const legacy = await tx.get(orgRef.collection('users').doc(idpSubject));
-          if (legacy.exists) previousAccounts.push(legacy);
+          if (legacy.exists && legacySsoAccountMatches(legacy.data()?.email, email)) previousAccounts.push(legacy);
         }
         if (email) {
           // Member emails are stored lowercase (see backfill-lowercase-emails.js);
@@ -1107,8 +1117,7 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
     // Enforce allowed email domains if the org has configured them.
     const allowedDomains: string[] = org.allowedEmailDomains ?? [];
     if (allowedDomains.length > 0) {
-      const emailDomain = (email as string).split('@')[1]?.toLowerCase() ?? '';
-      if (!allowedDomains.includes(emailDomain)) {
+      if (!allowedDomains.includes(emailDomain(email as string))) {
         return res.status(403).json({
           error: `Registration is restricted to ${allowedDomains.join(', ')} email addresses.`,
         });
@@ -1271,25 +1280,29 @@ app.post(
         return res.status(403).json({ error: 'The org owner\'s role cannot be changed.' });
       }
 
-      const userRef = admin.firestore()
-        .collection('orgs').doc(orgId)
-        .collection('users').doc(uid);
+      const usersRef = admin.firestore().collection('orgs').doc(orgId).collection('users');
+      const userRef = usersRef.doc(uid);
 
-      const snap = await userRef.get();
-      if (!snap.exists) return res.status(404).json({ error: 'User not found in this org' });
+      // In a transaction so two admins demoting each other at the same moment
+      // can't both see "2 admins left" and leave the org with none.
+      const outcome = await admin.firestore().runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        if (!snap.exists) return 'not_found' as const;
 
-      // Prevent demoting the last admin (would lock everyone out).
-      if (role !== 'admin' && snap.data()?.role === 'admin') {
-        const adminSnap = await admin.firestore()
-          .collection('orgs').doc(orgId).collection('users')
-          .where('role', '==', 'admin')
-          .get();
-        if (adminSnap.size <= 1) {
-          return res.status(403).json({ error: 'Cannot demote the last admin. Promote someone else first.' });
+        // Prevent demoting the last admin (would lock everyone out).
+        if (role !== 'admin' && snap.data()?.role === 'admin') {
+          const adminSnap = await tx.get(usersRef.where('role', '==', 'admin'));
+          if (adminSnap.size <= 1) return 'last_admin' as const;
         }
-      }
 
-      await userRef.update({ role, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        tx.update(userRef, { role, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return 'updated' as const;
+      });
+
+      if (outcome === 'not_found') return res.status(404).json({ error: 'User not found in this org' });
+      if (outcome === 'last_admin') {
+        return res.status(403).json({ error: 'Cannot demote the last admin. Promote someone else first.' });
+      }
       return res.json({ uid, role });
     } catch (e) {
       console.error('Set role error:', e);
@@ -1879,7 +1892,10 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
       console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`);
       return res.json({ received: true });
     }
-    console.warn('[webhook] Could not record idempotency claim — proceeding:', claimErr);
+    // Proceeding unclaimed would let concurrent deliveries both run. The
+    // handlers mirror Stripe's current state, so a retry is always safe.
+    console.error(`[webhook] Could not record idempotency claim for ${event.id} — asking Stripe to retry:`, claimErr);
+    return res.status(500).json({ error: 'Webhook idempotency check failed' });
   }
 
   try {
@@ -1934,6 +1950,13 @@ async function handleStripeEvent(event: Stripe.Event): Promise<void> {
       const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
       if (!orgSnap.exists) {
         console.warn(`[webhook] checkout.session.completed for missing org ${orgId}`);
+        return;
+      }
+      if (!isLiveSubscription(sub.status)) {
+        // Payment still processing (e.g. a bank debit). Writing 'incomplete'
+        // would lock a trial org out; the subscription's update event applies
+        // it via syncMainSubscription once it's live.
+        console.log(`[webhook] checkout completed for org ${orgId} but subscription ${sub.id} is ${sub.status} — waiting for it to go live`);
         return;
       }
       const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
@@ -2811,6 +2834,20 @@ async function requireDriverCaller(orgId: string, uid: string, res: Response): P
   return true;
 }
 
+// Confirms `studentUid` actually has a stop request in one of `statuses`
+// before a driver-triggered push goes out — otherwise a driver could push an
+// arbitrary, attacker-chosen notification to any member of the org just by
+// supplying their uid, with no real request behind it.
+async function hasStopRequestInStatus(orgId: string, studentUid: string, statuses: string[]): Promise<boolean> {
+  const snap = await admin.firestore()
+    .collection('orgs').doc(orgId).collection('stopRequests')
+    .where('studentUid', '==', studentUid)
+    .where('status', 'in', statuses)
+    .limit(1)
+    .get();
+  return !snap.empty;
+}
+
 /** POST /notifications/stop-request-created
  *  Called when a student creates a stop request.
  *  Reads all driver/admin users in the org and sends them a push notification.
@@ -2872,7 +2909,13 @@ app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: R
   const { studentUid, stopName, stopId } = req.body as { studentUid?: string; stopName?: string; stopId?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
+  if (!(await hasStopRequestInStatus(orgId, studentUid, ['pending', 'accepted']))) {
+    return res.status(403).json({ error: 'No active stop request for this student' });
+  }
 
   try {
     const userDoc = await admin.firestore()
@@ -2917,7 +2960,13 @@ app.post('/notifications/bus-approaching', requireAuth, async (req: Request, res
   };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
+  if (!(await hasStopRequestInStatus(orgId, studentUid, ['pending', 'accepted']))) {
+    return res.status(403).json({ error: 'No active stop request for this student' });
+  }
 
   try {
     const userDoc = await admin.firestore()
@@ -2961,7 +3010,13 @@ app.post('/notifications/stop-request-cancelled', requireAuth, async (req: Reque
   const { studentUid, reason } = req.body as { studentUid?: string; reason?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
+  if (!(await hasStopRequestInStatus(orgId, studentUid, ['cancelled']))) {
+    return res.status(403).json({ error: 'No matching cancelled stop request for this student' });
+  }
 
   try {
     const userDoc = await admin.firestore()
@@ -2996,7 +3051,16 @@ app.post('/notifications/stop-completed', requireAuth, async (req: Request, res:
   const { studentUid, stopName } = req.body as { studentUid?: string; stopName?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
+  // 'awaiting_confirmation' covers the driver-boarding-save flow, which marks
+  // a rider-held request awaiting-confirmation (not completed) before this
+  // notification fires — see DriverScreen.tsx's boarding-count save handler.
+  if (!(await hasStopRequestInStatus(orgId, studentUid, ['completed', 'awaiting_confirmation']))) {
+    return res.status(403).json({ error: 'No matching completed stop request for this student' });
+  }
 
   try {
     const userDoc = await admin.firestore()
@@ -3152,6 +3216,9 @@ app.post('/announcements/:id/deactivate', requireAuth, async (req: Request, res:
 // The mobile app calls this instead of Firebase SDK's sendEmailVerification().
 app.post('/auth/send-verification', requireAuth, async (req: Request, res: Response) => {
   const uid = (req as any).uid as string;
+  if (verificationEmailLimit(uid)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
   try {
     const userRecord = await admin.auth().getUser(uid);
     if (!userRecord.email) return res.status(400).json({ error: 'User has no email address' });
@@ -3264,8 +3331,7 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
     // Domain restriction check — must happen before user doc creation.
     const allowedDomains: string[] = orgData.allowedEmailDomains ?? [];
     if (allowedDomains.length > 0 && email) {
-      const domain = email.split('@')[1]?.toLowerCase() ?? '';
-      if (!allowedDomains.includes(domain)) {
+      if (!allowedDomains.includes(emailDomain(email))) {
         return res.status(403).json({
           error: `Registration is restricted to ${allowedDomains.join(', ')} email addresses.`,
         });
@@ -3341,6 +3407,21 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
 
 // ---------- Export ----------
 
+// Mirror of src/utils/csv.ts (the backend can't import from ../src) — keep in
+// sync. Quotes cells containing , " or newlines, and prefixes text starting
+// with = + - @ (or tab/CR) with an apostrophe so Excel/Sheets don't evaluate
+// it as a formula — stop names on requests are rider-supplied.
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  let s = String(value);
+  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function csvRow(values: unknown[]): string {
+  return values.map(csvCell).join(',');
+}
+
 // Basic export (last 90 days) — included on every plan.
 // Extended export (>90 days) — requires dataApi entitlement.
 app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
@@ -3369,9 +3450,7 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
   since.setDate(since.getDate() - days);
 
   // Admins only — the export covers every rider's trips in the org.
-  const memberDoc = await admin.firestore()
-    .collection('orgs').doc(orgId).collection('users').doc(uid).get();
-  if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
+  if ((await getOrgRole(orgId, uid)) !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
   }
 
@@ -3390,10 +3469,10 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
       snap.docs.forEach((d) => {
         const data = d.data();
         const date = data.createdAt?.toDate?.()?.toISOString().slice(0, 10) ?? '';
-        const stop = (data.stopName ?? data.stop?.name ?? '').replace(/,/g, ' ');
+        const stop = data.stopName ?? data.stop?.name ?? '';
         const count = data.count ?? 0;
         const driver = data.driverUid ?? '';
-        rows.push(`${date},${stop},${count},${driver}`);
+        rows.push(csvRow([date, stop, count, driver]));
       });
     } else if (type === 'requests') {
       const snap = await db.collection('orgs').doc(orgId).collection('stopRequests')
@@ -3408,14 +3487,14 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
         const date = created?.toISOString().slice(0, 10) ?? '';
         const time = created?.toISOString().slice(11, 16) ?? '';
         const status = data.status ?? '';
-        const stop = (data.stop?.name ?? '').replace(/,/g, ' ');
+        const stop = data.stop?.name ?? '';
         const wait = created && arrived
           ? Math.max(0, Math.round((arrived.getTime() - created.getTime()) / 60_000))
           : '';
         const reason = data.cancelledReason ?? '';
         // Use uid only — no student names in export
         const uid = data.studentUid ?? '';
-        rows.push(`${date},${time},${status},${stop},${wait},${reason},${uid}`);
+        rows.push(csvRow([date, time, status, stop, wait, reason, uid]));
       });
     } else {
       return res.status(400).json({ error: 'type must be boardings or requests' });
@@ -3629,6 +3708,11 @@ app.post('/ai/generate-insights', requireAuth, async (req: Request, res: Respons
     return res.status(500).json({ error: 'Failed to generate insight' });
   }
 });
+
+// Express only forwards errors to error-handling middleware registered AFTER
+// the throwing route, so this must come after every route above — registered
+// at app-setup time (before any route existed), it was a silent no-op.
+Sentry.setupExpressErrorHandler(app);
 
 // ---------- Start ----------
 

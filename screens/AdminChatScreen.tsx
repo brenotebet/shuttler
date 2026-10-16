@@ -160,7 +160,8 @@ export default function AdminChatScreen() {
     }
   }, [messages, loading, org?.orgId]);
 
-  const renderMessage = ({ item }: { item: Message }) => {
+  // Stable across keystrokes, so typing doesn't re-render every message bubble.
+  const renderMessage = useCallback(({ item }: { item: Message }) => {
     const isUser = item.role === 'user';
     return (
       <View style={[styles.row, isUser ? styles.rowUser : styles.rowAssistant]}>
@@ -181,7 +182,7 @@ export default function AdminChatScreen() {
         </View>
       </View>
     );
-  };
+  }, [primaryColor]);
 
   const isEmpty = messages.length === 0;
 

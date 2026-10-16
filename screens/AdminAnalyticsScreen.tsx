@@ -370,6 +370,9 @@ const PERIOD_OPTIONS: { label: string; value: Period; days: number | null }[] = 
   { label: 'All', value: 'all', days: null },
 ];
 
+// Per-collection fetch cap — "All" has no date cutoff, so a busy org can hit it.
+const RECORD_CAP = 5000;
+
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function HBarChart({
@@ -426,6 +429,7 @@ function AnalyticsSection() {
   const { primaryColor } = useOrgTheme();
   const [records, setRecords] = useState<BoardingCount[]>([]);
   const [requests, setRequests] = useState<StopRequestDoc[]>([]);
+  const [isTruncated, setIsTruncated] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -530,15 +534,16 @@ function AnalyticsSection() {
         const [boardingSnap, requestSnap] = await Promise.all([
           getDocs(query(
             collection(db, 'orgs', org.orgId, 'boardingCounts'),
-            ...constraints, orderBy('createdAt', 'desc'), limit(5000),
+            ...constraints, orderBy('createdAt', 'desc'), limit(RECORD_CAP),
           )),
           getDocs(query(
             collection(db, 'orgs', org.orgId, 'stopRequests'),
-            ...constraints, orderBy('createdAt', 'desc'), limit(5000),
+            ...constraints, orderBy('createdAt', 'desc'), limit(RECORD_CAP),
           )),
         ]);
         setRecords(boardingSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardingCount, 'id'>) })));
         setRequests(requestSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StopRequestDoc, 'id'>) })));
+        setIsTruncated(boardingSnap.size >= RECORD_CAP || requestSnap.size >= RECORD_CAP);
       } catch (e: any) {
         setError(e.message ?? 'Failed to load analytics');
       } finally {
@@ -817,6 +822,11 @@ function AnalyticsSection() {
           </TouchableOpacity>
         ))}
       </View>
+      {isTruncated && (
+        <Text style={[s.emptySubtext, { marginBottom: 12 }]}>
+          Showing the most recent {RECORD_CAP.toLocaleString()} records, so totals may be undercounted. Pick a shorter period for exact numbers.
+        </Text>
+      )}
 
       {/* Hero metric */}
       <View style={[a.heroCard, { ...cardShadow }]}>

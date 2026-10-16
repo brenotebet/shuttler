@@ -136,3 +136,41 @@ describe('SSO org', () => {
     }
   });
 });
+
+describe('plan limits on stops and routes', () => {
+  const stops = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `Stop ${i}`, latitude: 38.6, longitude: -89.8 }));
+  const routes = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `r${i}`, name: `Route ${i}`, stopIds: [] }));
+
+  async function setOrg(fields: Record<string, unknown>) {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'orgs/emailOrg'), fields, { merge: true }));
+  }
+
+  it('caps a trial org at 10 stops and 1 route', async () => {
+    await setOrg({ subscriptionPlan: 'starter', subscriptionStatus: 'trialing' });
+    const ref = doc(as('admin'), 'orgs/emailOrg');
+    await assertSucceeds(updateDoc(ref, { stops: stops(10), routes: routes(1) }));
+    await assertFails(updateDoc(ref, { stops: stops(11) }));
+    await assertFails(updateDoc(ref, { routes: routes(2) }));
+  });
+
+  it('lets a Campus org go past the Starter caps', async () => {
+    await setOrg({ subscriptionPlan: 'campus', subscriptionStatus: 'active' });
+    await assertSucceeds(updateDoc(doc(as('admin'), 'orgs/emailOrg'), { stops: stops(40), routes: routes(5) }));
+  });
+
+  it('applies an Enterprise limit override on a paid plan', async () => {
+    await setOrg({ subscriptionPlan: 'enterprise', subscriptionStatus: 'active', limitOverrides: { maxRoutes: 3 } });
+    const ref = doc(as('admin'), 'orgs/emailOrg');
+    await assertSucceeds(updateDoc(ref, { routes: routes(3) }));
+    await assertFails(updateDoc(ref, { routes: routes(4) }));
+  });
+
+  it('lets a downgraded org shrink or edit an over-limit list, but not grow it', async () => {
+    await setOrg({ subscriptionPlan: 'starter', subscriptionStatus: 'active', stops: stops(12) });
+    const ref = doc(as('admin'), 'orgs/emailOrg');
+    await assertSucceeds(updateDoc(ref, { stops: stops(11) }));
+    await assertFails(updateDoc(ref, { stops: stops(12) }));
+    await assertSucceeds(updateDoc(ref, { name: 'Renamed Org' }));
+  });
+});

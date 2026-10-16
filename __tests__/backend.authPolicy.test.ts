@@ -4,11 +4,43 @@
 
 import {
   carriedOverProfile,
+  emailDomain,
   emailRegistrationRejection,
   inheritedSsoRole,
+  legacySsoAccountMatches,
   socialSignInRejection,
   ssoUid,
 } from '../backend/authPolicy';
+
+describe('legacySsoAccountMatches', () => {
+  it('matches when the stored email equals the assertion email, ignoring case', () => {
+    expect(legacySsoAccountMatches('John@School.edu', 'john@school.edu')).toBe(true);
+  });
+
+  it('rejects a reassigned subject whose stored email belongs to someone else', () => {
+    expect(legacySsoAccountMatches('former.admin@school.edu', 'new.hire@school.edu')).toBe(false);
+  });
+
+  it('rejects when either side has no email — no proof it is the same person', () => {
+    expect(legacySsoAccountMatches(undefined, 'john@school.edu')).toBe(false);
+    expect(legacySsoAccountMatches(null, 'john@school.edu')).toBe(false);
+    expect(legacySsoAccountMatches('john@school.edu', null)).toBe(false);
+  });
+});
+
+describe('emailDomain', () => {
+  it('returns the lowercased domain', () => {
+    expect(emailDomain('Jane@McKendree.EDU')).toBe('mckendree.edu');
+  });
+
+  it('reads the domain after the last "@", where the mail is actually delivered', () => {
+    expect(emailDomain('x@school.edu@evil.example')).toBe('evil.example');
+  });
+
+  it('returns an empty string when there is no "@"', () => {
+    expect(emailDomain('school.edu')).toBe('');
+  });
+});
 
 describe('socialSignInRejection', () => {
   it('rejects Google, Apple and phone for SAML orgs', () => {
