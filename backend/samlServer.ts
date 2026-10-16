@@ -249,10 +249,11 @@ const superAdminLimit = createRateLimiter(60_000, 30);
 // Keyed by uid, not IP — every rider on a campus network can share one IP.
 const stopRequestPushLimit = createRateLimiter(60_000, 3);
 // Shared by the four driver-triggered rider notifications (stop-arrived,
-// bus-approaching, stop-request-cancelled, stop-completed) — keyed by the
-// driver's uid, generous enough for a loop route hitting several stops/riders
-// a minute, but bounded so a compromised driver account can't flood one rider.
-const driverNotifyLimit = createRateLimiter(60_000, 30);
+// bus-approaching, stop-request-cancelled, stop-completed). Keyed by
+// driver+rider, not driver alone: one driver legitimately fans out to many
+// riders at once (e.g. going offline cancels every pending request in the
+// org), but no rider should get more than a handful from one driver a minute.
+const driverNotifyLimit = createRateLimiter(60_000, 10);
 // Keyed by uid. The app's resend button has a 30s cooldown, but that's
 // client-side only — this stops a scripted caller burning mailer quota.
 const verificationEmailLimit = createRateLimiter(60_000, 3);
@@ -2908,7 +2909,7 @@ app.post('/notifications/stop-arrived', requireAuth, async (req: Request, res: R
   const { studentUid, stopName, stopId } = req.body as { studentUid?: string; stopName?: string; stopId?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
-  if (driverNotifyLimit((req as any).uid)) {
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
     return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
   }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
@@ -2959,7 +2960,7 @@ app.post('/notifications/bus-approaching', requireAuth, async (req: Request, res
   };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
-  if (driverNotifyLimit((req as any).uid)) {
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
     return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
   }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
@@ -3009,7 +3010,7 @@ app.post('/notifications/stop-request-cancelled', requireAuth, async (req: Reque
   const { studentUid, reason } = req.body as { studentUid?: string; reason?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
-  if (driverNotifyLimit((req as any).uid)) {
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
     return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
   }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;
@@ -3050,7 +3051,7 @@ app.post('/notifications/stop-completed', requireAuth, async (req: Request, res:
   const { studentUid, stopName } = req.body as { studentUid?: string; stopName?: string };
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
   if (!studentUid) return res.status(400).json({ error: 'studentUid required' });
-  if (driverNotifyLimit((req as any).uid)) {
+  if (driverNotifyLimit(`${(req as any).uid}:${studentUid}`)) {
     return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
   }
   if (!(await requireDriverCaller(orgId, (req as any).uid, res))) return;

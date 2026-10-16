@@ -68,8 +68,8 @@ export function isRouteActive(
     if (close < open ? cur >= open : cur >= open && cur < close) return true;
   }
   // The after-midnight tail of yesterday's overnight window.
-  const yesterday: DaySchedule = route.schedule[DAY_KEYS[(DAY_KEYS.indexOf(key) + 6) % 7]];
-  return yesterday.isOpen
+  const yesterday: DaySchedule | undefined = route.schedule[DAY_KEYS[(DAY_KEYS.indexOf(key) + 6) % 7]];
+  return !!yesterday?.isOpen
     && toMinutes(yesterday.close) < toMinutes(yesterday.open)
     && cur < toMinutes(yesterday.close);
 }
