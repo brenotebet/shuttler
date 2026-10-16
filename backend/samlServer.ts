@@ -236,6 +236,8 @@ const orgCreateLimit = createRateLimiter(60_000, 3);
 const waitlistLimit = createRateLimiter(60_000, 3);
 const announcementLimit = createRateLimiter(60_000, 5);
 const superAdminLimit = createRateLimiter(60_000, 30);
+// Keyed by uid, not IP — every rider on a campus network can share one IP.
+const stopRequestPushLimit = createRateLimiter(60_000, 3);
 
 // ---------- Org helpers ----------
 
@@ -652,10 +654,17 @@ app.post('/saml/:orgSlug/acs', async (req: Request, res: Response) => {
       return res.status(422).json({ error: 'SAML assertion missing UID/email attribute' });
     }
 
-    const email = normalizeString((attributes as any).email) || normalizeString((attributes as any).mail);
+    // Same email lookup /saml/exchange uses for the profile, so the domain
+    // check can't be skipped by an IdP that sends e.g. emailAddress instead.
+    const { email } = extractSamlProfile(attributes);
 
-    // Enforce allowed email domains if configured
-    if (config.allowedEmailDomains && config.allowedEmailDomains.length > 0 && email) {
+    // Enforce allowed email domains if configured. Fail closed: with a domain
+    // restriction in place, an assertion without an email can't be checked.
+    if (config.allowedEmailDomains && config.allowedEmailDomains.length > 0) {
+      if (!email) {
+        console.error('SAML ACS: no email attribute but org restricts email domains', { orgId: config.orgId });
+        return res.status(403).json({ error: 'SAML assertion has no email attribute, but this organization only allows specific email domains. Ask your IT team to release the email attribute.' });
+      }
       const domain = email.split('@')[1]?.toLowerCase() ?? '';
       if (!config.allowedEmailDomains.includes(domain)) {
         console.error('SAML ACS: email domain not allowed', { domain, orgId: config.orgId });
@@ -706,6 +715,14 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
   const { uid, orgId, attributes } = payload;
 
   try {
+    // A saved-but-not-activated SAML draft is testable through
+    // /saml/:orgSlug/test-verify, which never mints a session. Only an
+    // activated SAML org may sign people in for real.
+    const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (orgSnap.data()?.authMethod !== 'saml') {
+      return res.status(403).json({ error: "SSO isn't active for this organization yet." });
+    }
+
     const { email, displayName } = extractSamlProfile(attributes);
 
     // Embed orgId as a custom claim so AuthProvider can read it on re-launch
@@ -728,13 +745,12 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
       let previousAccounts: admin.firestore.QueryDocumentSnapshot[] = [];
       let ownerUid: string | undefined;
       if (!existing.exists && email) {
-        const orgSnap = await tx.get(orgRef);
-        if (orgSnap.data()?.authMethod === 'saml') {
-          ownerUid = orgSnap.data()?.ownerUid;
-          const emails = Array.from(new Set([email, email.toLowerCase()]));
-          const matches = await tx.get(orgRef.collection('users').where('email', 'in', emails));
-          previousAccounts = matches.docs.filter((d) => d.id !== uid);
-        }
+        ownerUid = (await tx.get(orgRef)).data()?.ownerUid;
+        // Member emails are stored lowercase (see backfill-lowercase-emails.js);
+        // the raw form also matches anything written before that.
+        const emails = Array.from(new Set([email, email.toLowerCase()]));
+        const matches = await tx.get(orgRef.collection('users').where('email', 'in', emails));
+        previousAccounts = matches.docs.filter((d) => d.id !== uid);
       }
       const previousUids = previousAccounts.map((d) => d.id);
       const inheritedRole = inheritedSsoRole(previousAccounts.map((d) => d.data().role));
@@ -744,7 +760,7 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
         {
           uid,
           orgId,
-          email: email ?? null,
+          email: email ? email.toLowerCase() : null,
           // Only write a name the IdP actually sent, so a missing attribute
           // doesn't erase a name the user entered on their profile.
           ...(displayName ? { displayName } : {}),
@@ -1072,7 +1088,7 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
         .set({
           uid: authUser.uid,
           orgId,
-          email,
+          email: (email as string).trim().toLowerCase(),
           displayName: displayName ?? null,
           phone: phone ?? null,
           role,
@@ -1245,16 +1261,18 @@ app.delete('/account', requireAuth, async (req: Request, res: Response) => {
   const { orgId } = req.body as { orgId?: string };
 
   try {
+    // Checked across every org, not just the one in the body — otherwise an
+    // owner could omit orgId and leave their org with no owner.
+    const ownedOrgs = await admin.firestore().collection('orgs').where('ownerUid', '==', uid).limit(1).get();
+    if (!ownedOrgs.empty) {
+      return res.status(409).json({
+        error:
+          'As the organization owner, please cancel your subscription and delete your organization before deleting your account. Contact support@shuttler.net for help.',
+      });
+    }
+
     if (orgId) {
       const orgRef = admin.firestore().collection('orgs').doc(orgId);
-      const orgSnap = await orgRef.get();
-
-      if (orgSnap.exists && orgSnap.data()?.ownerUid === uid) {
-        return res.status(409).json({
-          error:
-            'As the organization owner, please cancel your subscription and delete your organization before deleting your account. Contact support@shuttler.net for help.',
-        });
-      }
 
       // Scrub PII from the user's stop requests. Anonymize rather than delete so
       // the org keeps aggregate ridership history (status/stop/timestamps remain).
@@ -2575,10 +2593,27 @@ async function requireDriverCaller(orgId: string, uid: string, res: Response): P
  *  Reads all driver/admin users in the org and sends them a push notification.
  */
 app.post('/notifications/stop-request-created', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
   const orgId: string | undefined = (req as any).claims?.orgId;
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
+  if (stopRequestPushLimit(uid)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
 
   try {
+    // This pushes every driver in the org, so only a current member who
+    // actually has a pending request may trigger it.
+    if (!(await getOrgRole(orgId, uid))) {
+      return res.status(403).json({ error: 'Not a member of this org' });
+    }
+    const pending = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('stopRequests')
+      .where('studentUid', '==', uid)
+      .where('status', '==', 'pending')
+      .limit(1)
+      .get();
+    if (pending.empty) return res.json({ sent: 0 });
+
     const usersSnap = await admin.firestore()
       .collection('orgs').doc(orgId).collection('users')
       .get();
@@ -2990,7 +3025,7 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
       return res.status(404).json({ error: 'Organization not found.' });
     }
 
-    const email = authUser.email ?? null;
+    const email = authUser.email?.toLowerCase() ?? null;
     const displayName = authUser.displayName ?? null;
     const orgData = orgDoc.data()!;
 
