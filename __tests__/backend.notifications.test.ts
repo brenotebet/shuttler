@@ -122,6 +122,42 @@ describe('rider-notification caller authorization', () => {
   });
 });
 
+// --- Student-request matching for rider-directed notifications ---
+// Mirrors hasStopRequestInStatus in backend/samlServer.ts: a driver-triggered
+// push must be backed by a real stop request in the right state, so a driver
+// can't target an arbitrary rider (or an unrelated/stale request) by just
+// supplying a uid. Added alongside the fix for that gap.
+
+function matchesStopRequest(requestStatus: string | null, allowedStatuses: string[]): boolean {
+  return requestStatus !== null && allowedStatuses.includes(requestStatus);
+}
+
+describe('rider-notification request matching', () => {
+  it('allows stop-arrived / bus-approaching for pending or accepted requests', () => {
+    expect(matchesStopRequest('pending', ['pending', 'accepted'])).toBe(true);
+    expect(matchesStopRequest('accepted', ['pending', 'accepted'])).toBe(true);
+  });
+
+  it('rejects stop-arrived / bus-approaching for a completed or cancelled request', () => {
+    expect(matchesStopRequest('completed', ['pending', 'accepted'])).toBe(false);
+    expect(matchesStopRequest('cancelled', ['pending', 'accepted'])).toBe(false);
+  });
+
+  it('allows stop-completed for completed or awaiting_confirmation requests', () => {
+    expect(matchesStopRequest('completed', ['completed', 'awaiting_confirmation'])).toBe(true);
+    expect(matchesStopRequest('awaiting_confirmation', ['completed', 'awaiting_confirmation'])).toBe(true);
+  });
+
+  it('allows stop-request-cancelled only for a cancelled request', () => {
+    expect(matchesStopRequest('cancelled', ['cancelled'])).toBe(true);
+    expect(matchesStopRequest('pending', ['cancelled'])).toBe(false);
+  });
+
+  it('rejects when the student has no matching request at all', () => {
+    expect(matchesStopRequest(null, ['pending', 'accepted'])).toBe(false);
+  });
+});
+
 describe('Expo push batch sizing', () => {
   function chunkTokens(tokens: string[], batchSize: number): string[][] {
     const batches: string[][] = [];

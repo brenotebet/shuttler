@@ -61,6 +61,29 @@ export function emailRegistrationRejection(
 }
 
 /**
+ * The lowercased domain of an email address, or '' when there's no "@". Taken
+ * from after the LAST "@": split('@')[1] reads "school.edu" out of
+ * "x@school.edu@evil.example", whose mail actually goes to evil.example —
+ * which would pass an allowed-domains check it shouldn't.
+ */
+export function emailDomain(email: string): string {
+  const at = email.lastIndexOf('@');
+  return at === -1 ? '' : email.slice(at + 1).toLowerCase();
+}
+
+/**
+ * Whether a legacy SSO account (keyed by the raw IdP subject, from before uids
+ * were namespaced per org) belongs to the person in this assertion. IdPs can
+ * reassign subjects (recycled usernames), so the stored email must match —
+ * with no email on either side there's no proof, so no takeover.
+ */
+export function legacySsoAccountMatches(storedEmail: unknown, assertionEmail: string | null | undefined): boolean {
+  return typeof storedEmail === 'string'
+    && !!assertionEmail
+    && storedEmail.trim().toLowerCase() === assertionEmail.trim().toLowerCase();
+}
+
+/**
  * The role a first-time SSO identity inherits from the org's pre-SSO accounts
  * with the same email (e.g. the founder's email/password admin login), or
  * null when none of them held an elevated role. SAML orgs are SSO-only, so

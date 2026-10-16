@@ -15,9 +15,17 @@ describe('mainSubscriptionAction', () => {
     expect(mainSubscriptionAction('sub_A', { id: 'sub_A', status: 'past_due' }, false)).toBe('apply');
   });
 
-  it('adopts a subscription when the org has none yet', () => {
+  it('adopts a live subscription when the org has none yet', () => {
     expect(mainSubscriptionAction(undefined, { id: 'sub_A', status: 'active' }, false)).toBe('apply');
-    expect(mainSubscriptionAction(null, { id: 'sub_A', status: 'incomplete' }, false)).toBe('apply');
+    expect(mainSubscriptionAction(null, { id: 'sub_A', status: 'trialing' }, false)).toBe('apply');
+  });
+
+  it("leaves a trial org alone while its first payment hasn't completed", () => {
+    // Applying 'incomplete' / 'incomplete_expired' would lock the org out of
+    // its trial over a payment that's still processing or was abandoned.
+    expect(mainSubscriptionAction(null, { id: 'sub_A', status: 'incomplete' }, false)).toBe('ignore');
+    expect(mainSubscriptionAction(null, { id: 'sub_A', status: 'incomplete_expired' }, false)).toBe('ignore');
+    expect(mainSubscriptionAction(null, { id: 'sub_A', status: 'incomplete_expired' }, true)).toBe('ignore');
   });
 
   it('cancels the org when its current subscription ends', () => {
@@ -59,11 +67,15 @@ describe('dataAddonAction', () => {
   it("deactivates when the org's add-on subscription ends", () => {
     expect(dataAddonAction('sub_X', { id: 'sub_X', status: 'canceled' }, true)).toBe('deactivate');
     expect(dataAddonAction('sub_X', { id: 'sub_X', status: 'unpaid' }, false)).toBe('deactivate');
-    expect(dataAddonAction('sub_X', { id: 'sub_X', status: 'incomplete_expired' }, false)).toBe('deactivate');
   });
 
   it('deactivates an add-on with no recorded subscription (set up before ids were stored)', () => {
     expect(dataAddonAction(undefined, { id: 'sub_X', status: 'canceled' }, true)).toBe('deactivate');
+  });
+
+  it("doesn't let an abandoned add-on checkout switch off an add-on paid for before ids were stored", () => {
+    expect(dataAddonAction(undefined, { id: 'sub_new', status: 'incomplete_expired' }, false)).toBe('ignore');
+    expect(dataAddonAction(undefined, { id: 'sub_new', status: 'incomplete_expired' }, true)).toBe('ignore');
   });
 
   it('ignores an old add-on subscription ending', () => {
