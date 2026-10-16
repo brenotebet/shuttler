@@ -1026,8 +1026,12 @@ export default function MapScreen() {
       if (locationSub) locationSub.remove();
       if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);
     };
+    // Keyed on the org only. The one-time initial fit reads the latest region
+    // and stops itself (didInitialFitRef), so layout values like the ride
+    // card's height must not be deps — each change tore down and re-created
+    // the org-wide buses listener and the GPS watch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [INITIAL_REGION, STOPS_BOUNDS, bottomCardHeight, insets.top, insets.bottom]);
+  }, [orgId]);
 
   useEffect(() => {
     setOwnRequestReady(false);

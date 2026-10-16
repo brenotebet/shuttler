@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase/firebaseconfig';
 import MapView, { Marker, Region } from 'react-native-maps';
-import { doc, updateDoc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { signOut } from 'firebase/auth';
@@ -1771,19 +1771,11 @@ function UsersTab() {
       const data: OrgMember[] = await res.json();
       setMembers(data);
 
-      // Load defaultRouteId for each driver/admin from Firestore
-      const drivers = data.filter((m) => m.role === 'driver' || m.role === 'admin');
+      // The endpoint returns each member's full doc, defaultRouteId included.
       const defaults: Record<string, string | null> = {};
-      await Promise.all(
-        drivers.map(async (m) => {
-          try {
-            const snap = await getDoc(doc(db, 'orgs', org.orgId, 'users', m.uid));
-            defaults[m.uid] = snap.exists() ? (snap.data()?.defaultRouteId ?? null) : null;
-          } catch {
-            defaults[m.uid] = null;
-          }
-        }),
-      );
+      data
+        .filter((m) => m.role === 'driver' || m.role === 'admin')
+        .forEach((m) => { defaults[m.uid] = m.defaultRouteId ?? null; });
       setDriverDefaults(defaults);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load members.');

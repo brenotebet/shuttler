@@ -222,7 +222,8 @@ export default function AdminDashboardScreen() {
   const { org } = useOrg();
   const { orgId } = useAuth();
   const { primaryColor } = useOrgTheme();
-  const orgRoutes = org?.routes ?? [];
+  // Memoized: a fresh `[]` each render would invalidate the driverStats memo.
+  const orgRoutes = useMemo(() => org?.routes ?? [], [org?.routes]);
 
   const [drivers, setDrivers] = useState<any[]>([]);
   const [buses, setBuses] = useState<Record<string, any>>({});
@@ -479,10 +480,20 @@ export default function AdminDashboardScreen() {
 
     setIsExporting(true);
     try {
-      const boardingSnap = await getDocs(collection(db, 'orgs', orgId, 'boardingCounts'));
-      const reqSnap = await getDocs(collection(db, 'orgs', orgId, 'stopRequests'));
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const todayMs = today.getTime();
+      // Filter in the query, not after downloading the whole history — the
+      // export only uses the retention window and today's requests.
+      const boardingCol = collection(db, 'orgs', orgId, 'boardingCounts');
+      const [boardingSnap, reqSnap] = await Promise.all([
+        getDocs(cutoffMs > 0
+          ? query(boardingCol, where('createdAt', '>=', Timestamp.fromMillis(cutoffMs)))
+          : boardingCol),
+        getDocs(query(
+          collection(db, 'orgs', orgId, 'stopRequests'),
+          where('createdAt', '>=', Timestamp.fromMillis(todayMs)),
+        )),
+      ]);
 
       // Single pass over boarding docs to build all three derived structures at once.
       const boardingRows: string[] = [];
