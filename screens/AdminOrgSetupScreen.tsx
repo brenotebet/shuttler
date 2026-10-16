@@ -2865,6 +2865,11 @@ function BillingTab() {
 
   const currentLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
   const isActive = org?.subscriptionStatus === 'active';
+  // Has a real Stripe subscription, so a plan button switches plans on it
+  // (the backend's isLiveSubscription) rather than starting a checkout.
+  // 'trialing' is excluded on purpose: here it's the app-level free trial,
+  // which has no subscription yet and must still be able to Subscribe.
+  const hasSubscription = isActive || org?.subscriptionStatus === 'past_due';
   const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
   const dataUnlocked = org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false;
   const statusColor = isActive || isTrialing ? '#2e7d32' : DANGER_COLOR;
@@ -2933,7 +2938,7 @@ function BillingTab() {
       <Text style={styles.sectionLabel}>Available Plans</Text>
 
       {PLANS.map((plan) => {
-        const isCurrent = org?.subscriptionPlan === plan.key && isActive;
+        const isCurrent = org?.subscriptionPlan === plan.key && hasSubscription;
         return (
           <View key={plan.key} style={[styles.planCard, isCurrent && styles.planCardActive, isCurrent && { borderColor: primaryColor }]}>
             <View style={styles.planInfo}>
@@ -2949,7 +2954,7 @@ function BillingTab() {
               </TouchableOpacity>
             </View>
             <AppButton
-              label={isCurrent ? 'Active' : (!isApproved ? 'Pending' : (isLoading ? '…' : (isActive ? 'Switch' : 'Subscribe')))}
+              label={isCurrent ? (isActive ? 'Active' : 'Current') : (!isApproved ? 'Pending' : (isLoading ? '…' : (hasSubscription ? 'Switch' : 'Subscribe')))}
               onPress={() => !isCurrent && isApproved && openCheckout(plan.key)}
               disabled={isLoading || isCurrent || !isApproved}
               style={styles.planButton}
@@ -3024,13 +3029,13 @@ function BillingTab() {
         actionLabel={
           detailPlan === 'data_addon' ? 'Add Data Analytics — $49/mo'
           : detailPlan === 'enterprise' ? 'Contact Us'
-          : detailPlan === 'campus' ? `${isActive ? 'Switch to Campus' : 'Subscribe'} — $299/mo`
-          : `${isActive ? 'Switch to Starter' : 'Subscribe'} — $149/mo`
+          : detailPlan === 'campus' ? `${hasSubscription ? 'Switch to Campus' : 'Subscribe'} — $299/mo`
+          : `${hasSubscription ? 'Switch to Starter' : 'Subscribe'} — $149/mo`
         }
         actionDisabled={
           isLoading || !isApproved ||
           (detailPlan !== 'data_addon' && detailPlan !== 'enterprise' &&
-            org?.subscriptionPlan === detailPlan && isActive) ||
+            org?.subscriptionPlan === detailPlan && hasSubscription) ||
           (detailPlan === 'data_addon' && dataUnlocked)
         }
       />
