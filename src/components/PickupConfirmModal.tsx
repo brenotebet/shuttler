@@ -1,5 +1,5 @@
 // src/components/PickupConfirmModal.tsx
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { View, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
 import { Text } from '../../components/Text';
 import BottomSheet from '../../components/BottomSheet';
@@ -72,6 +72,10 @@ export default function PickupConfirmModal({
   const [selectedRating, setSelectedRating] = useState<number | null>(null);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // `saving` lands a render later, so two fast taps (or "Yes" then "No, not
+  // yet") would both get through — duplicate feedback docs, or a confirm
+  // racing a revert.
+  const busyRef = useRef(false);
 
   const question = useMemo(
     () => QUESTION_POOL[Math.floor(Math.random() * QUESTION_POOL.length)],
@@ -81,6 +85,8 @@ export default function PickupConfirmModal({
   );
 
   const handleNotYet = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setSaving(true);
     try {
       const requestRef = doc(db, 'orgs', orgId, 'stopRequests', requestId);
@@ -99,22 +105,27 @@ export default function PickupConfirmModal({
     } catch {
       // Silently close — the request completed on its own, which is fine
     } finally {
+      busyRef.current = false;
       setSaving(false);
       onDone();
     }
   };
 
   const handleConfirmedPickup = async () => {
-    const val = await AsyncStorage.getItem(FEEDBACK_ENABLED_KEY);
+    if (busyRef.current) return;
+    busyRef.current = true;
+    const val = await AsyncStorage.getItem(FEEDBACK_ENABLED_KEY).catch(() => null);
     const feedbackEnabled = val !== 'false';
     if (feedbackEnabled) {
+      busyRef.current = false;
       setStep('feedback');
     } else {
-      saveFeedbackAndComplete();
+      await saveFeedbackAndComplete();
     }
   };
 
   const saveFeedbackAndComplete = async (rating?: number, answer?: string) => {
+    busyRef.current = true;
     setSaving(true);
     try {
       await updateDoc(doc(db, 'orgs', orgId, 'stopRequests', requestId), {
@@ -140,14 +151,18 @@ export default function PickupConfirmModal({
     } catch {
       showAlert('Something went wrong. Please try again.', 'Error', 'error');
     } finally {
+      busyRef.current = false;
       setSaving(false);
       onDone();
     }
   };
 
-  const handleSkip = () => saveFeedbackAndComplete();
+  const handleSkip = () => {
+    if (!busyRef.current) saveFeedbackAndComplete();
+  };
 
   const handleSubmitFeedback = () => {
+    if (busyRef.current) return;
     if (question.type === 'stars' && selectedRating !== null) {
       saveFeedbackAndComplete(selectedRating);
     } else if (question.type === 'options' && selectedOption !== null) {
@@ -209,6 +224,9 @@ export default function PickupConfirmModal({
                       key={n}
                       onPress={() => setSelectedRating(n)}
                       style={styles.starBtn}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${n} star${n === 1 ? '' : 's'}`}
+                      accessibilityState={{ selected: selectedRating === n }}
                     >
                       <Icon
                         name={selectedRating !== null && n <= selectedRating ? 'star' : 'star-border'}

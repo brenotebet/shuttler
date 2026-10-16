@@ -28,7 +28,7 @@ export function useExternalCheckout(returnUrl: string) {
 
   const openExternalCheckout = useCallback(
     (url: string, message: string) =>
-      new Promise<CheckoutResult>((resolve) => {
+      new Promise<CheckoutResult>((resolve, reject) => {
         Alert.alert(
           'Leaving Shuttler',
           message,
@@ -46,7 +46,13 @@ export function useExternalCheckout(returnUrl: string) {
                   appStateSub.remove();
                   setTimeout(() => resolveOnce({ type: 'dismissed' }), 800);
                 });
-                Linking.openURL(url);
+                // If Safari never opens, the app never backgrounds, so neither
+                // listener above would ever settle this promise.
+                Linking.openURL(url).catch(() => {
+                  appStateSub.remove();
+                  resolverRef.current = null;
+                  reject(new Error("Couldn't open Safari. Please try again."));
+                });
               },
             },
           ],
