@@ -16,8 +16,21 @@ service cloud.firestore {
       return exists(userDocPath(orgId, uid));
     }
 
+    // SAML orgs are SSO-only, admins included: membership only counts for a
+    // session minted by /saml/exchange (the backend's only custom tokens).
+    // This blocks leftover password and Google/Apple logins — including from
+    // old app builds — at the database, not just in the app.
+    function orgRequiresSso(orgId) {
+      return get(/databases/$(database)/documents/orgs/$(orgId)).data.get('authMethod', 'email') == 'saml';
+    }
+
+    function sessionAllowedInOrg(orgId) {
+      return !orgRequiresSso(orgId)
+        || request.auth.token.firebase.sign_in_provider == 'custom';
+    }
+
     function myRole(orgId) {
-      return signedIn() && hasUserDoc(orgId, request.auth.uid)
+      return signedIn() && hasUserDoc(orgId, request.auth.uid) && sessionAllowedInOrg(orgId)
         ? get(userDocPath(orgId, request.auth.uid)).data.role
         : null;
     }
@@ -31,7 +44,7 @@ service cloud.firestore {
     }
 
     function isMember(orgId) {
-      return signedIn() && hasUserDoc(orgId, request.auth.uid);
+      return signedIn() && hasUserDoc(orgId, request.auth.uid) && sessionAllowedInOrg(orgId);
     }
 
     function orgIsActive(orgId) {
@@ -83,7 +96,11 @@ service cloud.firestore {
     // ---------- Users ----------
     match /orgs/{orgId}/users/{uid} {
       // Users read their own doc; admins can read all user docs (needed for dashboard).
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin(orgId));
+      // A session SSO doesn't allow can't read even its own doc, so the app
+      // signs it out instead of half-loading.
+      allow read: if signedIn() && (
+        (request.auth.uid == uid && sessionAllowedInOrg(orgId)) || isAdmin(orgId)
+      );
 
       // Membership is created only by the backend (Admin SDK), which enforces
       // the org's authMethod, allowed email domains and approval gates. A
@@ -91,13 +108,17 @@ service cloud.firestore {
       // bypassing SSO entirely.
       allow create: if false;
 
-      // Update own profile but never change role or orgId.
+      // Update own profile but never change role, orgId or identity fields —
+      // /saml/exchange links accounts by email, so it must stay server-written.
       // Admins may also set defaultRouteId on any member's doc.
       allow update: if signedIn() && (
         (
           request.auth.uid == uid
           && request.resource.data.role == resource.data.role
           && request.resource.data.orgId == orgId
+          && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['email', 'uid', 'ssoLinkedFrom'])
+          && sessionAllowedInOrg(orgId)
           && orgIsActive(orgId)
         ) || (
           isAdmin(orgId)

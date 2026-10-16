@@ -466,7 +466,7 @@ function AuthTab() {
     const emailMismatch = !!testEmail && !!adminEmail && testEmail.toLowerCase() !== adminEmail.toLowerCase();
     Alert.alert(
       'Activate SAML sign-in?',
-      `This changes how everyone in ${org.name} signs in — they'll use your IdP from now on, admins included. Email/password sign-in will no longer be available.\n\n`
+      `This changes how everyone in ${org.name} signs in — they'll use your IdP from now on, admins included. Email/password sign-in will no longer be available, and you'll be signed out so you can sign back in with SSO.\n\n`
         + 'Admins and drivers keep their role the first time they sign in with an SSO account that has the same email as their Shuttler account.'
         + (emailMismatch
           ? `\n\nHeads up: the test login used ${testEmail}, which doesn't match your Shuttler email (${adminEmail}), so your admin access won't carry over automatically. Contact support@shuttler.net before activating.`
