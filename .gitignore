@@ -48,3 +48,6 @@ serviceAccount.json
 scripts/serviceAccountKey.json
 
 scripts
+
+# Firebase emulator logs
+*-debug.log
