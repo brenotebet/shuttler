@@ -30,6 +30,14 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
+import { dataAddonAction, isLiveSubscription, mainSubscriptionAction, planForSubscription } from './billingPolicy';
+import {
+  carriedOverProfile,
+  emailRegistrationRejection,
+  inheritedSsoRole,
+  socialSignInRejection,
+  ssoUid,
+} from './authPolicy';
 
 /**
  * Shuttler multi-tenant backend
@@ -235,6 +243,8 @@ const orgCreateLimit = createRateLimiter(60_000, 3);
 const waitlistLimit = createRateLimiter(60_000, 3);
 const announcementLimit = createRateLimiter(60_000, 5);
 const superAdminLimit = createRateLimiter(60_000, 30);
+// Keyed by uid, not IP — every rider on a campus network can share one IP.
+const stopRequestPushLimit = createRateLimiter(60_000, 3);
 
 // ---------- Org helpers ----------
 
@@ -313,6 +323,17 @@ async function requireAuth(req: Request, res: Response, next: Function) {
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+// Optional auth: the verified uid when a valid Bearer token is sent, else null.
+async function bearerUid(req: Request): Promise<string | null> {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) return null;
+  try {
+    return (await admin.auth().verifyIdToken(header.slice(7))).uid;
+  } catch {
+    return null;
   }
 }
 
@@ -573,7 +594,7 @@ app.get('/orgs/by-id/:orgId', async (req: Request, res: Response) => {
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
     const data = orgDoc.data()!;
     // Strip sensitive fields before returning to clients
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, ...safe } = data;
+    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, dataAddonSubscriptionId: _das, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
     return res.json(safe);
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
@@ -588,7 +609,7 @@ app.get('/orgs/:slug', async (req: Request, res: Response) => {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org document missing' });
     const data = orgDoc.data()!;
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, ...safe } = data;
+    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, dataAddonSubscriptionId: _das, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
     return res.json(safe);
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
@@ -640,10 +661,17 @@ app.post('/saml/:orgSlug/acs', async (req: Request, res: Response) => {
       return res.status(422).json({ error: 'SAML assertion missing UID/email attribute' });
     }
 
-    const email = normalizeString((attributes as any).email) || normalizeString((attributes as any).mail);
+    // Same email lookup /saml/exchange uses for the profile, so the domain
+    // check can't be skipped by an IdP that sends e.g. emailAddress instead.
+    const { email } = extractSamlProfile(attributes);
 
-    // Enforce allowed email domains if configured
-    if (config.allowedEmailDomains && config.allowedEmailDomains.length > 0 && email) {
+    // Enforce allowed email domains if configured. Fail closed: with a domain
+    // restriction in place, an assertion without an email can't be checked.
+    if (config.allowedEmailDomains && config.allowedEmailDomains.length > 0) {
+      if (!email) {
+        console.error('SAML ACS: no email attribute but org restricts email domains', { orgId: config.orgId });
+        return res.status(403).json({ error: 'SAML assertion has no email attribute, but this organization only allows specific email domains. Ask your IT team to release the email attribute.' });
+      }
       const domain = email.split('@')[1]?.toLowerCase() ?? '';
       if (!config.allowedEmailDomains.includes(domain)) {
         console.error('SAML ACS: email domain not allowed', { domain, orgId: config.orgId });
@@ -691,27 +719,76 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
   const payload = await consumeHandoffToken(String(samlToken));
   if (!payload) return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
 
-  const { uid, orgId, attributes } = payload;
+  const { uid: idpSubject, orgId, attributes } = payload;
+  // Never use the IdP's subject as the Firebase uid directly — any org's IdP
+  // could then mint a session for any uid (another org's admin, a super
+  // admin). Namespaced per org instead.
+  const uid = ssoUid(orgId, idpSubject);
 
   try {
+    // A saved-but-not-activated SAML draft is testable through
+    // /saml/:orgSlug/test-verify, which never mints a session. Only an
+    // activated SAML org may sign people in for real.
+    const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (orgSnap.data()?.authMethod !== 'saml') {
+      return res.status(403).json({ error: "SSO isn't active for this organization yet." });
+    }
+
     const { email, displayName } = extractSamlProfile(attributes);
 
     // Embed orgId as a custom claim so AuthProvider can read it on re-launch
     const firebaseToken = await admin.auth().createCustomToken(uid, { orgId, email, displayName });
 
     // Upsert user doc in org subcollection
-    const userRef = admin.firestore()
-      .collection('orgs').doc(orgId)
-      .collection('users').doc(uid);
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const userRef = orgRef.collection('users').doc(uid);
+    let previousUids: string[] = [];
 
     await admin.firestore().runTransaction(async (tx) => {
       const existing = await tx.get(userRef);
+
+      // The first time an SSO identity signs in, it takes over this org's
+      // previous account(s) for the same person:
+      //  - the legacy SSO account keyed by the raw IdP subject, from before
+      //    uids were namespaced per org, and
+      //  - any account with the same email — SAML orgs are SSO-only, admins
+      //    included, so e.g. the founder's email/password admin login.
+      // It inherits their role, profile and org ownership, and the old
+      // memberships are removed so they can't be used to bypass SSO. The
+      // subject and email come from this org's signed IdP assertion, so
+      // they're trusted within this org only.
+      const previousAccounts: admin.firestore.DocumentSnapshot[] = [];
+      let ownerUid: string | undefined;
+      if (!existing.exists) {
+        ownerUid = (await tx.get(orgRef)).data()?.ownerUid;
+        // A subject that isn't a valid doc id never had a legacy account.
+        if (idpSubject.length <= 128 && !idpSubject.includes('/') && idpSubject !== '.' && idpSubject !== '..') {
+          const legacy = await tx.get(orgRef.collection('users').doc(idpSubject));
+          if (legacy.exists) previousAccounts.push(legacy);
+        }
+        if (email) {
+          // Member emails are stored lowercase (see backfill-lowercase-emails.js);
+          // the raw form also matches anything written before that.
+          const emails = Array.from(new Set([email, email.toLowerCase()]));
+          const matches = await tx.get(orgRef.collection('users').where('email', 'in', emails));
+          for (const d of matches.docs) {
+            if (d.id !== uid && !previousAccounts.some((p) => p.id === d.id)) previousAccounts.push(d);
+          }
+        }
+      }
+      previousUids = previousAccounts.map((d) => d.id);
+      const previousProfiles = previousAccounts.map((d) => d.data() ?? {});
+      const inheritedRole = inheritedSsoRole(previousProfiles.map((p) => p.role));
+      const carried = existing.exists ? {} : carriedOverProfile(previousProfiles);
+
       tx.set(
         userRef,
         {
+          // Profile from the account(s) taken over; anything below wins.
+          ...carried,
           uid,
           orgId,
-          email: email ?? null,
+          email: email ? email.toLowerCase() : null,
           // Only write a name the IdP actually sent, so a missing attribute
           // doesn't erase a name the user entered on their profile.
           ...(displayName ? { displayName } : {}),
@@ -721,13 +798,38 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
           ...(existing.exists
             ? {}
             : {
-                role: 'student', // SAML users start as student; admin can promote
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                // SAML users start as student (admin can promote) unless they
+                // inherit a role from a pre-SSO account above.
+                role: inheritedRole ?? 'student',
+                createdAt: carried.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
+                ...(previousUids.length > 0 ? { ssoLinkedFrom: previousUids } : {}),
               }),
         },
         { merge: true },
       );
+
+      if (previousUids.length > 0) {
+        previousAccounts.forEach((d) => tx.delete(d.ref));
+        tx.update(orgRef, {
+          adminUids: admin.firestore.FieldValue.arrayRemove(...previousUids),
+          ...(ownerUid && previousUids.includes(ownerUid) ? { ownerUid: uid } : {}),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        if (inheritedRole === 'admin') {
+          tx.update(orgRef, { adminUids: admin.firestore.FieldValue.arrayUnion(uid) });
+        }
+        console.log(`[saml/exchange] SSO uid=${uid} took over account(s) ${previousUids.join(', ')} in org ${orgId} (role=${inheritedRole ?? 'student'})`);
+      }
     });
+
+    if (previousUids.length > 0) {
+      // Best-effort and off the sign-in path: a failure only leaves old
+      // history under the old uid, and the user doc's ssoLinkedFrom records
+      // what to re-run.
+      reassignMemberHistory(orgId, previousUids, uid).catch((e) =>
+        console.error(`[saml/exchange] history reassignment failed for org ${orgId} ${previousUids.join(', ')} → ${uid}:`, e),
+      );
+    }
 
     return res.json({ firebaseToken });
   } catch (e) {
@@ -735,6 +837,50 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Failed to mint Firebase token.' });
   }
 });
+
+// Points a member's history at their new uid after /saml/exchange took over
+// their previous account(s), so ride stats, shift history and announcements
+// stay attributed to them. Idempotent — safe to re-run with the same uids.
+const MEMBER_HISTORY_FIELDS: Record<string, string[]> = {
+  stopRequests: ['studentUid', 'driverUid'],
+  feedback: ['studentUid'],
+  driverSessions: ['driverUid'],
+  boardingCounts: ['driverUid'],
+  announcements: ['createdBy', 'deactivatedBy'],
+};
+
+async function reassignMemberHistory(orgId: string, fromUids: string[], toUid: string): Promise<void> {
+  const db = admin.firestore();
+  const orgRef = db.collection('orgs').doc(orgId);
+
+  for (const fromUid of fromUids) {
+    for (const [collection, fields] of Object.entries(MEMBER_HISTORY_FIELDS)) {
+      for (const field of fields) {
+        const snap = await orgRef.collection(collection).where(field, '==', fromUid).get();
+        for (let i = 0; i < snap.docs.length; i += 450) {
+          const batch = db.batch();
+          snap.docs.slice(i, i + 450).forEach((d) => batch.update(d.ref, { [field]: toUid }));
+          await batch.commit();
+        }
+      }
+    }
+
+    // Keep the name others see, unless the new uid already wrote its own.
+    const oldPublic = orgRef.collection('publicUsers').doc(fromUid);
+    const [oldPublicSnap, newPublicSnap] = await Promise.all([
+      oldPublic.get(),
+      orgRef.collection('publicUsers').doc(toUid).get(),
+    ]);
+    if (oldPublicSnap.exists) {
+      if (!newPublicSnap.exists) await newPublicSnap.ref.set(oldPublicSnap.data()!);
+      await oldPublic.delete();
+    }
+
+    // A bus doc is live position state for the old session, not history.
+    await orgRef.collection('buses').doc(fromUid).delete();
+  }
+  console.log(`[saml/exchange] reassigned history in org ${orgId}: ${fromUids.join(', ')} → ${toUid}`);
+}
 
 // Lets an admin prove a draft SAML config actually works — a real SP-initiated
 // round trip through startSamlLogin() — without the two side effects a real
@@ -951,10 +1097,11 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     // Phone-auth orgs (K-12) use SMS OTP for parents — email registration is
     // not available. Admins sign in with existing email accounts, not new ones.
-    if (org.authMethod === 'phone') {
-      return res.status(403).json({
-        error: 'This organization uses phone sign-in. Please use the phone sign-in option to access the app.',
-      });
+    // SAML orgs are SSO-only — everyone, admins included, comes through the
+    // IdP, or this endpoint would be an SSO bypass.
+    const registrationError = emailRegistrationRejection(org.authMethod);
+    if (registrationError) {
+      return res.status(403).json({ error: registrationError });
     }
 
     // Enforce allowed email domains if the org has configured them.
@@ -968,9 +1115,8 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       }
     }
 
-    // Check if a Firebase Auth user already exists for this email.
-    // This happens when Firestore data is wiped but Auth users are not — the email
-    // would otherwise be permanently blocked from re-registering.
+    // Check if a Firebase Auth user already exists for this email — e.g. the
+    // person is already in another org, or Firestore was wiped but Auth wasn't.
     let authUser: admin.auth.UserRecord;
     let isRecovery = false;
     try {
@@ -983,15 +1129,19 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       if (existingProfile.exists) {
         return res.status(409).json({ error: 'An account with this email already exists' });
       }
-      // Orphaned auth user (no org profile) — update password, reset emailVerified so the
-      // new signup must re-confirm ownership of the address.
-      await admin.auth().updateUser(authUser.uid, {
-        password: password as string,
-        displayName: displayName as string | undefined,
-        emailVerified: false,
-      });
+      // Never take over an existing login by overwriting its password — that
+      // let anyone hijack any account (super admins included) just by
+      // "registering" its email in a second org. To add this org to an
+      // existing account, the client must sign in to it first and send its
+      // ID token, proving ownership.
+      if ((await bearerUid(req)) !== authUser.uid) {
+        return res.status(409).json({
+          error: 'An account with this email already exists. Enter its password to add this organization to it.',
+          code: 'account_exists',
+        });
+      }
       isRecovery = true;
-      console.log(`[register] Recovering orphaned auth user uid=${authUser.uid} for orgId=${orgId}`);
+      console.log(`[register] Adding existing auth user uid=${authUser.uid} to orgId=${orgId}`);
     } catch (lookupErr: any) {
       if (lookupErr?.code !== 'auth/user-not-found') throw lookupErr;
       // Normal path — create a fresh auth user
@@ -1008,7 +1158,12 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     try {
       console.log(`[register] Writing user doc → orgs/${orgId}/users/${authUser.uid}`);
+      // Founder admin only for an org that has no owner yet. The email isn't
+      // verified at this point, and founderEmail can be (re)set later from the
+      // super-admin panel — on an owned org that would let whoever registers
+      // the address first take the org over.
       const isFounder =
+        !org.ownerUid &&
         typeof org.founderEmail === 'string' &&
         org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
       const role = isFounder ? 'admin' : 'student';
@@ -1019,7 +1174,7 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
         .set({
           uid: authUser.uid,
           orgId,
-          email,
+          email: (email as string).trim().toLowerCase(),
           displayName: displayName ?? null,
           phone: phone ?? null,
           role,
@@ -1192,16 +1347,18 @@ app.delete('/account', requireAuth, async (req: Request, res: Response) => {
   const { orgId } = req.body as { orgId?: string };
 
   try {
+    // Checked across every org, not just the one in the body — otherwise an
+    // owner could omit orgId and leave their org with no owner.
+    const ownedOrgs = await admin.firestore().collection('orgs').where('ownerUid', '==', uid).limit(1).get();
+    if (!ownedOrgs.empty) {
+      return res.status(409).json({
+        error:
+          'As the organization owner, please cancel your subscription and delete your organization before deleting your account. Contact support@shuttler.net for help.',
+      });
+    }
+
     if (orgId) {
       const orgRef = admin.firestore().collection('orgs').doc(orgId);
-      const orgSnap = await orgRef.get();
-
-      if (orgSnap.exists && orgSnap.data()?.ownerUid === uid) {
-        return res.status(409).json({
-          error:
-            'As the organization owner, please cancel your subscription and delete your organization before deleting your account. Contact support@shuttler.net for help.',
-        });
-      }
 
       // Scrub PII from the user's stop requests. Anonymize rather than delete so
       // the org keeps aggregate ridership history (status/stop/timestamps remain).
@@ -1452,6 +1609,20 @@ app.patch(
 
 // ---- Billing ----
 
+// The org's current subscription if it's still live, else null — including
+// when the stored id no longer exists in Stripe (e.g. after an account
+// migration), so the org can simply subscribe again.
+async function retrieveLiveSubscription(subId: string | undefined): Promise<Stripe.Subscription | null> {
+  if (!subId) return null;
+  try {
+    const sub = await stripe.subscriptions.retrieve(subId);
+    return isLiveSubscription(sub.status) ? sub : null;
+  } catch (e: any) {
+    if ((e?.code ?? e?.raw?.code) === 'resource_missing') return null;
+    throw e;
+  }
+}
+
 // The client only ever sends 'shuttler://billing' as returnUrl, but it's
 // client-supplied and gets embedded directly into Stripe's success/cancel/
 // return URLs — whitelist the scheme so a tampered request can't redirect a
@@ -1466,6 +1637,7 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
   if (!isAllowedReturnUrl(returnUrl)) {
     return res.status(400).json({ error: 'Invalid returnUrl' });
   }
+  let openingPlanChange = false;
 
   try {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
@@ -1477,17 +1649,52 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
       return res.status(403).json({ error: 'Not authorized' });
     }
 
+    const priceId = PLAN_PRICE_IDS[plan];
+    if (!priceId) {
+      console.error(`[billing] Missing price ID for plan "${plan}". Set STRIPE_PRICE_${plan.toUpperCase()} in Railway env vars.`);
+      return res.status(400).json({ error: `Plan "${plan}" is not configured. Please contact support.` });
+    }
+
+    // An org that already pays for a plan switches plans on that same
+    // subscription. A second checkout would create a second subscription and
+    // the old one would keep billing. The customer portal opens straight on
+    // Stripe's confirmation page for this one change — prorated, with the
+    // card on file.
+    const currentSub = await retrieveLiveSubscription(org.stripeSubscriptionId);
+    if (currentSub) {
+      const planPriceIds = Object.values(PLAN_PRICE_IDS).filter(Boolean);
+      const planItem = currentSub.items.data.find((i) => planPriceIds.includes(i.price.id));
+      if (!planItem) {
+        // A custom-priced deal set up in the Stripe dashboard (e.g. Enterprise).
+        return res.status(409).json({ error: 'Your plan was set up by the Shuttler team. Contact support@shuttler.net to change it.' });
+      }
+      if (planItem.price.id === priceId) {
+        return res.status(409).json({ error: "You're already on this plan." });
+      }
+      openingPlanChange = true;
+      const portal = await stripe.billingPortal.sessions.create({
+        customer: typeof currentSub.customer === 'string' ? currentSub.customer : currentSub.customer.id,
+        return_url: returnUrl,
+        flow_data: {
+          type: 'subscription_update_confirm',
+          subscription_update_confirm: {
+            subscription: currentSub.id,
+            items: [{ id: planItem.id, price: priceId, quantity: 1 }],
+          },
+          after_completion: {
+            type: 'redirect',
+            redirect: { return_url: `${returnUrl}?plan_changed=1` },
+          },
+        },
+      });
+      return res.json({ url: portal.url, mode: 'plan_change' });
+    }
+
     let customerId: string = org.stripeCustomerId;
     if (!customerId) {
       const customer = await stripe.customers.create({ name: org.name, metadata: { orgId } });
       customerId = customer.id;
       await admin.firestore().collection('orgs').doc(orgId).update({ stripeCustomerId: customerId });
-    }
-
-    const priceId = PLAN_PRICE_IDS[plan];
-    if (!priceId) {
-      console.error(`[billing] Missing price ID for plan "${plan}". Set STRIPE_PRICE_${plan.toUpperCase()} in Railway env vars.`);
-      return res.status(400).json({ error: `Plan "${plan}" is not configured. Please contact support.` });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -1509,6 +1716,12 @@ app.post('/billing/create-checkout-session', requireAuth, async (req: Request, r
     const message: string = e?.message ?? '';
     if (type === 'StripeAuthenticationError' || message.includes('API key')) {
       return res.status(500).json({ error: 'Payment service is misconfigured. Please contact support.' });
+    }
+    // Plan switching isn't enabled (or the plan's price isn't listed) in the
+    // Stripe customer portal settings.
+    if (openingPlanChange && type === 'StripeInvalidRequestError') {
+      console.error('[billing] Plan change portal session failed — enable "Customers can switch plans" with all plan prices in Stripe → Settings → Billing → Customer portal.');
+      return res.status(500).json({ error: "Plan changes aren't available yet. Please contact support@shuttler.net." });
     }
     // Stored stripeCustomerId no longer exists in the active Stripe account
     // (e.g. stale ID after a Stripe account migration).
@@ -1587,6 +1800,11 @@ app.post('/billing/create-addon-checkout-session', requireAuth, async (req: Requ
       return res.status(403).json({ error: 'Not authorized' });
     }
 
+    // A second add-on checkout would bill the org twice for the same thing.
+    if (org.dataAddonActive) {
+      return res.status(409).json({ error: 'Data Analytics is already active for your organization.' });
+    }
+
     if (!STRIPE_PRICE_DATA_ADDON) {
       console.error('[billing] Missing price ID for data add-on. Set STRIPE_PRICE_DATA in env vars.');
       return res.status(500).json({ error: 'Data add-on is not available. Please contact support.' });
@@ -1636,13 +1854,8 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     return res.status(400).send(`Webhook Error: ${err}`);
   }
 
-  const subscriptionEventTypes = [
-    'customer.subscription.created',
-    'customer.subscription.updated',
-    'customer.subscription.deleted',
-  ];
   const handledTypes = [
-    ...subscriptionEventTypes,
+    ...SUBSCRIPTION_EVENT_TYPES,
     'checkout.session.completed',
     'invoice.payment_failed',
   ];
@@ -1651,162 +1864,243 @@ app.post('/stripe/webhook', async (req: Request, res: Response) => {
     return res.json({ received: true });
   }
 
-  // Idempotency: skip events already processed (Stripe retries on non-2xx)
+  // Idempotency: claim the event atomically so concurrent deliveries of the
+  // same event can't both run. If handling then fails, the claim is released
+  // and a 500 makes Stripe retry — otherwise a transient error would drop
+  // the update for good.
   const eventDocRef = admin.firestore().collection('processedWebhookEvents').doc(event.id);
   try {
-    const alreadyProcessed = await eventDocRef.get();
-    if (alreadyProcessed.exists) {
-      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`);
-      return res.json({ received: true });
-    }
-    await eventDocRef.set({
+    await eventDocRef.create({
       type: event.type,
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-  } catch (idempErr) {
-    console.warn('[webhook] Could not check idempotency record — proceeding:', idempErr);
+  } catch (claimErr: any) {
+    if (claimErr?.code === 6) { // ALREADY_EXISTS
+      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`);
+      return res.json({ received: true });
+    }
+    console.warn('[webhook] Could not record idempotency claim — proceeding:', claimErr);
   }
 
   try {
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const orgId = session.metadata?.orgId;
-      const eventType: string = session.metadata?.type ?? '';
-      if (!orgId) {
-        console.warn('[webhook] checkout.session.completed missing orgId in metadata');
-        return res.json({ received: true });
-      }
-
-      // Data add-on purchase
-      if (eventType === 'data_addon') {
-        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-        const currentPlan = orgSnap.data()?.subscriptionPlan ?? 'starter';
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          dataAddonActive: true,
-          entitlements: computeEntitlements(currentPlan, true),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        console.log(`[webhook] data_addon activated for org ${orgId}`);
-        return res.json({ received: true });
-      }
-
-      const plan: string = session.metadata?.plan ?? 'starter';
-
-      // Retrieve the subscription so we get the real status
-      const subId = typeof session.subscription === 'string'
-        ? session.subscription
-        : (session.subscription as any)?.id;
-
-      if (subId) {
-        const sub = await stripe.subscriptions.retrieve(subId);
-        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-        const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          subscriptionStatus: sub.status,
-          stripeSubscriptionId: sub.id,
-          subscriptionPlan: plan,
-          entitlements: computeEntitlements(plan, dataAddonActive),
-          currentPeriodEnd: (sub as any).current_period_end
-            ? new Date((sub as any).current_period_end * 1000)
-            : null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-
-      // Confirmation email — fire and forget
-      const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
-      const orgData = orgDoc.exists ? orgDoc.data()! : {};
-      const founderEmail: string | null = session.customer_details?.email ?? orgData.founderEmail ?? null;
-      const orgName: string = orgData.name ?? orgId;
-      const PLAN_LABELS: Record<string, string> = { starter: 'Starter', campus: 'Campus', enterprise: 'Enterprise' };
-      const PLAN_AMOUNTS: Record<string, string> = { starter: '$149', campus: '$299', enterprise: 'From $499' };
-      if (founderEmail) {
-        sendEmail({
-          to: founderEmail,
-          subject: `Your Shuttler ${PLAN_LABELS[plan] ?? plan} subscription is active`,
-          html: subscriptionConfirmedTemplate({
-            contactName: session.customer_details?.name ?? founderEmail,
-            orgName,
-            planLabel: PLAN_LABELS[plan] ?? plan,
-            amount: PLAN_AMOUNTS[plan] ?? '—',
-          }),
-        }).catch((err) => console.error('[webhook] confirmation email failed:', err));
-      }
-
-    } else if (subscriptionEventTypes.includes(event.type)) {
-      const subscription = event.data.object as Stripe.Subscription;
-      const orgId = subscription.metadata?.orgId;
-      const subType: string = subscription.metadata?.type ?? '';
-      if (!orgId) {
-        console.warn(`[webhook] ${event.type} missing orgId in subscription metadata (sub: ${subscription.id})`);
-        return res.json({ received: true });
-      }
-
-      if (event.type === 'customer.subscription.deleted') {
-        if (subType === 'data_addon') {
-          const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-          const currentPlan = orgSnap.data()?.subscriptionPlan ?? 'starter';
-          await admin.firestore().collection('orgs').doc(orgId).update({
-            dataAddonActive: false,
-            entitlements: computeEntitlements(currentPlan, false),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          console.log(`[webhook] data_addon deactivated for org ${orgId}`);
-        } else {
-          // Preserve data access for an org that still pays for the add-on —
-          // the add-on is a separate subscription and isn't canceled here.
-          const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-          const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
-          await admin.firestore().collection('orgs').doc(orgId).update({
-            subscriptionStatus: 'canceled',
-            entitlements: computeEntitlements('starter', dataAddonActive),
-            limitOverrides: admin.firestore.FieldValue.delete(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        }
-      } else if (subType !== 'data_addon') {
-        const updatedPlan = subscription.metadata?.plan ?? 'starter';
-        // Negotiated vehicle cap for Enterprise deals — set maxVehicles on the
-        // subscription's metadata in the Stripe dashboard. Absent/invalid metadata
-        // clears the override so the plan-tier default applies.
-        const maxVehicles = parseInt(subscription.metadata?.maxVehicles ?? '', 10);
-        const limitOverrides = Number.isInteger(maxVehicles) && maxVehicles > 0
-          ? { maxVehicles }
-          : admin.firestore.FieldValue.delete();
-        const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
-        const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
-        await admin.firestore().collection('orgs').doc(orgId).update({
-          subscriptionStatus: subscription.status,
-          stripeSubscriptionId: subscription.id,
-          subscriptionPlan: updatedPlan,
-          limitOverrides,
-          entitlements: computeEntitlements(updatedPlan, dataAddonActive),
-          currentPeriodEnd: (subscription as any).current_period_end
-            ? new Date((subscription as any).current_period_end * 1000)
-            : null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-    } else if (event.type === 'invoice.payment_failed') {
-      const invoice = event.data.object as Stripe.Invoice;
-      const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
-      if (!subId) return res.json({ received: true });
-
-      const sub = await stripe.subscriptions.retrieve(subId);
-      const orgId = sub.metadata?.orgId;
-      if (!orgId) return res.json({ received: true });
-
-      await admin.firestore().collection('orgs').doc(orgId).update({
-        subscriptionStatus: 'past_due',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+    await handleStripeEvent(event);
+  } catch (e: any) {
+    // A subscription that no longer exists in Stripe will never resolve —
+    // retrying would just fail for days.
+    if ((e?.code ?? e?.raw?.code) === 'resource_missing') {
+      console.error(`[webhook] ${event.id} (${event.type}) references a missing Stripe object — not retrying:`, e?.message);
+      return res.json({ received: true });
     }
-  } catch (e) {
-    console.error('[webhook] handler error:', e);
+    console.error(`[webhook] handler error for ${event.id} (${event.type}) — releasing claim so Stripe retries:`, e);
+    await eventDocRef.delete().catch(() => {});
+    return res.status(500).json({ error: 'Webhook handler failed' });
   }
 
   return res.json({ received: true });
 });
+
+const SUBSCRIPTION_EVENT_TYPES = [
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+];
+
+async function handleStripeEvent(event: Stripe.Event): Promise<void> {
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const orgId = session.metadata?.orgId;
+    if (!orgId) {
+      console.warn('[webhook] checkout.session.completed missing orgId in metadata');
+      return;
+    }
+
+    const subId = typeof session.subscription === 'string'
+      ? session.subscription
+      : (session.subscription as any)?.id;
+
+    // Data add-on purchase — only turned on once its subscription is
+    // actually live (checkout can complete with payment still pending; the
+    // subscription's later update event finishes the job).
+    if (session.metadata?.type === 'data_addon') {
+      if (subId) await syncDataAddon(orgId, await stripe.subscriptions.retrieve(subId), false);
+      return;
+    }
+
+    const plan: string = session.metadata?.plan ?? 'starter';
+
+    // Retrieve the subscription so we get the real status
+    if (subId) {
+      const sub = await stripe.subscriptions.retrieve(subId);
+      const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+      if (!orgSnap.exists) {
+        console.warn(`[webhook] checkout.session.completed for missing org ${orgId}`);
+        return;
+      }
+      const dataAddonActive = orgSnap.data()?.dataAddonActive ?? false;
+      await orgSnap.ref.update({
+        subscriptionStatus: sub.status,
+        stripeSubscriptionId: sub.id,
+        subscriptionPlan: plan,
+        entitlements: computeEntitlements(plan, dataAddonActive),
+        currentPeriodEnd: (sub as any).current_period_end
+          ? new Date((sub as any).current_period_end * 1000)
+          : null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    // Confirmation email — fire and forget
+    const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
+    const orgData = orgDoc.exists ? orgDoc.data()! : {};
+    const founderEmail: string | null = session.customer_details?.email ?? orgData.founderEmail ?? null;
+    const orgName: string = orgData.name ?? orgId;
+    const PLAN_LABELS: Record<string, string> = { starter: 'Starter', campus: 'Campus', enterprise: 'Enterprise' };
+    const PLAN_AMOUNTS: Record<string, string> = { starter: '$149', campus: '$299', enterprise: 'From $499' };
+    if (founderEmail) {
+      sendEmail({
+        to: founderEmail,
+        subject: `Your Shuttler ${PLAN_LABELS[plan] ?? plan} subscription is active`,
+        html: subscriptionConfirmedTemplate({
+          contactName: session.customer_details?.name ?? founderEmail,
+          orgName,
+          planLabel: PLAN_LABELS[plan] ?? plan,
+          amount: PLAN_AMOUNTS[plan] ?? '—',
+        }),
+      }).catch((err) => console.error('[webhook] confirmation email failed:', err));
+    }
+    return;
+  }
+
+  if (SUBSCRIPTION_EVENT_TYPES.includes(event.type)) {
+    const eventSub = event.data.object as Stripe.Subscription;
+    const orgId = eventSub.metadata?.orgId;
+    if (!orgId) {
+      console.warn(`[webhook] ${event.type} missing orgId in subscription metadata (sub: ${eventSub.id})`);
+      return;
+    }
+
+    // Stripe doesn't guarantee event order, so act on the subscription's
+    // current state rather than this event's snapshot — a late "updated"
+    // event must not reactivate a subscription that's since been canceled.
+    const sub = await stripe.subscriptions.retrieve(eventSub.id);
+    const deleted = event.type === 'customer.subscription.deleted';
+
+    if (sub.metadata?.type === 'data_addon') {
+      await syncDataAddon(orgId, sub, deleted);
+    } else {
+      await syncMainSubscription(orgId, sub, deleted);
+    }
+    return;
+  }
+
+  if (event.type === 'invoice.payment_failed') {
+    const invoice = event.data.object as Stripe.Invoice;
+    const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+    if (!subId) return;
+
+    const sub = await stripe.subscriptions.retrieve(subId);
+    const orgId = sub.metadata?.orgId;
+    if (!orgId) return;
+
+    // The add-on is billed on its own subscription — its failed payment says
+    // nothing about the main plan. Its status change arrives as a
+    // customer.subscription.updated event, which syncDataAddon handles.
+    if (sub.metadata?.type === 'data_addon') return;
+
+    const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
+    if (!orgSnap.exists) return;
+    const currentSubId: string | undefined = orgSnap.data()?.stripeSubscriptionId;
+    if (currentSubId && currentSubId !== sub.id) {
+      console.log(`[webhook] payment failed on non-current subscription ${sub.id} for org ${orgId} — ignoring`);
+      return;
+    }
+
+    await orgSnap.ref.update({
+      subscriptionStatus: 'past_due',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+}
+
+// Mirrors the org's main-plan subscription onto the org doc — see
+// mainSubscriptionAction for which subscription counts as the org's.
+async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, deleted: boolean): Promise<void> {
+  const orgRef = admin.firestore().collection('orgs').doc(orgId);
+  const orgSnap = await orgRef.get();
+  if (!orgSnap.exists) {
+    console.warn(`[webhook] subscription ${sub.id} for missing org ${orgId}`);
+    return;
+  }
+  const org = orgSnap.data()!;
+
+  const action = mainSubscriptionAction(org.stripeSubscriptionId, sub, deleted);
+  if (action === 'ignore') {
+    console.log(`[webhook] subscription ${sub.id} (${sub.status}) isn't org ${orgId}'s current one (${org.stripeSubscriptionId}) — ignoring`);
+    return;
+  }
+
+  const dataAddonActive = org.dataAddonActive ?? false;
+  if (action === 'cancel') {
+    // Preserve data access for an org that still pays for the add-on —
+    // the add-on is a separate subscription and isn't canceled here.
+    await orgRef.update({
+      subscriptionStatus: 'canceled',
+      entitlements: computeEntitlements('starter', dataAddonActive),
+      limitOverrides: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return;
+  }
+
+  // From the price — a plan switched in the customer portal keeps its old metadata.plan.
+  const updatedPlan = planForSubscription(sub.items.data.map((i) => i.price.id), PLAN_PRICE_IDS, sub.metadata?.plan);
+  // Negotiated vehicle cap for Enterprise deals — set maxVehicles on the
+  // subscription's metadata in the Stripe dashboard. Absent/invalid metadata
+  // clears the override so the plan-tier default applies.
+  const maxVehicles = parseInt(sub.metadata?.maxVehicles ?? '', 10);
+  const limitOverrides = Number.isInteger(maxVehicles) && maxVehicles > 0
+    ? { maxVehicles }
+    : admin.firestore.FieldValue.delete();
+  await orgRef.update({
+    subscriptionStatus: sub.status,
+    stripeSubscriptionId: sub.id,
+    subscriptionPlan: updatedPlan,
+    limitOverrides,
+    entitlements: computeEntitlements(updatedPlan, dataAddonActive),
+    currentPeriodEnd: (sub as any).current_period_end
+      ? new Date((sub as any).current_period_end * 1000)
+      : null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+// Turns the data add-on on or off from its subscription's current state —
+// see dataAddonAction. The org's add-on subscription id is recorded so an
+// old or duplicate add-on subscription ending can't switch it off.
+async function syncDataAddon(orgId: string, sub: Stripe.Subscription, deleted: boolean): Promise<void> {
+  const orgRef = admin.firestore().collection('orgs').doc(orgId);
+  const orgSnap = await orgRef.get();
+  if (!orgSnap.exists) {
+    console.warn(`[webhook] data add-on subscription ${sub.id} for missing org ${orgId}`);
+    return;
+  }
+  const org = orgSnap.data()!;
+
+  const action = dataAddonAction(org.dataAddonSubscriptionId, sub, deleted);
+  if (action === 'ignore') {
+    console.log(`[webhook] data add-on subscription ${sub.id} (${sub.status}) for org ${orgId} — no change`);
+    return;
+  }
+
+  const active = action === 'activate';
+  await orgRef.update({
+    dataAddonActive: active,
+    dataAddonSubscriptionId: active ? sub.id : admin.firestore.FieldValue.delete(),
+    entitlements: computeEntitlements(org.subscriptionPlan ?? 'starter', active),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  console.log(`[webhook] data_addon ${active ? 'activated' : 'deactivated'} for org ${orgId} (sub ${sub.id})`);
+}
 
 // ---- Internal: approve org application ----
 
@@ -2522,10 +2816,27 @@ async function requireDriverCaller(orgId: string, uid: string, res: Response): P
  *  Reads all driver/admin users in the org and sends them a push notification.
  */
 app.post('/notifications/stop-request-created', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
   const orgId: string | undefined = (req as any).claims?.orgId;
   if (!orgId) return res.status(403).json({ error: 'orgId missing from token' });
+  if (stopRequestPushLimit(uid)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
 
   try {
+    // This pushes every driver in the org, so only a current member who
+    // actually has a pending request may trigger it.
+    if (!(await getOrgRole(orgId, uid))) {
+      return res.status(403).json({ error: 'Not a member of this org' });
+    }
+    const pending = await admin.firestore()
+      .collection('orgs').doc(orgId).collection('stopRequests')
+      .where('studentUid', '==', uid)
+      .where('status', '==', 'pending')
+      .limit(1)
+      .get();
+    if (pending.empty) return res.json({ sent: 0 });
+
     const usersSnap = await admin.firestore()
       .collection('orgs').doc(orgId).collection('users')
       .get();
@@ -2937,9 +3248,18 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
       return res.status(404).json({ error: 'Organization not found.' });
     }
 
-    const email = authUser.email ?? null;
+    const email = authUser.email?.toLowerCase() ?? null;
     const displayName = authUser.displayName ?? null;
     const orgData = orgDoc.data()!;
+
+    // The org's authMethod decides which providers may sign in — e.g. a SAML
+    // org must never accept Google/Apple, or SSO is trivially bypassed.
+    // Checked for existing members too, not just new signups.
+    const provider = (req as any).claims?.firebase?.sign_in_provider as string | undefined;
+    const providerError = socialSignInRejection(orgData.authMethod, provider);
+    if (providerError) {
+      return res.status(403).json({ error: providerError });
+    }
 
     // Domain restriction check — must happen before user doc creation.
     const allowedDomains: string[] = orgData.allowedEmailDomains ?? [];
@@ -2992,10 +3312,10 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
       // Create the user doc via Admin SDK (bypasses Firestore security
       // rules, which would otherwise block new users from creating their own doc
       // because orgIsActive() requires existing membership to read the org doc).
-      // Callers may request 'parent' role (phone auth); anything else defaults to 'student'.
+      // Phone sign-ins may request the 'parent' role; anything else defaults to 'student'.
       // 'admin' is never accepted from the client.
       const { role: requestedRole } = req.body as { role?: string };
-      const role = requestedRole === 'parent' ? 'parent' : 'student';
+      const role = requestedRole === 'parent' && provider === 'phone' ? 'parent' : 'student';
       isNew = true;
       await userRef.set({
         uid,
@@ -3048,10 +3368,12 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
   const since = new Date();
   since.setDate(since.getDate() - days);
 
-  // Verify membership
+  // Admins only — the export covers every rider's trips in the org.
   const memberDoc = await admin.firestore()
     .collection('orgs').doc(orgId).collection('users').doc(uid).get();
-  if (!memberDoc.exists) return res.status(403).json({ error: 'Not a member of this org' });
+  if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
 
   try {
     const db = admin.firestore();

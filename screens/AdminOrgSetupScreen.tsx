@@ -286,6 +286,7 @@ type SamlTestStatus = 'idle' | 'testing' | 'passed' | 'failed';
 
 function AuthTab() {
   const { org, refreshOrg } = useOrg();
+  const { user } = useAuth();
   const { primaryColor } = useOrgTheme();
   const [authMethod, setAuthMethod] = useState<AuthMethod>(
     (org?.authMethod as AuthMethod) ?? 'email',
@@ -448,7 +449,7 @@ function AuthTab() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? 'Failed to activate SAML');
       await refreshOrg();
-      showToast('SAML is now live — all users will sign in via your IdP.', 'success');
+      showToast('SAML is now live — everyone, admins included, will sign in via your IdP.', 'success');
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to activate.', 'error');
     } finally {
@@ -458,15 +459,25 @@ function AuthTab() {
 
   const handleActivate = useCallback(() => {
     if (!org) return;
+    // SSO is the only way in once it's live, admins included. Admin access
+    // carries over to the SSO account with the same email (see
+    // /saml/exchange), so warn when the test login used a different one.
+    const adminEmail = user?.email ?? null;
+    const emailMismatch = !!testEmail && !!adminEmail && testEmail.toLowerCase() !== adminEmail.toLowerCase();
     Alert.alert(
       'Activate SAML sign-in?',
-      `This changes how everyone in ${org.name} signs in — they'll use your IdP instead of email/password from now on. Make sure your IT team has confirmed the test login above.`,
+      `This changes how everyone in ${org.name} signs in — they'll use your IdP from now on, admins included. Email/password sign-in will no longer be available, and you'll be signed out so you can sign back in with SSO.\n\n`
+        + 'Admins and drivers keep their role the first time they sign in with an SSO account that has the same email as their Shuttler account.'
+        + (emailMismatch
+          ? `\n\nHeads up: the test login used ${testEmail}, which doesn't match your Shuttler email (${adminEmail}), so your admin access won't carry over automatically. Contact support@shuttler.net before activating.`
+          : '')
+        + '\n\nMake sure your IT team has confirmed the test login above.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Activate', style: 'default', onPress: activateSaml },
       ],
     );
-  }, [org, activateSaml]);
+  }, [org, activateSaml, user?.email, testEmail]);
 
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
@@ -492,7 +503,7 @@ function AuthTab() {
                 ? 'Users sign up with an email and password, or continue with Google or Apple. No setup needed — works right away.'
                 : m === 'phone'
                 ? 'Parents sign in with a texted code — no email needed. They link their child from inside the app, so students don’t need their own account.'
-                : 'Users sign in through your school’s identity provider (Okta, Azure AD, Shibboleth, etc). Requires the IdP details below, then a passing test, before it goes live.'}
+                : 'Everyone, admins included, signs in through your school’s identity provider (Okta, Azure AD, Shibboleth, etc). Requires the IdP details below, then a passing test, before it goes live.'}
             </Text>
           </View>
         </TouchableOpacity>
@@ -2652,31 +2663,43 @@ function BillingTab() {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ orgId: org.orgId, plan, returnUrl: 'shuttler://billing' }),
         });
-        const { url, error } = await res.json();
+        // mode 'plan_change': the org already has a subscription, so the
+        // backend opens Stripe's confirm-plan-change page instead of a new
+        // checkout (which would bill a second subscription).
+        const { url, error, mode } = await res.json();
         if (error) throw new Error(error);
+        const isPlanChange = mode === 'plan_change';
 
         browserOpenRef.current = true;
         const result = await openExternalCheckout(
           url,
-          "You'll complete your plan upgrade on shuttler.net in Safari, then return to Shuttler automatically.",
+          isPlanChange
+            ? "You'll confirm your plan change with Stripe in Safari — it uses the card on file and shows the prorated amount — then return to Shuttler automatically."
+            : "You'll complete your plan upgrade on shuttler.net in Safari, then return to Shuttler automatically.",
         );
         const confirmed = finishBrowserSession();
 
         // Browser closed (no redirect) — user dismissed without touching Stripe.
         if (result.type !== 'success') return;
 
-        // Stripe cancel button redirects to cancel_url (shuttler://billing, no session_id).
-        // Stripe success redirects to success_url (shuttler://billing?session_id=...).
+        // Stripe cancel/back redirects to shuttler://billing with no params.
+        // Success redirects to shuttler://billing?session_id=... (checkout)
+        // or shuttler://billing?plan_changed=1 (plan change).
         const redirectedUrl = (result as any).url as string | undefined;
-        if (!redirectedUrl?.includes('session_id=')) {
-          if (!confirmed) showToast("Checkout canceled — you haven't been charged.", 'info');
+        if (!redirectedUrl?.includes('session_id=') && !redirectedUrl?.includes('plan_changed=')) {
+          if (!confirmed) {
+            showToast(
+              isPlanChange ? 'Plan change canceled — your plan is unchanged.' : "Checkout canceled — you haven't been charged.",
+              'info',
+            );
+          }
           return;
         }
 
         // Payment confirmed — unlock the UI immediately.
         // The Firestore live listener fires the confirmation sheet as soon as
         // the webhook updates the org doc. Background polls are a safety net.
-        if (!confirmed) showToast('Payment received — activating your plan…', 'success');
+        if (!confirmed) showToast(isPlanChange ? 'Plan change confirmed — updating your plan…' : 'Payment received — activating your plan…', 'success');
         void refreshOrg();
         setTimeout(() => void refreshOrg(), 3000);
         setTimeout(() => void refreshOrg(), 7000);
@@ -2926,7 +2949,7 @@ function BillingTab() {
               </TouchableOpacity>
             </View>
             <AppButton
-              label={isCurrent ? 'Active' : (!isApproved ? 'Pending' : (isLoading ? '…' : 'Subscribe'))}
+              label={isCurrent ? 'Active' : (!isApproved ? 'Pending' : (isLoading ? '…' : (isActive ? 'Switch' : 'Subscribe')))}
               onPress={() => !isCurrent && isApproved && openCheckout(plan.key)}
               disabled={isLoading || isCurrent || !isApproved}
               style={styles.planButton}
@@ -3001,8 +3024,8 @@ function BillingTab() {
         actionLabel={
           detailPlan === 'data_addon' ? 'Add Data Analytics — $49/mo'
           : detailPlan === 'enterprise' ? 'Contact Us'
-          : detailPlan === 'campus' ? 'Subscribe — $299/mo'
-          : 'Subscribe — $149/mo'
+          : detailPlan === 'campus' ? `${isActive ? 'Switch to Campus' : 'Subscribe'} — $299/mo`
+          : `${isActive ? 'Switch to Starter' : 'Subscribe'} — $149/mo`
         }
         actionDisabled={
           isLoading || !isApproved ||
