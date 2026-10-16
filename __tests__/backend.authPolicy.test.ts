@@ -2,7 +2,7 @@
 // Tests for which sign-in providers each org authMethod accepts
 // (POST /auth/social/complete and POST /auth/email/register).
 
-import { emailRegistrationRejection, socialSignInRejection } from '../backend/authPolicy';
+import { emailRegistrationRejection, inheritedSsoRole, socialSignInRejection } from '../backend/authPolicy';
 
 describe('socialSignInRejection', () => {
   it('rejects Google, Apple and phone for SAML orgs', () => {
@@ -42,16 +42,33 @@ describe('socialSignInRejection', () => {
 
 describe('emailRegistrationRejection', () => {
   it('allows registration for email orgs', () => {
-    expect(emailRegistrationRejection('email', false)).toBeNull();
-    expect(emailRegistrationRejection(undefined, false)).toBeNull();
+    expect(emailRegistrationRejection('email')).toBeNull();
+    expect(emailRegistrationRejection(undefined)).toBeNull();
   });
 
   it('blocks registration for phone orgs', () => {
-    expect(emailRegistrationRejection('phone', false)).not.toBeNull();
+    expect(emailRegistrationRejection('phone')).not.toBeNull();
   });
 
-  it('blocks non-founders in SAML orgs but lets the founder create the admin account', () => {
-    expect(emailRegistrationRejection('saml', false)).not.toBeNull();
-    expect(emailRegistrationRejection('saml', true)).toBeNull();
+  it('blocks all registration in SAML orgs, admins included', () => {
+    expect(emailRegistrationRejection('saml')).not.toBeNull();
+  });
+});
+
+describe('inheritedSsoRole', () => {
+  it('carries admin over, preferring it to driver', () => {
+    expect(inheritedSsoRole(['admin'])).toBe('admin');
+    expect(inheritedSsoRole(['driver', 'admin'])).toBe('admin');
+  });
+
+  it('carries driver over', () => {
+    expect(inheritedSsoRole(['student', 'driver'])).toBe('driver');
+  });
+
+  it('carries nothing over from students, parents or no previous account', () => {
+    expect(inheritedSsoRole(['student'])).toBeNull();
+    expect(inheritedSsoRole(['parent'])).toBeNull();
+    expect(inheritedSsoRole([undefined])).toBeNull();
+    expect(inheritedSsoRole([])).toBeNull();
   });
 });

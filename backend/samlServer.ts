@@ -30,7 +30,7 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
-import { emailRegistrationRejection, socialSignInRejection } from './authPolicy';
+import { emailRegistrationRejection, inheritedSsoRole, socialSignInRejection } from './authPolicy';
 
 /**
  * Shuttler multi-tenant backend
@@ -317,6 +317,17 @@ async function requireAuth(req: Request, res: Response, next: Function) {
   }
 }
 
+// Optional auth: the verified uid when a valid Bearer token is sent, else null.
+async function bearerUid(req: Request): Promise<string | null> {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) return null;
+  try {
+    return (await admin.auth().verifyIdToken(header.slice(7))).uid;
+  } catch {
+    return null;
+  }
+}
+
 // Shared by requireSuperAdmin and the super-admin bypass in requireOrgAdmin /
 // the org-delete owner check below, so there's one place that defines what
 // "is a super admin" means.
@@ -574,7 +585,7 @@ app.get('/orgs/by-id/:orgId', async (req: Request, res: Response) => {
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
     const data = orgDoc.data()!;
     // Strip sensitive fields before returning to clients
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, ...safe } = data;
+    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
     return res.json(safe);
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
@@ -589,7 +600,7 @@ app.get('/orgs/:slug', async (req: Request, res: Response) => {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org document missing' });
     const data = orgDoc.data()!;
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, ...safe } = data;
+    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
     return res.json(safe);
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
@@ -701,12 +712,33 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
     const firebaseToken = await admin.auth().createCustomToken(uid, { orgId, email, displayName });
 
     // Upsert user doc in org subcollection
-    const userRef = admin.firestore()
-      .collection('orgs').doc(orgId)
-      .collection('users').doc(uid);
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const userRef = orgRef.collection('users').doc(uid);
 
     await admin.firestore().runTransaction(async (tx) => {
       const existing = await tx.get(userRef);
+
+      // SAML orgs are SSO-only, admins included. The first time an SSO
+      // identity signs in, it takes over any pre-SSO account in this org with
+      // the same email (e.g. the founder's email/password admin login): it
+      // inherits that account's role and org ownership, and the old membership
+      // is removed so its password login can't be used to bypass SSO. The
+      // email comes from this org's signed IdP assertion, so it's trusted
+      // within this org only.
+      let previousAccounts: admin.firestore.QueryDocumentSnapshot[] = [];
+      let ownerUid: string | undefined;
+      if (!existing.exists && email) {
+        const orgSnap = await tx.get(orgRef);
+        if (orgSnap.data()?.authMethod === 'saml') {
+          ownerUid = orgSnap.data()?.ownerUid;
+          const emails = Array.from(new Set([email, email.toLowerCase()]));
+          const matches = await tx.get(orgRef.collection('users').where('email', 'in', emails));
+          previousAccounts = matches.docs.filter((d) => d.id !== uid);
+        }
+      }
+      const previousUids = previousAccounts.map((d) => d.id);
+      const inheritedRole = inheritedSsoRole(previousAccounts.map((d) => d.data().role));
+
       tx.set(
         userRef,
         {
@@ -722,12 +754,28 @@ app.post('/saml/exchange', async (req: Request, res: Response) => {
           ...(existing.exists
             ? {}
             : {
-                role: 'student', // SAML users start as student; admin can promote
+                // SAML users start as student (admin can promote) unless they
+                // inherit a role from a pre-SSO account above.
+                role: inheritedRole ?? 'student',
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                ...(previousUids.length > 0 ? { ssoLinkedFrom: previousUids } : {}),
               }),
         },
         { merge: true },
       );
+
+      if (previousUids.length > 0) {
+        previousAccounts.forEach((d) => tx.delete(d.ref));
+        tx.update(orgRef, {
+          adminUids: admin.firestore.FieldValue.arrayRemove(...previousUids),
+          ...(ownerUid && previousUids.includes(ownerUid) ? { ownerUid: uid } : {}),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        if (inheritedRole === 'admin') {
+          tx.update(orgRef, { adminUids: admin.firestore.FieldValue.arrayUnion(uid) });
+        }
+        console.log(`[saml/exchange] SSO uid=${uid} took over pre-SSO account(s) ${previousUids.join(', ')} in org ${orgId} (role=${inheritedRole ?? 'student'})`);
+      }
     });
 
     return res.json({ firebaseToken });
@@ -950,15 +998,11 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Org subscription is not active' });
     }
 
-    const isFounder =
-      typeof org.founderEmail === 'string' &&
-      org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
-
     // Phone-auth orgs (K-12) use SMS OTP for parents — email registration is
     // not available. Admins sign in with existing email accounts, not new ones.
-    // SAML orgs only take the founder's admin account; everyone else must come
-    // through the IdP, or this endpoint would be an SSO bypass.
-    const registrationError = emailRegistrationRejection(org.authMethod, isFounder);
+    // SAML orgs are SSO-only — everyone, admins included, comes through the
+    // IdP, or this endpoint would be an SSO bypass.
+    const registrationError = emailRegistrationRejection(org.authMethod);
     if (registrationError) {
       return res.status(403).json({ error: registrationError });
     }
@@ -974,9 +1018,8 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       }
     }
 
-    // Check if a Firebase Auth user already exists for this email.
-    // This happens when Firestore data is wiped but Auth users are not — the email
-    // would otherwise be permanently blocked from re-registering.
+    // Check if a Firebase Auth user already exists for this email — e.g. the
+    // person is already in another org, or Firestore was wiped but Auth wasn't.
     let authUser: admin.auth.UserRecord;
     let isRecovery = false;
     try {
@@ -989,15 +1032,19 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
       if (existingProfile.exists) {
         return res.status(409).json({ error: 'An account with this email already exists' });
       }
-      // Orphaned auth user (no org profile) — update password, reset emailVerified so the
-      // new signup must re-confirm ownership of the address.
-      await admin.auth().updateUser(authUser.uid, {
-        password: password as string,
-        displayName: displayName as string | undefined,
-        emailVerified: false,
-      });
+      // Never take over an existing login by overwriting its password — that
+      // let anyone hijack any account (super admins included) just by
+      // "registering" its email in a second org. To add this org to an
+      // existing account, the client must sign in to it first and send its
+      // ID token, proving ownership.
+      if ((await bearerUid(req)) !== authUser.uid) {
+        return res.status(409).json({
+          error: 'An account with this email already exists. Enter its password to add this organization to it.',
+          code: 'account_exists',
+        });
+      }
       isRecovery = true;
-      console.log(`[register] Recovering orphaned auth user uid=${authUser.uid} for orgId=${orgId}`);
+      console.log(`[register] Adding existing auth user uid=${authUser.uid} to orgId=${orgId}`);
     } catch (lookupErr: any) {
       if (lookupErr?.code !== 'auth/user-not-found') throw lookupErr;
       // Normal path — create a fresh auth user
@@ -1014,6 +1061,9 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     try {
       console.log(`[register] Writing user doc → orgs/${orgId}/users/${authUser.uid}`);
+      const isFounder =
+        typeof org.founderEmail === 'string' &&
+        org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
       const role = isFounder ? 'admin' : 'student';
 
       await admin.firestore()
@@ -3060,10 +3110,12 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
   const since = new Date();
   since.setDate(since.getDate() - days);
 
-  // Verify membership
+  // Admins only — the export covers every rider's trips in the org.
   const memberDoc = await admin.firestore()
     .collection('orgs').doc(orgId).collection('users').doc(uid).get();
-  if (!memberDoc.exists) return res.status(403).json({ error: 'Not a member of this org' });
+  if (!memberDoc.exists || memberDoc.data()?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
 
   try {
     const db = admin.firestore();

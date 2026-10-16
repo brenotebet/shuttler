@@ -4,10 +4,10 @@
 //
 //   email / google / email+google → email/password, Google, Apple
 //   phone                         → SMS (parents) + email/password admin escape hatch
-//   saml                          → IdP via /saml/exchange + email/password admin escape hatch
+//   saml                          → IdP via /saml/exchange only (admins included)
 //
-// The email/password escape hatch is enforced on the client (only admins may
-// use it) — Firebase password sign-in never touches this server.
+// The phone-org email/password escape hatch is enforced on the client (only
+// admins may use it) — Firebase password sign-in never touches this server.
 
 const SOCIAL_PROVIDERS = ['google.com', 'apple.com'];
 const SOCIAL_AUTH_METHODS = ['email', 'google', 'email+google'];
@@ -43,18 +43,30 @@ export function socialSignInRejection(
 /**
  * Returns an error message when a new email/password account may not be
  * registered in an org with `authMethod`, or null when it's allowed. SAML orgs
- * only accept the founder's account (their admin escape hatch) — everyone else
- * must come through the IdP. Used by POST /auth/email/register.
+ * are SSO-only — everyone, admins included, must come through the IdP.
+ * Used by POST /auth/email/register.
  */
 export function emailRegistrationRejection(
   authMethod: string | null | undefined,
-  isFounder: boolean,
 ): string | null {
   if (authMethod === 'phone') {
     return 'This organization uses phone sign-in. Please use the phone sign-in option to access the app.';
   }
-  if (authMethod === 'saml' && !isFounder) {
+  if (authMethod === 'saml') {
     return "This organization signs in through its SSO provider. Use \"Continue with SSO\" instead.";
   }
+  return null;
+}
+
+/**
+ * The role a first-time SSO identity inherits from the org's pre-SSO accounts
+ * with the same email (e.g. the founder's email/password admin login), or
+ * null when none of them held an elevated role. SAML orgs are SSO-only, so
+ * without this an admin would lose their access the moment SSO went live.
+ * Used by POST /saml/exchange.
+ */
+export function inheritedSsoRole(previousRoles: unknown[]): 'admin' | 'driver' | null {
+  if (previousRoles.includes('admin')) return 'admin';
+  if (previousRoles.includes('driver')) return 'driver';
   return null;
 }

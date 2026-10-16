@@ -85,12 +85,11 @@ service cloud.firestore {
       // Users read their own doc; admins can read all user docs (needed for dashboard).
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin(orgId));
 
-      // Create own profile on first login (role must be student; elevated roles only via backend).
-      allow create: if signedIn()
-        && request.auth.uid == uid
-        && request.resource.data.orgId == orgId
-        && request.resource.data.role == 'student'
-        && orgIsActive(orgId);
+      // Membership is created only by the backend (Admin SDK), which enforces
+      // the org's authMethod, allowed email domains and approval gates. A
+      // client-side create would let any Firebase account join any org,
+      // bypassing SSO entirely.
+      allow create: if false;
 
       // Update own profile but never change role or orgId.
       // Admins may also set defaultRouteId on any member's doc.
@@ -114,9 +113,10 @@ service cloud.firestore {
       // Any member of the same org can read (e.g. drivers see student names).
       allow read: if isMember(orgId);
 
-      // Users manage their own public profile.
+      // Members manage their own public profile.
       allow create, update: if signedIn()
         && request.auth.uid == uid
+        && isMember(orgId)
         && orgIsActive(orgId);
 
       allow delete: if false;
@@ -143,8 +143,9 @@ service cloud.firestore {
         || resource.data.studentUid == request.auth.uid
       );
 
-      // Student or parent creates their own request.
+      // Student or parent creates their own request — members only.
       allow create: if signedIn()
+        && isMember(orgId)
         && request.resource.data.studentUid == request.auth.uid
         && request.resource.data.status in ['pending', 'accepted']
         && request.resource.data.orgId == orgId

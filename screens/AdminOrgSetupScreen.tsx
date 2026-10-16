@@ -286,6 +286,7 @@ type SamlTestStatus = 'idle' | 'testing' | 'passed' | 'failed';
 
 function AuthTab() {
   const { org, refreshOrg } = useOrg();
+  const { user } = useAuth();
   const { primaryColor } = useOrgTheme();
   const [authMethod, setAuthMethod] = useState<AuthMethod>(
     (org?.authMethod as AuthMethod) ?? 'email',
@@ -448,7 +449,7 @@ function AuthTab() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? 'Failed to activate SAML');
       await refreshOrg();
-      showToast('SAML is now live — all users will sign in via your IdP.', 'success');
+      showToast('SAML is now live — everyone, admins included, will sign in via your IdP.', 'success');
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to activate.', 'error');
     } finally {
@@ -458,15 +459,25 @@ function AuthTab() {
 
   const handleActivate = useCallback(() => {
     if (!org) return;
+    // SSO is the only way in once it's live, admins included. Admin access
+    // carries over to the SSO account with the same email (see
+    // /saml/exchange), so warn when the test login used a different one.
+    const adminEmail = user?.email ?? null;
+    const emailMismatch = !!testEmail && !!adminEmail && testEmail.toLowerCase() !== adminEmail.toLowerCase();
     Alert.alert(
       'Activate SAML sign-in?',
-      `This changes how everyone in ${org.name} signs in — they'll use your IdP instead of email/password from now on. Make sure your IT team has confirmed the test login above.`,
+      `This changes how everyone in ${org.name} signs in — they'll use your IdP from now on, admins included. Email/password sign-in will no longer be available.\n\n`
+        + 'Admins and drivers keep their role the first time they sign in with an SSO account that has the same email as their Shuttler account.'
+        + (emailMismatch
+          ? `\n\nHeads up: the test login used ${testEmail}, which doesn't match your Shuttler email (${adminEmail}), so your admin access won't carry over automatically. Contact support@shuttler.net before activating.`
+          : '')
+        + '\n\nMake sure your IT team has confirmed the test login above.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Activate', style: 'default', onPress: activateSaml },
       ],
     );
-  }, [org, activateSaml]);
+  }, [org, activateSaml, user?.email, testEmail]);
 
   return (
     <ScrollView contentContainerStyle={styles.tabContent}>
@@ -492,7 +503,7 @@ function AuthTab() {
                 ? 'Users sign up with an email and password, or continue with Google or Apple. No setup needed — works right away.'
                 : m === 'phone'
                 ? 'Parents sign in with a texted code — no email needed. They link their child from inside the app, so students don’t need their own account.'
-                : 'Users sign in through your school’s identity provider (Okta, Azure AD, Shibboleth, etc). Requires the IdP details below, then a passing test, before it goes live.'}
+                : 'Everyone, admins included, signs in through your school’s identity provider (Okta, Azure AD, Shibboleth, etc). Requires the IdP details below, then a passing test, before it goes live.'}
             </Text>
           </View>
         </TouchableOpacity>

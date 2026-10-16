@@ -473,17 +473,11 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
         // permission-denied — not a member of this org
       }
 
-      // The SSO / phone-org email escape hatch is for admins only — a student
-      // with a leftover email/password account must not use it to skip the
-      // org's real sign-in method.
+      // The phone-org email escape hatch is for admins only — a member with a
+      // leftover email/password account must not use it to skip phone sign-in.
       if (memberExists && adminOnly && memberRole !== 'admin') {
         await signOut(auth);
-        showAlert(
-          org?.authMethod === 'saml'
-            ? 'Email sign-in is only available to administrators. Please use "Continue with SSO".'
-            : 'Email sign-in is only available to administrators. Please use phone sign-in.',
-          'Admins Only',
-        );
+        showAlert('Email sign-in is only available to administrators. Please use phone sign-in.', 'Admins Only');
         return;
       }
 
@@ -520,7 +514,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
     } finally {
       setIsSubmitting(false);
     }
-  }, [email, password, orgId, adminOnly, org?.authMethod]);
+  }, [email, password, orgId, adminOnly]);
 
   const handleSignUp = useCallback(async () => {
     setFormError(null);
@@ -531,10 +525,14 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
     }
     setIsSubmitting(true);
     const displayName = `${firstName.trim()} ${lastName.trim()}`;
+    let joiningExistingAccount = false;
     try {
-      const res = await fetch(`${SHUTTLER_API_URL}/auth/email/register`, {
+      const register = (idToken?: string) => fetch(`${SHUTTLER_API_URL}/auth/email/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify({
           orgSlug,
           email: email.trim(),
@@ -544,7 +542,34 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
           agreedToTerms: true,
         }),
       });
-      const body = await res.json();
+      let res = await register();
+      let body = await res.json();
+
+      if (res.status === 409 && body?.code === 'account_exists') {
+        // This email already has a login (e.g. from another org). The backend
+        // won't touch an existing account without proof of ownership, so sign
+        // in with the entered password and retry with the ID token — that adds
+        // this org to the existing account.
+        joiningExistingAccount = true;
+        // Keep AuthProvider from evicting the user before the membership doc exists.
+        markSocialSignInPending();
+        const cred = await signInWithEmailAndPassword(auth, email.trim(), password).catch(() => null);
+        if (!cred) {
+          setFormError('An account with that email already exists. Enter its existing password to add this organization, or use "Forgot password?" on the Sign In tab.');
+          return;
+        }
+        res = await register(await cred.user.getIdToken());
+        body = await res.json();
+        if (!res.ok) {
+          await signOut(auth).catch(() => {});
+          throw new Error(body?.error ?? 'Registration failed.');
+        }
+        // Refresh so the token carries the orgId claim the backend just set.
+        await cred.user.getIdToken(true);
+        showToast(org?.name ? `Added to ${org.name}!` : 'Added to organization!', 'success');
+        return;
+      }
+
       if (!res.ok) throw new Error(body?.error ?? 'Registration failed.');
       await signInWithEmailAndPassword(auth, email.trim(), password);
       if (auth.currentUser) {
@@ -563,9 +588,10 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
           : e?.message ?? 'Registration failed. Please try again.';
       setFormError(msg);
     } finally {
+      if (joiningExistingAccount) clearSocialSignInPending();
       setIsSubmitting(false);
     }
-  }, [email, password, firstName, lastName, phone, confirmPassword, agreedToTerms, orgSlug, mode]);
+  }, [email, password, firstName, lastName, phone, confirmPassword, agreedToTerms, orgSlug, mode, org?.name]);
 
   const handleForgotPassword = useCallback(async () => {
     const trimmed = email.trim();
@@ -601,9 +627,7 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
         <View style={styles.founderBanner}>
           <Icon name="admin-panel-settings" size={18} color="#1d4ed8" />
           <Text style={styles.founderBannerText}>
-            {org?.authMethod === 'saml'
-              ? 'Admin sign-in only — everyone else signs in through your SSO provider'
-              : 'Admin sign-in only — parents use phone sign-in'}
+            Admin sign-in only — parents use phone sign-in
           </Text>
         </View>
       ) : initialEmail ? (
@@ -760,8 +784,8 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
       )}
 
       {!adminOnly && (() => {
-        // Google/Apple are never offered on the admin-only escape hatch for
-        // SSO / phone orgs — the backend rejects them for those orgs anyway.
+        // Google/Apple are never offered on the phone-org admin-only escape
+        // hatch — the backend rejects them for phone orgs anyway.
         // Apple availability must never depend on the Google config — if the
         // Google client ID is missing from a build, hiding Apple with it would
         // violate App Review guideline 4.8 (Sign in with Apple parity).
@@ -985,31 +1009,17 @@ export default function AuthScreen() {
       );
     }
 
-    // Same escape hatch for SAML orgs — a misconfigured or unreachable IdP
-    // must never fully strand an admin who still has a working email/password
-    // login. Without this, org.authMethod === 'saml' was a dead end: SamlPanel
-    // was the only thing ever rendered for it.
-    if (org.authMethod === 'saml' && adminOverride) {
-      return (
-        <>
-          <EmailPanel orgSlug={org.slug} orgId={org.orgId} initialEmail={initialEmail} adminOnly />
-          <TouchableOpacity onPress={() => setAdminOverride(false)} style={styles.adminOverrideLink}>
-            <Text style={[styles.adminOverrideLinkText, { color: primaryColor }]}>← Back to SSO sign-in</Text>
-          </TouchableOpacity>
-        </>
-      );
-    }
-
     switch (org.authMethod) {
       case 'saml':
+        // SSO-only, admins included — no email/password escape hatch. If the
+        // IdP is misconfigured, Shuttler support fixes or resets the org's
+        // auth config from the super-admin panel.
         return (
           <>
             <SamlPanel orgSlug={org.slug} />
-            <TouchableOpacity onPress={() => setAdminOverride(true)} style={styles.samlAdminOverrideLink}>
-              <Text style={[styles.samlAdminOverrideLinkText, { color: primaryColor }]}>
-                Trouble with SSO? Sign in with email instead →
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.samlHelpText}>
+              Trouble signing in? Contact your organization's IT help desk.
+            </Text>
           </>
         );
       case 'email':
@@ -1375,13 +1385,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: GRAY_400,
   },
-  samlAdminOverrideLink: {
+  samlHelpText: {
     alignSelf: 'center',
+    textAlign: 'center',
     paddingVertical: 16,
-  },
-  samlAdminOverrideLinkText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    color: GRAY_400,
   },
   socialDisclaimer: {
     fontSize: 11,
