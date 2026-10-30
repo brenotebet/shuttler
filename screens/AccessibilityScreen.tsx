@@ -187,11 +187,13 @@ const s = StyleSheet.create({
   },
   previewText: { flex: 1 },
   previewTitle: {
+    fontSize: 16,
     fontWeight: '600',
     color: TEXT_PRIMARY,
     marginBottom: 3,
   },
   previewDesc: {
+    fontSize: 14,
     color: TEXT_SECONDARY,
   },
   previewDivider: {
@@ -200,6 +202,7 @@ const s = StyleSheet.create({
     marginVertical: 12,
   },
   previewSmall: {
+    fontSize: 12,
     color: GRAY_400,
   },
   toggleRow: {
@@ -212,11 +215,13 @@ const s = StyleSheet.create({
   },
   toggleInfo: { flex: 1, marginRight: 16 },
   toggleTitle: {
+    fontSize: 15,
     fontWeight: '600',
     color: GRAY_900,
     marginBottom: 3,
   },
   toggleDesc: {
+    fontSize: 13,
     color: GRAY_500,
     lineHeight: 18,
   },

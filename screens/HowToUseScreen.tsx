@@ -4,8 +4,8 @@
 // Accessible from both Student and Driver/Admin menus via the
 // RootStack so users can revisit it at any time.
 
-import React, { useRef, useState } from 'react';
-import { Dimensions, FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native'
+import React, { useEffect, useRef, useState } from 'react';
+import { FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native'
 import { Text } from '../components/Text';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,6 +14,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import ScreenContainer from '../components/ScreenContainer';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useAuth } from '../src/auth/AuthProvider';
+import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import type { RootStackParamList } from '../navigation/StackNavigator';
 import { TEXT_SECONDARY, DANGER_COLOR, WHITE, GRAY_100, GRAY_300, GRAY_600, GRAY_900, BORDER_COLOR } from '../src/constants/theme';
@@ -237,8 +238,6 @@ function titleForRole(role: RootStackParamList['HowToUse']['role'], isOnboarding
 
 // ─── Step card ────────────────────────────────────────────────────────────────
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 function StepCard({ step, index, total }: { step: Step; index: number; total: number }) {
   return (
     <View style={styles.card}>
@@ -292,12 +291,15 @@ export default function HowToUseScreen() {
   const { role, isOnboarding } = route.params;
   const { role: liveRole } = useAuth();
   const { primaryColor } = useOrgTheme();
+  const { reduceMotion } = useAccessibility();
 
   const steps = stepsForRole(role, isOnboarding);
   const title = titleForRole(role, isOnboarding);
 
   const [activeIndex, setActiveIndex] = useState(0);
-  const [sliderHeight, setSliderHeight] = useState(0);
+  // Measured rather than read from Dimensions once at load, so slides stay
+  // one-per-page when an iPad rotates or resizes in Split View.
+  const [sliderSize, setSliderSize] = useState({ width: 0, height: 0 });
   const listRef = useRef<FlatList<Step>>(null);
 
   const dismiss = () => {
@@ -309,10 +311,19 @@ export default function HowToUseScreen() {
     }
   };
 
+  // Keep the current slide in view after a resize — the old offset no longer
+  // lines up with a page boundary at the new width.
+  useEffect(() => {
+    if (sliderSize.width > 0) {
+      listRef.current?.scrollToIndex({ index: activeIndex, animated: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sliderSize.width]);
+
   const goNext = () => {
     if (activeIndex < steps.length - 1) {
       const next = activeIndex + 1;
-      listRef.current?.scrollToIndex({ index: next, animated: true });
+      listRef.current?.scrollToIndex({ index: next, animated: !reduceMotion });
       setActiveIndex(next);
     } else {
       dismiss();
@@ -322,7 +333,7 @@ export default function HowToUseScreen() {
   const goPrev = () => {
     if (activeIndex > 0) {
       const prev = activeIndex - 1;
-      listRef.current?.scrollToIndex({ index: prev, animated: true });
+      listRef.current?.scrollToIndex({ index: prev, animated: !reduceMotion });
       setActiveIndex(prev);
     }
   };
@@ -341,9 +352,12 @@ export default function HowToUseScreen() {
       {/* Slides */}
       <View
         style={styles.sliderWrapper}
-        onLayout={(e) => setSliderHeight(e.nativeEvent.layout.height)}
+        onLayout={(e) => {
+          const { width, height } = e.nativeEvent.layout;
+          setSliderSize({ width, height });
+        }}
       >
-        {sliderHeight > 0 && (
+        {sliderSize.height > 0 && (
           <FlatList
             ref={listRef}
             data={steps}
@@ -353,12 +367,12 @@ export default function HowToUseScreen() {
             showsHorizontalScrollIndicator={false}
             scrollEnabled={false}
             getItemLayout={(_, index) => ({
-              length: SCREEN_WIDTH,
-              offset: SCREEN_WIDTH * index,
+              length: sliderSize.width,
+              offset: sliderSize.width * index,
               index,
             })}
             renderItem={({ item, index }) => (
-              <View style={{ width: SCREEN_WIDTH, height: sliderHeight, paddingHorizontal: spacing.section }}>
+              <View style={{ width: sliderSize.width, height: sliderSize.height, paddingHorizontal: spacing.section }}>
                 <StepCard step={item} index={index} total={steps.length} />
               </View>
             )}
