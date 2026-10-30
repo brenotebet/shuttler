@@ -15,7 +15,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Shuttler',
   slug: 'shuttler',
-  version: '1.1.3',
+  version: '1.1.4',
   scheme: 'shuttler',
   orientation: 'portrait',
   icon: './assets/icon.png',
