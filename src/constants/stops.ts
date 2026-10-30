@@ -6,9 +6,16 @@ export const STUDENT_REQUEST_TTL_MS = 15 * 60 * 1000; // 15 minutes
 // across screens/DriverScreen.tsx, screens/AdminDashboardScreen.tsx,
 // screens/MapScreen.tsx, and location/LocationContext.tsx.
 
-// "Actively broadcasting right now" — no marker dimming, counts toward the
-// "N buses online" chip, and gates whether a rider can request a pickup.
-export const FRESHNESS_WINDOW_SECONDS = 60;
+// "Actively broadcasting right now" — the only buses riders see on the map,
+// counts toward the "N buses online" chip, and gates whether a rider can
+// request a pickup. Drivers heartbeat every ~15s, so this leaves room for a
+// few missed writes; matches ONLINE_BUS_STALE_SECONDS.
+export const FRESHNESS_WINDOW_SECONDS = 90;
+
+// A visible bus whose last update is at least this old gets an "Updated Xs
+// ago" label on the rider map — with the heartbeat, that only happens when
+// something is actually wrong (signal, backgrounded app).
+export const LATE_UPDATE_LABEL_SECONDS = 30;
 
 // Marker stays visible (dimmed) on the map up to this age before being
 // dropped entirely; also the cutoff for counting a bus toward the

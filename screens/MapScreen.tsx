@@ -62,7 +62,7 @@ import { notifyDriversNewRequest } from '../src/utils/pushNotifications';
 import { fetchDirections } from '../src/utils/directions';
 import InfoBanner from '../components/InfoBanner';
 import AnnouncementBanner from '../components/AnnouncementBanner';
-import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS } from '../src/constants/stops';
+import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS, LATE_UPDATE_LABEL_SECONDS } from '../src/constants/stops';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
@@ -76,8 +76,8 @@ import PickupConfirmModal from '../src/components/PickupConfirmModal';
 import ConfirmSheet from '../components/ConfirmSheet';
 import { borderRadius } from '../src/styles/common';
 
-// Bus marker stays visible as long as online:true in Firestore.
-// Opacity reflects freshness (full = recent GPS, dimmed = GPS stale but driver hasn't stopped sharing).
+// A bus marker is shown only while a rider could request a stop: the bus is
+// online, its GPS is fresh, and service is open (see visibleBusIds).
 
 // Maximum distance from the nearest stop to allow a pickup request.
 // Keeps requests honest — students must physically be on/near campus.
@@ -433,21 +433,36 @@ export default function MapScreen() {
     };
   }>({});
 
+  // 10s tick while any bus is sharing, so a bus whose feed goes quiet is hidden
+  // promptly and its "Updated Xs ago" label counts up. Bus snapshots already
+  // re-render this often while buses are live, so this adds little.
+  const [freshnessTick, setFreshnessTick] = useState(0);
+  const hasActiveBuses = activeBusIds.length > 0;
+  useEffect(() => {
+    if (!hasActiveBuses) return;
+    const id = setInterval(() => setFreshnessTick((n) => n + 1), 10_000);
+    return () => clearInterval(id);
+  }, [hasActiveBuses]);
+
   // Buses updated within FRESHNESS_WINDOW_SECONDS. Single source of truth for
-  // the "N buses online" chip, the "No buses online" banner, and the request
-  // gate — activeBusIds intentionally keeps stale-but-online buses so they can
-  // stay on the map dimmed, so it must not drive any of those. clockTick keeps
-  // this decaying even when a dead GPS feed stops producing snapshots.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const freshBusCount = useMemo(
+  // the "N buses online" chip, the "No buses online" banner, the request gate
+  // and which bus markers are drawn — activeBusIds still includes stale-but-
+  // online buses (ride matching uses it), so it must not drive any of those.
+  // freshnessTick keeps this decaying even when a dead GPS feed stops
+  // producing snapshots.
+  const freshBusIds = useMemo(
     () =>
-      Object.values(busLocations).filter(
-        (b) => (Date.now() - b.lastUpdated.getTime()) / 1000 < FRESHNESS_WINDOW_SECONDS,
-      ).length,
+      activeBusIds.filter((id) => {
+        const b = busLocations[id];
+        return !!b && (Date.now() - b.lastUpdated.getTime()) / 1000 < FRESHNESS_WINDOW_SECONDS;
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [busLocations, clockTick],
+    [activeBusIds, busLocations, freshnessTick],
   );
+  const freshBusCount = freshBusIds.length;
   const busOnline = freshBusCount > 0;
+  // Never show a bus the rider can't request a stop from.
+  const visibleBusIds = serviceIsOpen ? freshBusIds : [];
 
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedStopKey, setSelectedStopKey] = useState<string | null>(null);
@@ -542,12 +557,18 @@ export default function MapScreen() {
   // ✅ NEW: ensure /publicUsers/{uid} exists for this signed-in user
   const ensurePublicUserProfile = async (uid: string, email: string | null) => {
     try {
-      // Prefer auth displayName if present; fallback to email prefix; else "Student"
+      if (!orgId) return;
+      // Prefer the name saved on the user's own profile (set at sign-up or in
+      // Profile), then auth displayName, then email prefix. Never write a
+      // placeholder: this doc is also a driver's public name once they're
+      // promoted, and a "Student" written here would show on their bus.
+      const userSnap = await getDoc(doc(db, 'orgs', orgId, 'users', uid)).catch(() => null);
+      const profileName = (userSnap?.data() as any)?.displayName ?? null;
       const authName = auth.currentUser?.displayName ?? null;
       const emailPrefix = email?.split?.('@')?.[0] ?? null;
-      const displayName = (authName || emailPrefix || 'Student').trim();
+      const displayName = (profileName || authName || emailPrefix || '').trim();
+      if (!displayName) return;
 
-      if (!orgId) return;
       await setDoc(
         doc(db, 'orgs', orgId, 'publicUsers', uid),
         {
@@ -571,8 +592,11 @@ export default function MapScreen() {
       if (!orgId) return 'Driver';
       const snap = await getDoc(doc(db, 'orgs', orgId, 'publicUsers', uid));
       const data = (snap.data() as any) || {};
-      const displayName = typeof data?.displayName === 'string' ? data.displayName : 'Driver';
-      const firstName = displayName?.split?.(' ')?.[0] || 'Driver';
+      // Older builds wrote a "Student" placeholder here when a user had no
+      // name; treat it as missing so a promoted driver's bus doesn't say "Student".
+      const rawName = typeof data?.displayName === 'string' ? data.displayName.trim() : '';
+      const displayName = rawName && rawName !== 'Student' ? rawName : 'Driver';
+      const firstName = displayName.split(' ')[0] || 'Driver';
 
       setDriverFirstNames((prev) => ({ ...prev, [uid]: firstName }));
       return firstName;
@@ -1889,11 +1913,11 @@ const handleConfirmSheetConfirm = async () => {
                 : 'Tap "Request a stop" to pick your pickup, or tap a bus to see its ETA and next stop.'}
             />
           )}
-          {freshBusCount > 0 && (
+          {visibleBusIds.length > 0 && (
             <View style={styles.busCountChip}>
               <View style={styles.busCountDot} />
               <Text style={styles.busCountText}>
-                {freshBusCount} bus{freshBusCount !== 1 ? 'es' : ''} online
+                {visibleBusIds.length} bus{visibleBusIds.length !== 1 ? 'es' : ''} online
               </Text>
             </View>
           )}
@@ -1989,12 +2013,14 @@ const handleConfirmSheetConfirm = async () => {
           </Marker>
         ))}
 
-        {activeBusIds.map((id) => {
+        {visibleBusIds.map((id) => {
           const loc = busLocations[id];
           if (!loc) return null;
 
           const isSelected = selectedBusId === id;
           const animatedCoord = busRegions.current[id];
+          const updateAgeSeconds = (Date.now() - loc.lastUpdated.getTime()) / 1000;
+          const showLateLabel = !(loc as any).onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
 
           return (
             <React.Fragment key={id}>
@@ -2009,7 +2035,7 @@ const handleConfirmSheetConfirm = async () => {
               >
                 <Image
                   source={busIcon}
-                  style={{ width: 70, height: 70, opacity: loc.isFresh ? 1 : 0.55 }}
+                  style={{ width: 70, height: 70 }}
                   resizeMode="contain"
                 />
               </MarkerAnimated>
@@ -2024,6 +2050,20 @@ const handleConfirmSheetConfirm = async () => {
                 >
                   <View style={styles.onBreakBadge}>
                     <Text style={styles.onBreakBadgeText}>On Break</Text>
+                  </View>
+                </MarkerAnimated>
+              )}
+
+              {showLateLabel && (
+                <MarkerAnimated
+                  coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
+                  anchor={{ x: 0.5, y: -1.8 }}
+                  tappable={false}
+                  tracksViewChanges
+                  zIndex={60}
+                >
+                  <View style={styles.lateUpdateBadge}>
+                    <Text style={styles.lateUpdateBadgeText}>Updated {formatLastSeen(updateAgeSeconds)}</Text>
                   </View>
                 </MarkerAnimated>
               )}
@@ -2853,5 +2893,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#92400e',
+  },
+  lateUpdateBadge: {
+    backgroundColor: WHITE,
+    borderWidth: 1,
+    borderColor: GRAY_300,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  lateUpdateBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: GRAY_600,
   },
 });
