@@ -3508,8 +3508,12 @@ const styles = StyleSheet.create({
   },
   tabBarContent: {
     flexDirection: 'row',
+    // Fill the bar on wide screens (iPad) instead of bunching tabs on the left;
+    // on phones the content is wider than the bar, so it still scrolls.
+    flexGrow: 1,
   },
   tabBarItem: {
+    flexGrow: 1,
     alignItems: 'center',
     paddingVertical: 10,
     paddingHorizontal: 14,

@@ -1,7 +1,7 @@
 // src/screens/DriverHistoryScreen.tsx
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, FlatList, StyleSheet, Dimensions, TouchableOpacity } from 'react-native'
+import { View, FlatList, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native'
 import { Text } from '../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
@@ -62,7 +62,8 @@ export default function DriverHistoryScreen() {
   const { driverId } = useDriver();
   const { orgId, role } = useAuth();
   const { primaryColor } = useOrgTheme();
-  const screenWidth = Dimensions.get('window').width;
+  // Subscribes to size changes so the charts resize on iPad rotation / Split View.
+  const { width: screenWidth } = useWindowDimensions();
   const chartWidth = screenWidth - spacing.screenPadding * 2 - spacing.section * 2;
 
   // Stop requests history — same 30-day window as driver sessions so both
@@ -211,6 +212,7 @@ export default function DriverHistoryScreen() {
             )}
           </View>
         }
+        ListHeaderComponentStyle={styles.headerWrapper}
         ListHeaderComponent={
           <View style={styles.headerContent}>
             <Text style={[styles.heading, { color: primaryColor }]}>Driver Dashboard</Text>
@@ -331,6 +333,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   headerContent: { marginBottom: spacing.section },
+  // FlatList wraps the header in its own View — stretch that wrapper so the
+  // cards stay full-width when emptyContainer centers the list's children.
+  headerWrapper: { alignSelf: 'stretch' },
   heading: { fontSize: 26, fontWeight: '700', textAlign: 'center', marginBottom: spacing.section },
   sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8, marginTop: 4 },
   sectionHeading: { marginTop: spacing.section },
