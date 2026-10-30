@@ -50,6 +50,10 @@ const LocationContext = createContext<LocationContextType>({
 
 const WRITE_MIN_INTERVAL_MS = 4000;
 const WRITE_MIN_DISTANCE_M = 8;
+// A parked bus stops producing GPS callbacks (distanceInterval), so re-send the
+// last position at least this often to keep riders' freshness window satisfied.
+const HEARTBEAT_INTERVAL_MS = 15 * 1000;
+const HEARTBEAT_CHECK_MS = 5 * 1000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // auto-stop after 15 min of no GPS movement
 const INACTIVITY_CHECK_MS = 60 * 1000;         // check once per minute
 
@@ -645,6 +649,30 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       console.error('endBreak: failed to update bus doc', err);
     }
   };
+
+  // Heartbeat: while sharing, re-send the last position if nothing has been
+  // written recently. Doesn't touch lastActivityAt, so the inactivity auto-stop
+  // still fires for a bus that genuinely hasn't moved in 15 min. writeBusDoc
+  // skips while on break, so this never clears onBreak.
+  useEffect(() => {
+    if (!isSharing) return;
+
+    const interval = setInterval(async () => {
+      const uid = currentUid.current;
+      const coords = lastWrittenCoords.current;
+      if (!uid || !coords) return;
+      if (Date.now() - lastWrittenAt.current < HEARTBEAT_INTERVAL_MS) return;
+      try {
+        await writeBusDoc(uid, coords);
+        lastWrittenAt.current = Date.now();
+      } catch (err) {
+        console.error('Heartbeat write failed:', err);
+      }
+    }, HEARTBEAT_CHECK_MS);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSharing, orgId]);
 
   // Auto-stop: inactivity timeout + schedule enforcement
   useEffect(() => {
