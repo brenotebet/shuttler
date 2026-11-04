@@ -2013,121 +2013,51 @@ const handleConfirmSheetConfirm = async () => {
           </Marker>
         ))}
 
+        {/*
+          One native marker per bus, and nothing else is mounted/unmounted in
+          the MapView when a bus is tapped or a badge toggles. On iOS (Google
+          provider + New Architecture interop in react-native-maps 1.20),
+          inserting/removing sibling markers can leave native markers paired
+          with the wrong icon — stop pins vanished and phantom buses appeared.
+          Badges live inside the bus marker's own view (always mounted, shown
+          via opacity) and the bus info card is rendered outside the map.
+        */}
         {visibleBusIds.map((id) => {
           const loc = busLocations[id];
           if (!loc) return null;
 
-          const isSelected = selectedBusId === id;
           const animatedCoord = busRegions.current[id];
           const updateAgeSeconds = (Date.now() - loc.lastUpdated.getTime()) / 1000;
-          const showLateLabel = !(loc as any).onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
+          const showLateLabel = !loc.onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
 
           return (
-            <React.Fragment key={id}>
-              <MarkerAnimated
-                coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
-                flat
-                rotation={loc.heading}
-                anchor={{ x: 0.5, y: 0.5 }}
-                onPress={() => handleBusPress(id)}
-                tracksViewChanges={isSelected || forceBusTracks || (loc as any).onBreak}
-                zIndex={50}
-              >
-                <Image
-                  source={busIcon}
-                  style={{ width: 70, height: 70 }}
-                  resizeMode="contain"
-                />
-              </MarkerAnimated>
-
-              {(loc as any).onBreak && (
-                <MarkerAnimated
-                  coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
-                  anchor={{ x: 0.5, y: 2.4 }}
-                  tappable={false}
-                  tracksViewChanges={isSelected || forceBusTracks}
-                  zIndex={60}
-                >
+            <MarkerAnimated
+              key={id}
+              coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              onPress={() => handleBusPress(id)}
+              tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel}
+              zIndex={50}
+            >
+              {/* Equal-height badge slots above and below keep the bus centered on the anchor. */}
+              <View style={styles.busMarkerWrap}>
+                <View style={[styles.busBadgeSlot, { opacity: loc.onBreak ? 1 : 0 }]}>
                   <View style={styles.onBreakBadge}>
                     <Text style={styles.onBreakBadgeText}>On Break</Text>
                   </View>
-                </MarkerAnimated>
-              )}
-
-              {showLateLabel && (
-                <MarkerAnimated
-                  coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
-                  anchor={{ x: 0.5, y: -1.8 }}
-                  tappable={false}
-                  tracksViewChanges
-                  zIndex={60}
-                >
+                </View>
+                <Image
+                  source={busIcon}
+                  style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
+                  resizeMode="contain"
+                />
+                <View style={[styles.busBadgeSlot, { opacity: showLateLabel ? 1 : 0 }]}>
                   <View style={styles.lateUpdateBadge}>
                     <Text style={styles.lateUpdateBadgeText}>Updated {formatLastSeen(updateAgeSeconds)}</Text>
                   </View>
-                </MarkerAnimated>
-              )}
-
-              {isSelected && (
-                <MarkerAnimated
-                  coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
-                  anchor={{ x: 0.5, y: 1.42 }}
-                  tappable={false}
-                  tracksViewChanges
-                  zIndex={100}
-                >
-                  <Animated.View
-                    style={{
-                      opacity: cloudOpacity,
-                      transform: [{ translateY: cloudTranslateY }, { scale: cloudScale }],
-                    }}
-                  >
-                    <View style={styles.busCloud}>
-                      <View style={styles.busCloudInner}>
-                        <View style={styles.busCloudHeader}>
-                          <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
-                          <TouchableOpacity
-                            onPress={closeSelectedBus}
-                            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                            accessibilityRole="button"
-                            accessibilityLabel="Close bus info"
-                          >
-                            <Icon name="close" size={18} color={GRAY_400} />
-                          </TouchableOpacity>
-                        </View>
-
-                        {selectedBusPopup?.etaToYou ? (
-                          <Text style={styles.busCloudText}>ETA to you: {selectedBusPopup.etaToYou}</Text>
-                        ) : null}
-
-                        <Text style={styles.busCloudMuted}>
-                          Last seen: {selectedBusPopup?.lastSeenText ?? formatLastSeen(loc.secondsAgo)}
-                        </Text>
-
-                        {selectedBusPopup?.nextStop ? (
-                          <Text style={styles.busCloudMuted}>Next stop: {selectedBusPopup.nextStop}</Text>
-                        ) : null}
-
-                        {loc.occupancy ? (
-                          <Text style={[
-                            styles.busCloudOccupancy,
-                            loc.occupancy === 'open' && styles.busCloudOccupancyOpen,
-                            loc.occupancy === 'filling' && styles.busCloudOccupancyFilling,
-                            loc.occupancy === 'full' && styles.busCloudOccupancyFull,
-                          ]}>
-                            {loc.occupancy === 'open' ? 'Seats available'
-                              : loc.occupancy === 'filling' ? 'Filling up'
-                              : 'Bus full'}
-                          </Text>
-                        ) : null}
-                      </View>
-
-                      <View style={styles.busCloudTail} />
-                    </View>
-                  </Animated.View>
-                </MarkerAnimated>
-              )}
-            </React.Fragment>
+                </View>
+              </View>
+            </MarkerAnimated>
           );
         })}
 
@@ -2240,6 +2170,62 @@ const handleConfirmSheetConfirm = async () => {
           <View style={styles.transparentOverlay} />
         </TouchableWithoutFeedback>
       )}
+
+      {selectedBusId && busLocations[selectedBusId] && (() => {
+        const loc = busLocations[selectedBusId];
+        return (
+          <Animated.View
+            pointerEvents="box-none"
+            style={[
+              styles.busInfoCardWrap,
+              {
+                top: topOverlay,
+                opacity: cloudOpacity,
+                transform: [{ translateY: cloudTranslateY }, { scale: cloudScale }],
+              },
+            ]}
+          >
+            <View style={styles.busCloudInner}>
+              <View style={styles.busCloudHeader}>
+                <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
+                <TouchableOpacity
+                  onPress={closeSelectedBus}
+                  hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close bus info"
+                >
+                  <Icon name="close" size={18} color={GRAY_400} />
+                </TouchableOpacity>
+              </View>
+
+              {selectedBusPopup?.etaToYou ? (
+                <Text style={styles.busCloudText}>ETA to you: {selectedBusPopup.etaToYou}</Text>
+              ) : null}
+
+              <Text style={styles.busCloudMuted}>
+                Last seen: {selectedBusPopup?.lastSeenText ?? formatLastSeen(loc.secondsAgo)}
+              </Text>
+
+              {selectedBusPopup?.nextStop ? (
+                <Text style={styles.busCloudMuted}>Next stop: {selectedBusPopup.nextStop}</Text>
+              ) : null}
+
+              {loc.occupancy ? (
+                <Text style={[
+                  styles.busCloudOccupancy,
+                  loc.occupancy === 'open' && styles.busCloudOccupancyOpen,
+                  loc.occupancy === 'filling' && styles.busCloudOccupancyFilling,
+                  loc.occupancy === 'full' && styles.busCloudOccupancyFull,
+                ]}>
+                  {loc.occupancy === 'open' ? 'Seats available'
+                    : loc.occupancy === 'filling' ? 'Filling up'
+                    : 'Bus full'}
+                </Text>
+              ) : null}
+            </View>
+          </Animated.View>
+        );
+      })()}
 
       <Animated.View
         onLayout={(e) => setBottomCardHeight(e.nativeEvent.layout.height)}
@@ -2763,12 +2749,18 @@ const styles = StyleSheet.create({
   childPickerName: { fontSize: 15, fontWeight: '600', color: GRAY_900 },
   childPickerGrade: { fontSize: 12, color: GRAY_500, marginTop: 1 },
 
-  busCloud: {
-    width: Math.min(260, SCREEN_WIDTH - 40),
+  busInfoCardWrap: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    zIndex: 100,
+  },
+  busMarkerWrap: {
     alignItems: 'center',
+  },
+  busBadgeSlot: {
+    height: 24,
     justifyContent: 'center',
-    overflow: 'visible',
-    zIndex: 999,
   },
   busCloudInner: {
     width: '100%',
@@ -2781,18 +2773,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 10,
     elevation: 8,
-  },
-  busCloudTail: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 10,
-    borderRightWidth: 10,
-    borderTopWidth: 13,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor: 'rgba(255,255,255,0.96)',
-    marginTop: -1,
-    alignSelf: 'center',
   },
   busCloudHeader: {
     flexDirection: 'row',
