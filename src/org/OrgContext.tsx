@@ -91,6 +91,7 @@ export type OrgConfig = {
   };
   ownerUid?: string; // UID of the org creator — role and membership are permanent
   timezone?: string; // IANA timezone name, e.g. "America/Chicago"
+  orgType?: string; // see src/constants/orgTypes.ts — drives role options (parents only for K-12)
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
   // Negotiated per-org limits (Enterprise deals) — written by the Stripe webhook

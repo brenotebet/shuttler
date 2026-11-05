@@ -1007,6 +1007,9 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
       approved: false,
       reviewStatus: 'pending',
       founderEmail: (contactEmail as string).toLowerCase().trim(),
+      // Drives role options in the app (e.g. parent accounts only for K-12).
+      // Unknown values are dropped so they can't fail the rules' allow-list later.
+      ...(KNOWN_ORG_TYPES.has(orgType as string) && { orgType }),
       agreedToTermsAt: agreedToTerms ? admin.firestore.FieldValue.serverTimestamp() : null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -3421,6 +3424,10 @@ function csvCell(value: unknown): string {
 function csvRow(values: unknown[]): string {
   return values.map(csvCell).join(',');
 }
+
+// Mirror of src/constants/orgTypes.ts and the orgType allow-list in
+// firestore.rules (the backend can't import from ../src) — keep in sync.
+const KNOWN_ORG_TYPES = new Set(['university', 'k12', 'corporate', 'healthcare', 'government', 'nonprofit', 'other']);
 
 // Basic export (last 90 days) — included on every plan.
 // Extended export (>90 days) — requires dataApi entitlement.

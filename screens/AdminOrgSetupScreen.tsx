@@ -50,6 +50,7 @@ import AppButton from '../components/AppButton';
 import BottomSheet from '../components/BottomSheet';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useOrgSetupProgress } from '../src/hooks/useOrgSetupProgress';
+import { ORG_TYPES, allowsParentRole } from '../src/constants/orgTypes';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
@@ -103,6 +104,7 @@ const COLOR_SWATCHES = [
 function ProfileTab() {
   const { org, refreshOrg } = useOrg();
   const [name, setName] = useState(org?.name ?? '');
+  const [orgType, setOrgType] = useState(org?.orgType ?? '');
   const [logoUrl, setLogoUrl] = useState(org?.logoUrl ?? '');
   const [primaryColor, setPrimaryColor] = useState(org?.primaryColor ?? COLOR_SWATCHES[0]);
   const [customColor, setCustomColor] = useState('');
@@ -169,6 +171,7 @@ function ProfileTab() {
         name: name.trim(),
         logoUrl: logoUrl || null,
         primaryColor: effectiveColor,
+        ...(orgType && { orgType }),
         updatedAt: serverTimestamp(),
       });
       await refreshOrg();
@@ -178,7 +181,7 @@ function ProfileTab() {
     } finally {
       setIsSaving(false);
     }
-  }, [org, name, logoUrl, primaryColor, customColor, refreshOrg]);
+  }, [org, name, orgType, logoUrl, primaryColor, customColor, refreshOrg]);
 
   const activeColor = customColor.match(/^#[0-9a-fA-F]{6}$/) ? customColor : primaryColor;
 
@@ -195,6 +198,37 @@ function ProfileTab() {
         autoCapitalize="words"
       />
       <Text style={styles.hint}>Shown in the org selector for all users.</Text>
+
+      {/* Org type */}
+      <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Organization Type</Text>
+      <View style={profileStyles.typeRow}>
+        {ORG_TYPES.map((t) => {
+          const selected = orgType === t.value;
+          return (
+            <TouchableOpacity
+              key={t.value}
+              onPress={() => setOrgType(t.value)}
+              style={[
+                profileStyles.typeChip,
+                selected && { borderColor: activeColor, backgroundColor: `${activeColor}14` },
+              ]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+            >
+              <Text style={[profileStyles.typeChipText, selected && { color: activeColor, fontWeight: '700' }]}>
+                {t.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={styles.hint}>
+        {!orgType
+          ? 'Not set yet. Choose one so the app shows the right options for your riders.'
+          : allowsParentRole(orgType)
+          ? 'K-12 schools can invite parents to track their children\'s shuttle.'
+          : 'Parent accounts are only offered for K-12 schools.'}
+      </Text>
 
       {/* Logo */}
       <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Organization Logo</Text>
@@ -277,6 +311,16 @@ const profileStyles = StyleSheet.create({
   swatchSelected: { borderWidth: 3, borderColor: GRAY_900 },
   hexRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   hexPreview: { width: 36, height: 36, borderRadius: borderRadius.sm, borderWidth: 1, borderColor: GRAY_200 },
+  typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  typeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.xl,
+    borderWidth: 1.5,
+    borderColor: GRAY_200,
+    backgroundColor: WHITE,
+  },
+  typeChipText: { fontSize: 13, color: GRAY_700, fontWeight: '500' },
 });
 
 // ---- Auth Settings Tab ----
@@ -1754,6 +1798,11 @@ function UsersTab() {
   const [search, setSearch] = useState('');
   // Invite controls — must stay above all early returns
   const [inviteRole, setInviteRole] = useState<'student' | 'driver' | 'parent'>('student');
+  // Parent accounts only make sense for K-12 orgs (see src/constants/orgTypes).
+  const parentsAllowed = allowsParentRole(org?.orgType);
+  useEffect(() => {
+    if (!parentsAllowed && inviteRole === 'parent') setInviteRole('student');
+  }, [parentsAllowed, inviteRole]);
   const [copiedId, setCopiedId] = useState(false);
 
   const orgRoutes = org?.routes ?? [];
@@ -1937,7 +1986,7 @@ function UsersTab() {
   const INVITE_ROLE_LABELS: { key: typeof inviteRole; label: string; icon: string }[] = [
     { key: 'student', label: 'Student', icon: 'school' },
     { key: 'driver',  label: 'Driver',  icon: 'directions-bus' },
-    { key: 'parent',  label: 'Parent',  icon: 'family-restroom' },
+    ...(parentsAllowed ? [{ key: 'parent' as const, label: 'Parent', icon: 'family-restroom' }] : []),
   ];
 
   return (
@@ -2104,7 +2153,11 @@ function UsersTab() {
         {rolePickerTarget?.displayName ?? rolePickerTarget?.email}
       </Text>
       <Text style={pickerSheetStyles.subtitle}>Select a role</Text>
-      {(['student', 'driver', 'parent', 'admin'] as const).map((role) => {
+      {(['student', 'driver', 'parent', 'admin'] as const)
+        // Keep "Parent" visible for someone who already has it, so their
+        // current role still shows as selected and can be changed away from.
+        .filter((role) => role !== 'parent' || parentsAllowed || rolePickerTarget?.role === 'parent')
+        .map((role) => {
         const color = role === 'admin' ? primaryColor : ROLE_COLORS[role];
         const isCurrent = rolePickerTarget?.role === role;
         return (
