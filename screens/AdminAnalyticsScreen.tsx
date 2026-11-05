@@ -56,6 +56,19 @@ interface OrgInsight {
   activeDrivers: number;
   topStop: string | null;
   generatedAt: any;
+  noActivity?: boolean;
+  requestsTotal?: number;
+  requestsCompleted?: number;
+  driverHoursOnline?: number;
+  periodDays?: number;
+}
+
+// Older than this (period + 1 day) means the scheduled run was missed.
+function isInsightStale(insight: OrgInsight | null, period: 'weekly' | 'monthly'): boolean {
+  const ms = insight?.generatedAt?.toMillis?.();
+  if (!ms) return false;
+  const days = period === 'weekly' ? 7 : 30;
+  return Date.now() - ms > (days + 1) * 86_400_000;
 }
 
 function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
@@ -67,6 +80,7 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState<'weekly' | 'monthly' | null>(null);
   const [hasBoardingData, setHasBoardingData] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const hasAnalytics = !!(org?.dataAddonActive || org?.entitlements?.dataApi);
 
@@ -90,6 +104,7 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
   const load = useCallback(async () => {
     if (!org) return;
     setIsLoading(true);
+    setLoadError(false);
     try {
       const [wSnap, mSnap, boardingSnap] = await Promise.all([
         getDoc(doc(db, 'orgs', org.orgId, 'insights', 'weekly')),
@@ -99,6 +114,9 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
       setWeekly(wSnap.exists() ? (wSnap.data() as OrgInsight) : null);
       setMonthly(mSnap.exists() ? (mSnap.data() as OrgInsight) : null);
       setHasBoardingData(!boardingSnap.empty);
+    } catch (e) {
+      console.error('Insights load failed', e);
+      setLoadError(true);
     } finally {
       setIsLoading(false);
     }
@@ -120,6 +138,9 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
       if (!res.ok) {
         throw new Error(body?.error ?? 'Failed to generate insight');
       }
+      // The backend writes a "no activity" insight even when there's no data,
+      // so always reload to replace any old summary on screen.
+      await load();
       if (!body?.generated) {
         showToast(
           `No ${period === 'weekly' ? 'weekly' : 'monthly'} data yet — insights will generate automatically once rides are logged.`,
@@ -127,7 +148,6 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
         );
         return;
       }
-      await load();
       showToast('Insight generated.', 'success');
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to generate insight.', 'error');
@@ -155,7 +175,12 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
           <Text style={s.cardTitle}>{label} Insight</Text>
           {dateStr && <Text style={s.cardDate}>Updated {dateStr}</Text>}
         </View>
-        {insight ? (
+        {isInsightStale(insight, period) && (
+          <Text style={s.staleText}>This summary is out of date. Tap Generate now to refresh it.</Text>
+        )}
+        {insight?.noActivity ? (
+          <Text style={s.emptyText}>{insight.narrative}</Text>
+        ) : insight ? (
           <>
             <View style={s.statsRow}>
               <View style={s.statItem}>
@@ -175,6 +200,24 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
                 </View>
               )}
             </View>
+            {(insight.requestsTotal != null || insight.driverHoursOnline != null) && (
+              <View style={s.statsRow}>
+                {insight.requestsTotal != null && (
+                  <View style={s.statItem}>
+                    <Text style={[s.statValue, { color: primaryColor }]}>
+                      {insight.requestsCompleted ?? 0}/{insight.requestsTotal}
+                    </Text>
+                    <Text style={s.statLabel}>Requests completed</Text>
+                  </View>
+                )}
+                {insight.driverHoursOnline != null && (
+                  <View style={s.statItem}>
+                    <Text style={[s.statValue, { color: primaryColor }]}>{insight.driverHoursOnline}h</Text>
+                    <Text style={s.statLabel}>Driver hours online</Text>
+                  </View>
+                )}
+              </View>
+            )}
             <Text style={s.narrative}>{insight.narrative}</Text>
           </>
         ) : hasBoardingData ? (
@@ -214,6 +257,11 @@ function InsightsSection({ onGoToAnalytics }: { onGoToAnalytics: () => void }) {
       <Text style={s.intro}>
         AI-generated summaries of your operation, updated automatically each week and month.
       </Text>
+      {loadError && (
+        <TouchableOpacity onPress={load} accessibilityRole="button">
+          <Text style={s.loadErrorText}>Couldn't load insights. Tap to retry.</Text>
+        </TouchableOpacity>
+      )}
       {renderCard('weekly', weekly)}
       {renderCard('monthly', monthly)}
 
@@ -1102,6 +1150,8 @@ const s = StyleSheet.create({
   statLabel: { fontSize: 11, color: GRAY_500, marginTop: 2 },
   narrative: { fontSize: 14, color: GRAY_700, lineHeight: 21 },
   emptyText: { fontSize: 14, color: GRAY_400, fontStyle: 'italic', textAlign: 'center' },
+  staleText: { fontSize: 12, color: '#b45309', marginBottom: 8 },
+  loadErrorText: { fontSize: 14, color: '#b91c1c', textAlign: 'center', marginBottom: 12 },
   emptySubtext: { fontSize: 12, color: GRAY_400, textAlign: 'center' },
   generateBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,

@@ -203,6 +203,14 @@ const checklistStyles = StyleSheet.create({
   },
 });
 
+function SectionLabel({ label, first }: { label: string; first?: boolean }) {
+  return (
+    <View style={[styles.sectionDivider, first && styles.sectionDividerFirst]}>
+      <Text style={styles.sectionLabel}>{label}</Text>
+    </View>
+  );
+}
+
 export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { primaryColor } = useOrgTheme();
@@ -261,6 +269,150 @@ export default function DriverMenuScreen() {
     }
   };
 
+  const profileItem = (
+    <MenuItem
+      icon="person"
+      title="My Profile"
+      description={
+        profileStatus.isComplete
+          ? 'Edit your name, phone, and preferences'
+          : `Missing: ${profileStatus.missingFields.join(', ')}`
+      }
+      onPress={() => navigation.navigate('Profile')}
+      badge={!profileStatus.isComplete}
+    />
+  );
+  const aiAssistantItem = (
+    <MenuItem
+      icon="auto-awesome"
+      title="AI Assistant"
+      description="Ask questions about routes, stops, or your operation"
+      onPress={() => navigation.navigate('AdminChat')}
+    />
+  );
+  const stopRequestsItem = (
+    <MenuItem
+      icon="list"
+      title="Stop Requests"
+      description="See and act on active stop requests"
+      onPress={() => navigation.navigate('AdminDriver')}
+    />
+  );
+  const serviceAlertsItem = (
+    <MenuItem
+      icon="campaign"
+      title="Service Alerts"
+      description="Post delays, detours, and notices to riders"
+      onPress={() => navigation.navigate('Announcements')}
+    />
+  );
+  const rideHistoryItem = (
+    <MenuItem
+      icon="history"
+      title={role === 'admin' ? 'My Shift History' : 'Ride History'}
+      description={
+        role === 'admin'
+          ? 'Shifts you drove yourself — see Dashboard for all drivers'
+          : 'See your past shifts and completed pickups'
+      }
+      onPress={() => navigation.navigate('DriverHistory')}
+    />
+  );
+  const dashboardItem = (
+    <MenuItem
+      icon="dashboard"
+      title="Dashboard"
+      description="Who's driving now, riders waiting, and today's numbers"
+      onPress={() => navigation.navigate('AdminDashboard')}
+    />
+  );
+  const analyticsItem = (
+    <MenuItem
+      icon="bar-chart"
+      title="Analytics"
+      description="AI insights, ridership trends, and data exports"
+      onPress={() => navigation.navigate('AdminAnalytics')}
+    />
+  );
+  const billingItem = (
+    <MenuItem
+      icon="credit-card"
+      title="Billing & Plan"
+      description="Manage your subscription, plan limits, and add-ons"
+      onPress={() => navigation.navigate('AdminOrgSetup', { initialTab: 'billing' })}
+    />
+  );
+  const orgSetupItem = (
+    <MenuItem
+      icon="settings"
+      title="Org Setup"
+      description={
+        needsSetup
+          ? 'No stops configured yet — tap to get started'
+          : 'Manage stops, routes, and users'
+      }
+      onPress={() => navigation.navigate('AdminOrgSetup')}
+      badge={needsSetup}
+    />
+  );
+  const notificationsItem = (
+    <MenuItem
+      icon="notifications"
+      title="Notifications"
+      description="Choose which push notifications you receive"
+      onPress={() => navigation.navigate('NotificationPrefs')}
+    />
+  );
+  const accessibilityItem = (
+    <MenuItem
+      icon="accessibility"
+      title="Accessibility"
+      description="Adjust text size and motion preferences"
+      onPress={() => navigation.navigate('Accessibility')}
+    />
+  );
+  const howToUseItem = (
+    <MenuItem
+      icon="help-outline"
+      title="How to Use"
+      description="Step-by-step guide to the app"
+      onPress={() => navigation.navigate('HowToUse', { role: role === 'admin' ? 'admin' : 'driver' })}
+    />
+  );
+  const getHelpItem = (
+    <MenuItem
+      icon="mail-outline"
+      title="Get Help"
+      description="Contact support or report an issue"
+      onPress={() => Linking.openURL('mailto:support@shuttler.net').catch(() => {})}
+    />
+  );
+  const legalItem = (
+    <MenuItem
+      icon="gavel"
+      title="Legal"
+      description="Terms of Service and Privacy Policy"
+      onPress={() => navigation.navigate('Legal')}
+    />
+  );
+  const switchOrgItem = (
+    <MenuItem
+      icon="swap-horiz"
+      title="Switch Organization"
+      description={org?.name ? `Currently: ${org.name}` : 'Switch to a different organization'}
+      onPress={() => clearOrg()}
+    />
+  );
+  const logoutItem = (
+    <MenuItem
+      icon="logout"
+      title="Logout"
+      description="Sign out of your account"
+      onPress={handleLogout}
+      variant="danger"
+    />
+  );
+
   return (
     <ScreenContainer>
       <ScrollView
@@ -287,144 +439,54 @@ export default function DriverMenuScreen() {
         />
       ) : null}
 
-      <View style={styles.menuSection}>
-        <MenuItem
-          icon="person"
-          title="My Profile"
-          description={
-            profileStatus.isComplete
-              ? 'Edit your name, phone, and preferences'
-              : `Missing: ${profileStatus.missingFields.join(', ')}`
-          }
-          onPress={() => navigation.navigate('Profile')}
-          badge={!profileStatus.isComplete}
-        />
+      {role === 'admin' ? (
+        // Admins get the same items grouped by job, so their tools aren't
+        // buried between driver-only items and settings.
+        <View style={styles.menuSection}>
+          <SectionLabel label="Operations" first />
+          {dashboardItem}
+          {stopRequestsItem}
+          {serviceAlertsItem}
+          {aiAssistantItem}
 
-        <MenuItem
-          icon="auto-awesome"
-          title="AI Assistant"
-          description="Ask questions about routes, stops, or your operation"
-          onPress={() => navigation.navigate('AdminChat')}
-        />
+          <SectionLabel label="Data" />
+          {analyticsItem}
 
-<MenuItem
-          icon="list"
-          title="Stop Requests"
-          description="See and act on active stop requests"
-          onPress={() => navigation.navigate('AdminDriver')}
-        />
+          <SectionLabel label="Organization" />
+          {orgSetupItem}
+          {billingItem}
 
-        <MenuItem
-          icon="campaign"
-          title="Service Alerts"
-          description="Post delays, detours, and notices to riders"
-          onPress={() => navigation.navigate('Announcements')}
-        />
+          <SectionLabel label="My account" />
+          {profileItem}
+          {rideHistoryItem}
+          {notificationsItem}
+          {accessibilityItem}
 
-        <MenuItem
-          icon="history"
-          title="Ride History"
-          description="See your past shifts and completed pickups"
-          onPress={() => navigation.navigate('DriverHistory')}
-        />
+          <SectionLabel label="Help" />
+          {howToUseItem}
+          {getHelpItem}
+          {legalItem}
 
-        {role === 'admin' && (
-          <View style={styles.sectionDivider}>
-            <Text style={styles.sectionLabel}>Admin</Text>
-          </View>
-        )}
-
-        {role === 'admin' && (
-          <MenuItem
-            icon="dashboard"
-            title="Dashboard"
-            description="Live driver activity and status"
-            onPress={() => navigation.navigate('AdminDashboard')}
-          />
-        )}
-
-        {role === 'admin' && (
-          <MenuItem
-            icon="bar-chart"
-            title="Analytics"
-            description="Insights, trends, and raw boarding data"
-            onPress={() => navigation.navigate('AdminAnalytics')}
-          />
-        )}
-
-        {role === 'admin' && (
-          <MenuItem
-            icon="credit-card"
-            title="Billing & Plan"
-            description="Manage your subscription, plan limits, and add-ons"
-            onPress={() => navigation.navigate('AdminOrgSetup', { initialTab: 'billing' })}
-          />
-        )}
-
-        {role === 'admin' && (
-          <MenuItem
-            icon="settings"
-            title="Org Setup"
-            description={
-              needsSetup
-                ? 'No stops configured yet — tap to get started'
-                : 'Manage stops, routes, and users'
-            }
-            onPress={() => navigation.navigate('AdminOrgSetup')}
-            badge={needsSetup}
-          />
-        )}
-
-        <MenuItem
-          icon="notifications"
-          title="Notifications"
-          description="Choose which push notifications you receive"
-          onPress={() => navigation.navigate('NotificationPrefs')}
-        />
-
-        <MenuItem
-          icon="accessibility"
-          title="Accessibility"
-          description="Adjust text size and motion preferences"
-          onPress={() => navigation.navigate('Accessibility')}
-        />
-
-        <MenuItem
-          icon="help-outline"
-          title="How to Use"
-          description="Step-by-step guide to the app"
-          onPress={() => navigation.navigate('HowToUse', { role: role === 'admin' ? 'admin' : 'driver' })}
-        />
-
-        <MenuItem
-          icon="help-outline"
-          title="Get Help"
-          description="Contact support or report an issue"
-          onPress={() => Linking.openURL('mailto:support@shuttler.net').catch(() => {})}
-        />
-
-        <MenuItem
-          icon="gavel"
-          title="Legal"
-          description="Terms of Service and Privacy Policy"
-          onPress={() => navigation.navigate('Legal')}
-        />
-
-        <MenuItem
-          icon="swap-horiz"
-          title="Switch Organization"
-          description={org?.name ? `Currently: ${org.name}` : 'Switch to a different organization'}
-          onPress={() => clearOrg()}
-        />
-
-        <MenuItem
-          icon="logout"
-          title="Logout"
-          description="Sign out of your account"
-          onPress={handleLogout}
-          variant="danger"
-        />
-      </View>
+          <View style={styles.sectionSpacer} />
+          {switchOrgItem}
+          {logoutItem}
+        </View>
+      ) : (
+        <View style={styles.menuSection}>
+          {profileItem}
+          {aiAssistantItem}
+          {stopRequestsItem}
+          {serviceAlertsItem}
+          {rideHistoryItem}
+          {notificationsItem}
+          {accessibilityItem}
+          {howToUseItem}
+          {getHelpItem}
+          {legalItem}
+          {switchOrgItem}
+          {logoutItem}
+        </View>
+      )}
       </ScrollView>
     </ScreenContainer>
   );
@@ -468,5 +530,11 @@ const styles = StyleSheet.create({
     color: GRAY_400,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
+  },
+  sectionDividerFirst: {
+    marginTop: 0,
+  },
+  sectionSpacer: {
+    height: spacing.section,
   },
 });
