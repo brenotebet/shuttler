@@ -24,6 +24,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 
 import MenuItem from '../components/MenuItem';
 import ScreenContainer from '../components/ScreenContainer';
+import MenuSectionLabel, { MenuSectionSpacer } from '../components/MenuSectionLabel';
 import { cardShadow, spacing } from '../src/styles/common';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import {
@@ -202,14 +203,6 @@ const checklistStyles = StyleSheet.create({
     fontWeight: '500',
   },
 });
-
-function SectionLabel({ label, first }: { label: string; first?: boolean }) {
-  return (
-    <View style={[styles.sectionDivider, first && styles.sectionDividerFirst]}>
-      <Text style={styles.sectionLabel}>{label}</Text>
-    </View>
-  );
-}
 
 export default function DriverMenuScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -443,46 +436,53 @@ export default function DriverMenuScreen() {
         // Admins get the same items grouped by job, so their tools aren't
         // buried between driver-only items and settings.
         <View style={styles.menuSection}>
-          <SectionLabel label="Operations" first />
+          <MenuSectionLabel label="Operations" first />
           {dashboardItem}
           {stopRequestsItem}
           {serviceAlertsItem}
           {aiAssistantItem}
 
-          <SectionLabel label="Data" />
+          <MenuSectionLabel label="Data" />
           {analyticsItem}
 
-          <SectionLabel label="Organization" />
+          <MenuSectionLabel label="Organization" />
           {orgSetupItem}
           {billingItem}
 
-          <SectionLabel label="My account" />
+          <MenuSectionLabel label="My account" />
           {profileItem}
           {rideHistoryItem}
           {notificationsItem}
           {accessibilityItem}
 
-          <SectionLabel label="Help" />
+          <MenuSectionLabel label="Help" />
           {howToUseItem}
           {getHelpItem}
           {legalItem}
 
-          <View style={styles.sectionSpacer} />
+          <MenuSectionSpacer />
           {switchOrgItem}
           {logoutItem}
         </View>
       ) : (
         <View style={styles.menuSection}>
-          {profileItem}
-          {aiAssistantItem}
+          <MenuSectionLabel label="Driving" first />
           {stopRequestsItem}
           {serviceAlertsItem}
           {rideHistoryItem}
+          {aiAssistantItem}
+
+          <MenuSectionLabel label="My account" />
+          {profileItem}
           {notificationsItem}
           {accessibilityItem}
+
+          <MenuSectionLabel label="Help" />
           {howToUseItem}
           {getHelpItem}
           {legalItem}
+
+          <MenuSectionSpacer />
           {switchOrgItem}
           {logoutItem}
         </View>
@@ -518,23 +518,5 @@ const styles = StyleSheet.create({
   },
   menuSection: {
     marginTop: spacing.section,
-  },
-  sectionDivider: {
-    marginTop: spacing.section,
-    marginBottom: spacing.item / 2,
-    paddingHorizontal: 4,
-  },
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: GRAY_400,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  sectionDividerFirst: {
-    marginTop: 0,
-  },
-  sectionSpacer: {
-    height: spacing.section,
   },
 });
