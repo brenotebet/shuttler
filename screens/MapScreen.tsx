@@ -69,7 +69,8 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
-import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/utils/scheduleUtils';
+import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText } from '../src/utils/scheduleUtils';
+import { getBusRouteProgress, AT_STOP_METERS } from '../src/utils/busRoute';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
@@ -241,7 +242,6 @@ type CameraMode = 'free' | 'followUser' | 'overview';
 
 type BusPopup = {
   etaToYou: string | null;
-  nextStop: string | null;
   lastSeenText: string | null;
   driverName: string | null;
 };
@@ -430,6 +430,7 @@ export default function MapScreen() {
       secondsAgo: number;
       onBreak: boolean;
       occupancy: 'open' | 'filling' | 'full' | null;
+      breakEndsAtMs: number | null;
     };
   }>({});
 
@@ -912,6 +913,7 @@ export default function MapScreen() {
               online,
               routeId: typeof data.routeId === 'string' ? data.routeId : null,
               onBreak: data?.onBreak === true,
+              breakEndsAtMs: data?.onBreak === true ? (toDateSafe(data?.breakEndsAt)?.getTime() ?? null) : null,
               occupancy: data?.occupancy === 'open' || data?.occupancy === 'filling' || data?.occupancy === 'full'
                 ? data.occupancy
                 : null,
@@ -935,6 +937,7 @@ export default function MapScreen() {
             secondsAgo: number;
             onBreak: boolean;
             occupancy: 'open' | 'filling' | 'full' | null;
+            breakEndsAtMs: number | null;
           };
         } = {};
 
@@ -968,6 +971,7 @@ export default function MapScreen() {
             secondsAgo,
             onBreak: (bus as any).onBreak === true,
             occupancy: (bus as any).occupancy ?? null,
+            breakEndsAtMs: (bus as any).breakEndsAtMs ?? null,
           };
 
           if (!busRegions.current[id]) {
@@ -1000,7 +1004,7 @@ export default function MapScreen() {
             const n = newLocations[id];
             if (!p || p.latitude !== n.latitude || p.longitude !== n.longitude ||
                 p.isFresh !== n.isFresh || p.onBreak !== n.onBreak ||
-                p.occupancy !== n.occupancy) return newLocations;
+                p.occupancy !== n.occupancy || p.breakEndsAtMs !== n.breakEndsAtMs) return newLocations;
           }
           return prev; // nothing changed — keep same reference
         });
@@ -1391,12 +1395,47 @@ export default function MapScreen() {
     if (!loc) return;
     setSelectedBusPopup((prev) => ({
       etaToYou: prev?.etaToYou ?? null,
-      nextStop: prev?.nextStop ?? null,
       lastSeenText: formatLastSeen(loc.secondsAgo),
       driverName: prev?.driverName ?? null,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusId, busLocations[selectedBusId ?? '']]);
+
+  // Route details for the tapped bus. Recomputed only when the selected bus
+  // moves (not on every other bus's update) — a few stops of cheap math.
+  const selectedLoc = selectedBusId ? busLocations[selectedBusId] : undefined;
+  const selectedBusRoute = useMemo(() => {
+    if (!selectedBusId || !selectedLoc) return null;
+    const routeId = busRouteIds[selectedBusId] ?? null;
+    const route = routeId ? (org?.routes ?? []).find((r) => r.id === routeId) ?? null : null;
+    const routeStops = route
+      ? route.stopIds
+          .map((id) => stops.find((st) => st.id === id))
+          .filter((st): st is NonNullable<typeof st> => !!st)
+      : [];
+    const progress = route ? getBusRouteProgress(routeStops, selectedLoc) : null;
+
+    // No route (or a 1-stop route): don't guess an order, just say where it is.
+    let nearStop: string | null = null;
+    if (!progress) {
+      let best = Infinity;
+      for (const st of stops) {
+        const d = getDistanceInMeters(selectedLoc.latitude, selectedLoc.longitude, st.latitude, st.longitude);
+        if (d < best) { best = d; nearStop = st.name; }
+      }
+      if (best > 400) nearStop = null;
+      else if (best <= AT_STOP_METERS && nearStop) nearStop = `At ${nearStop}`;
+      else if (nearStop) nearStop = `Near ${nearStop}`;
+    }
+
+    return {
+      routeName: route?.name ?? null,
+      progress,
+      nearStop,
+      runsUntil: getRunsUntilText(route, new Date(), org?.timezone),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBusId, selectedLoc?.latitude, selectedLoc?.longitude, busRouteIds, org?.routes, org?.stops, org?.timezone]);
 
   const selectedEtaTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastEtaFetchCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
@@ -1427,7 +1466,6 @@ export default function MapScreen() {
 
         setSelectedBusPopup((prev) => ({
           etaToYou: e ?? prev?.etaToYou ?? null,
-          nextStop: prev?.nextStop ?? null,
           lastSeenText: prev?.lastSeenText ?? null,
           driverName: prev?.driverName ?? null,
         }));
@@ -1559,30 +1597,10 @@ export default function MapScreen() {
 
     setSelectedBusPopup({
       etaToYou: null,
-      nextStop: null,
       lastSeenText: formatLastSeen(loc.secondsAgo),
       driverName,
     });
     showCloud();
-
-    let nearestIdx = 0;
-    let minDist = Number.MAX_VALUE;
-    stops.forEach((stop, idx) => {
-      const d = getDistanceInMeters(loc.latitude, loc.longitude, stop.latitude, stop.longitude);
-      if (d < minDist) {
-        minDist = d;
-        nearestIdx = idx;
-      }
-    });
-    const nextIdx = (nearestIdx + 1) % stops.length;
-    const nextStopName = stops[nextIdx]?.name ?? '';
-
-    setSelectedBusPopup((prev) => ({
-      etaToYou: prev?.etaToYou ?? null,
-      nextStop: nextStopName,
-      lastSeenText: prev?.lastSeenText ?? formatLastSeen(loc.secondsAgo),
-      driverName: prev?.driverName ?? null,
-    }));
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -2187,7 +2205,14 @@ const handleConfirmSheetConfirm = async () => {
           >
             <View style={styles.busCloudInner}>
               <View style={styles.busCloudHeader}>
-                <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.busCloudTitle} numberOfLines={1}>
+                    {selectedBusRoute?.routeName ?? 'Shuttle'}
+                  </Text>
+                  {selectedBusPopup?.driverName ? (
+                    <Text style={styles.busCloudSubtitle}>Driver: {selectedBusPopup.driverName}</Text>
+                  ) : null}
+                </View>
                 <TouchableOpacity
                   onPress={closeSelectedBus}
                   hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
@@ -2198,30 +2223,66 @@ const handleConfirmSheetConfirm = async () => {
                 </TouchableOpacity>
               </View>
 
-              {selectedBusPopup?.etaToYou ? (
+              {loc.onBreak ? (
+                <Text style={[styles.busCloudText, styles.busCloudBreak]}>
+                  {loc.breakEndsAtMs && loc.breakEndsAtMs > Date.now()
+                    ? `On break · back in about ${Math.max(1, Math.round((loc.breakEndsAtMs - Date.now()) / 60_000))} min`
+                    : 'On break · back shortly'}
+                </Text>
+              ) : selectedBusPopup?.etaToYou ? (
                 <Text style={styles.busCloudText}>ETA to you: {selectedBusPopup.etaToYou}</Text>
               ) : null}
 
-              <Text style={styles.busCloudMuted}>
-                Last seen: {selectedBusPopup?.lastSeenText ?? formatLastSeen(loc.secondsAgo)}
-              </Text>
-
-              {selectedBusPopup?.nextStop ? (
-                <Text style={styles.busCloudMuted}>Next stop: {selectedBusPopup.nextStop}</Text>
+              {selectedBusRoute?.progress ? (
+                <>
+                  <Text style={styles.busCloudStop}>
+                    {selectedBusRoute.progress.atStop
+                      ? `At ${selectedBusRoute.progress.atStop} now`
+                      : `Next stop: ${selectedBusRoute.progress.upcoming[0]}`}
+                  </Text>
+                  {(() => {
+                    const then = selectedBusRoute.progress.atStop
+                      ? selectedBusRoute.progress.upcoming
+                      : selectedBusRoute.progress.upcoming.slice(1);
+                    return then.length > 0 ? (
+                      <Text style={styles.busCloudMuted} numberOfLines={2}>
+                        {selectedBusRoute.progress.atStop ? 'Next: ' : 'Then: '}{then.join(' → ')}
+                      </Text>
+                    ) : null;
+                  })()}
+                </>
+              ) : selectedBusRoute?.nearStop ? (
+                <Text style={styles.busCloudStop}>{selectedBusRoute.nearStop}</Text>
               ) : null}
 
-              {loc.occupancy ? (
-                <Text style={[
-                  styles.busCloudOccupancy,
-                  loc.occupancy === 'open' && styles.busCloudOccupancyOpen,
-                  loc.occupancy === 'filling' && styles.busCloudOccupancyFilling,
-                  loc.occupancy === 'full' && styles.busCloudOccupancyFull,
-                ]}>
-                  {loc.occupancy === 'open' ? 'Seats available'
-                    : loc.occupancy === 'filling' ? 'Filling up'
-                    : 'Bus full'}
+              {(selectedBusRoute?.progress || selectedBusRoute?.runsUntil) ? (
+                <Text style={styles.busCloudMuted}>
+                  {[
+                    selectedBusRoute?.progress
+                      ? `Stop ${selectedBusRoute.progress.nextPosition} of ${selectedBusRoute.progress.totalStops} next`
+                      : null,
+                    selectedBusRoute?.runsUntil || null,
+                  ].filter(Boolean).join(' · ')}
                 </Text>
               ) : null}
+
+              <View style={styles.busCloudFooter}>
+                {loc.occupancy ? (
+                  <Text style={[
+                    styles.busCloudOccupancy,
+                    loc.occupancy === 'open' && styles.busCloudOccupancyOpen,
+                    loc.occupancy === 'filling' && styles.busCloudOccupancyFilling,
+                    loc.occupancy === 'full' && styles.busCloudOccupancyFull,
+                  ]}>
+                    {loc.occupancy === 'open' ? 'Seats available'
+                      : loc.occupancy === 'filling' ? 'Filling up'
+                      : 'Bus full'}
+                  </Text>
+                ) : <View />}
+                <Text style={styles.busCloudUpdated}>
+                  Updated {selectedBusPopup?.lastSeenText ?? formatLastSeen(loc.secondsAgo)}
+                </Text>
+              </View>
             </View>
           </Animated.View>
         );
@@ -2804,6 +2865,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   busCloudOccupancyOpen: { color: PRIMARY_COLOR },
+  busCloudSubtitle: { fontSize: 13, color: GRAY_500, fontWeight: '600', marginTop: 1 },
+  busCloudBreak: { color: '#b45309' },
+  busCloudStop: { fontSize: 15, color: GRAY_900, fontWeight: '700', marginBottom: 3 },
+  busCloudFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+  busCloudUpdated: { fontSize: 12, color: GRAY_400, fontWeight: '500' },
   busCloudOccupancyFilling: { color: '#d97706' },
   busCloudOccupancyFull: { color: DANGER_COLOR },
   parentCtaCard: {

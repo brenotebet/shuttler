@@ -123,3 +123,22 @@ export function getTodayScheduleText(
   if (!day.isOpen) return 'Closed today';
   return `Today: ${formatTime12h(day.open)} – ${formatTime12h(day.close)}`;
 }
+
+// "Runs until 10:00 PM" while the route is inside today's window (or the
+// after-midnight tail of yesterday's overnight window). Empty when the route
+// has no schedule or isn't running now — the bus card then shows no hours.
+export function getRunsUntilText(
+  route: Route | null | undefined,
+  now: Date = new Date(),
+  timezone?: string,
+): string {
+  if (!route?.schedule || !isRouteActive(route, now, timezone)) return '';
+  const { key, cur } = getDayAndMinutes(now, timezone);
+  const day: DaySchedule = route.schedule[key];
+  const yesterday: DaySchedule | undefined = route.schedule[DAY_KEYS[(DAY_KEYS.indexOf(key) + 6) % 7]];
+  const inYesterdayTail = !!yesterday?.isOpen
+    && toMinutes(yesterday.close) < toMinutes(yesterday.open)
+    && cur < toMinutes(yesterday.close);
+  const close = inYesterdayTail ? yesterday!.close : day.close;
+  return `Runs until ${formatTime12h(close)}`;
+}
