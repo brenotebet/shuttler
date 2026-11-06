@@ -74,7 +74,7 @@ import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText 
 import { getBusProgress, AT_STOP_METERS } from '../src/utils/busRoute';
 import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
-import { spreadOffsets, type Offset } from '../src/utils/busSpread';
+import { groupOverlappingBuses, sameGroups, type BusGroups } from '../src/utils/busClusters';
 import { decodePath, snapToPath } from '../src/utils/routePath';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
@@ -519,42 +519,33 @@ export default function MapScreen() {
   // Buses whose heading came from real movement (not the 0° placeholder) —
   // only those headings are trusted to tell direction on shared roads.
   const headingKnown = useRef<Set<string>>(new Set());
-  // Where each bus icon is currently heading on screen (true position plus a
-  // small spread offset when buses overlap). Only the icon uses this; ETAs,
-  // next stop and the bus card all use the true position in busLocations.
-  const busDisplayTargets = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
 
-  // Move each bus icon to its true position plus any spread offset. Buses
-  // that just moved glide over `glideById[id]`; buses only nudged because
-  // another bus arrived or the zoom changed take a short ease.
-  const applyBusSpread = (glideById: { [id: string]: number } = {}) => {
-    const ids = Object.keys(lastCoords.current);
-    const r = regionRef.current ?? INITIAL_REGION;
+  // Buses that overlap at the current zoom are shown as one icon with a
+  // count badge (the group's "lead"); the others stay mounted but invisible.
+  // Every bus stays at its true position, so nothing moves when zooming.
+  const [busGroups, setBusGroups] = useState<BusGroups>({});
+  const [groupChooser, setGroupChooser] = useState<string[] | null>(null);
+  const updateBusGroups = (r?: { latitudeDelta: number; longitudeDelta: number } | null) => {
+    const region = r ?? regionRef.current ?? INITIAL_REGION;
     const { width, height } = Dimensions.get('window');
-    const offsets: Record<string, Offset> = spreadOffsets(
-      ids.map((id) => ({ id, ...lastCoords.current[id] })),
-      r,
+    const next = groupOverlappingBuses(
+      visibleBusIds
+        .map((id) => (busLocations[id] ? { id, latitude: busLocations[id].latitude, longitude: busLocations[id].longitude } : null))
+        .filter((b): b is { id: string; latitude: number; longitude: number } => !!b),
+      region,
       { width, height },
     );
-    ids.forEach((id) => {
-      const truePos = lastCoords.current[id];
-      const o = offsets[id] ?? { dLat: 0, dLng: 0 };
-      const target = { latitude: truePos.latitude + o.dLat, longitude: truePos.longitude + o.dLng };
-      const region = busRegions.current[id];
-      if (!region) return;
-      const prevTarget = busDisplayTargets.current[id];
-      if (prevTarget && prevTarget.latitude === target.latitude && prevTarget.longitude === target.longitude) return;
-      busDisplayTargets.current[id] = target;
-      region.stopAnimation(() => {});
-      region
-        .timing({
-          ...target,
-          duration: glideById[id] ?? 350,
-          easing: glideById[id] ? Easing.linear : Easing.out(Easing.quad),
-          useNativeDriver: false,
-        } as any)
-        .start();
+    setBusGroups((prev) => {
+      if (sameGroups(prev, next)) return prev;
+      bumpBusTracks(); // badge and opacity changes need a marker redraw
+      return next;
     });
+  };
+  const openGroupChooser = (members: string[]) => {
+    setSelectedStopCardId(null);
+    setShowLocationList(false);
+    setGroupChooser(members);
+    members.forEach((id) => { void getDriverFirstName(id); });
   };
   const fullRouteRef = useRef<{ latitude: number; longitude: number }[]>([]);
   const didInitialFitRef = useRef(false);
@@ -604,6 +595,15 @@ export default function MapScreen() {
 
   // Tapped stop: a small info card with routes, next bus, and Request.
   const [selectedStopCardId, setSelectedStopCardId] = useState<string | null>(null);
+  useEffect(() => {
+    updateBusGroups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busLocations, visibleBusIds.join(',')]);
+  // Close the chooser if its group breaks up (a bus drove off or went offline).
+  useEffect(() => {
+    if (groupChooser && groupChooser.filter((id) => visibleBusIds.includes(id)).length < 2) setGroupChooser(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleBusIds.join(','), groupChooser]);
   // Same pop-in as the bus card (fade + slight rise + scale), replayed for
   // each new stop so switching stops reads as a new card.
   const stopCardAnim = useRef(new Animated.Value(0)).current;
@@ -1060,7 +1060,6 @@ export default function MapScreen() {
         // With multiple buses updating at ~5s intervals, an unconditional bump
         // would keep forceBusTracks=true almost continuously.
         let anyBusMoved = visibleBuses.length !== Object.keys(lastCoords.current).length;
-        const glideById: { [id: string]: number } = {};
 
         visibleBuses.forEach((bus: any) => {
           const { id, secondsAgo, timestamp } = bus;
@@ -1109,9 +1108,19 @@ export default function MapScreen() {
               latitudeDelta: 0,
               longitudeDelta: 0,
             });
-            busDisplayTargets.current[id] = { latitude, longitude };
           } else if (positionChanged) {
-            glideById[id] = glideMs;
+            // Only re-aim when this bus moved — other buses' updates also
+            // fire this snapshot and must not restart its glide.
+            busRegions.current[id].stopAnimation(() => {});
+            busRegions.current[id]
+              .timing({
+                latitude,
+                longitude,
+                duration: glideMs,
+                easing: Easing.linear,
+                useNativeDriver: false,
+              } as any)
+              .start();
           }
         });
 
@@ -1159,15 +1168,7 @@ export default function MapScreen() {
         Object.keys(lastCoords.current).forEach((key) => {
           if (!recentIds.includes(key)) delete lastCoords.current[key];
         });
-        Object.keys(busDisplayTargets.current).forEach((key) => {
-          if (!recentIds.includes(key)) delete busDisplayTargets.current[key];
-        });
 
-        // Aim each icon at its true position plus a spread offset when buses
-        // overlap (after offline buses are dropped, so they can't push the
-        // others aside). A bus whose own position and offset are unchanged is
-        // left alone, so other buses' updates never restart its glide.
-        applyBusSpread(glideById);
         Object.keys(headings.current).forEach((key) => {
           if (!recentIds.includes(key)) delete headings.current[key];
         });
@@ -2195,8 +2196,8 @@ const handleConfirmSheetConfirm = async () => {
         onRegionChangeComplete={(newRegion) => {
           regionRef.current = newRegion;
           updateStopLabels(newRegion);
-          // Zoom changes how much buses overlap on screen; re-spread them.
-          applyBusSpread();
+          // Zoom changes which buses overlap on screen; regroup them.
+          updateBusGroups(newRegion);
           if (!isProgrammaticMove() && userInteractingRef.current) {
             setCameraMode('free');
           }
@@ -2248,6 +2249,7 @@ const handleConfirmSheetConfirm = async () => {
               // into a request — avoids accidental requests from a mistap.
               if (selectedBusId) closeSelectedBus();
               setShowLocationList(false);
+              setGroupChooser(null);
               setSelectedStopCardId(stop.id);
             }}
           >
@@ -2277,15 +2279,19 @@ const handleConfirmSheetConfirm = async () => {
           // riders can tell which bus is which at a glance.
           const busRoute = orgRoutes.length > 1 ? orgRoutes.find((r) => r.id === busRouteIds[id]) : undefined;
           const ringColor = busRoute ? busRoute.color ?? primaryColor : null;
+          const group = busGroups[id];
+          const hiddenInGroup = !!group && group.lead !== id;
+          const groupCount = group && group.lead === id ? group.members.length : 0;
 
           return (
             <MarkerAnimated
               key={id}
               coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
               anchor={{ x: 0.5, y: 0.5 }}
-              onPress={() => handleBusPress(id)}
+              onPress={() => (group ? openGroupChooser(group.members) : handleBusPress(id))}
               tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel || !!rideEtaText}
-              zIndex={50}
+              opacity={hiddenInGroup ? 0 : 1}
+              zIndex={hiddenInGroup ? 49 : 50}
             >
               {/* Equal-height badge slots above and below keep the bus centered on the anchor. */}
               <View style={styles.busMarkerWrap}>
@@ -2308,6 +2314,10 @@ const handleConfirmSheetConfirm = async () => {
                     style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
                     resizeMode="contain"
                   />
+                  {/* Count for overlapping buses — always mounted, shown via opacity. */}
+                  <View style={[styles.busCountBadge, { backgroundColor: primaryColor, opacity: groupCount > 1 ? 1 : 0 }]}>
+                    <Text style={styles.busCountBadgeText}>{groupCount > 1 ? groupCount : ''}</Text>
+                  </View>
                 </View>
                 <View style={[styles.busBadgeSlot, { opacity: showLateLabel ? 1 : 0 }]}>
                   <View style={styles.lateUpdateBadge}>
@@ -2442,6 +2452,52 @@ const handleConfirmSheetConfirm = async () => {
           </TouchableOpacity>
         )}
       </Animated.View>
+
+      {groupChooser && !selectedBusId && (
+        <>
+          <TouchableWithoutFeedback onPress={() => setGroupChooser(null)}>
+            <View style={styles.transparentOverlay} />
+          </TouchableWithoutFeedback>
+          <View style={[styles.busInfoCardWrap, { top: topOverlay }]} pointerEvents="box-none">
+            <View style={[styles.busCloudInner, { backgroundColor: WHITE }]}>
+              <View style={styles.busCloudHeader}>
+                <Text style={[styles.busCloudTitle, { flex: 1 }]}>
+                  {groupChooser.length} buses here
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setGroupChooser(null)}
+                  hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                >
+                  <Icon name="close" size={18} color={GRAY_400} />
+                </TouchableOpacity>
+              </View>
+              {groupChooser.filter((id) => busLocations[id]).map((id) => {
+                const route = orgRoutes.find((r) => r.id === busRouteIds[id]);
+                const loc = busLocations[id];
+                return (
+                  <TouchableOpacity
+                    key={id}
+                    style={styles.groupRow}
+                    onPress={() => { setGroupChooser(null); handleBusPress(id); }}
+                    accessibilityRole="button"
+                  >
+                    <Icon name="directions-bus" size={20} color={route?.color ?? primaryColor} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.groupRowTitle}>{route?.name ?? 'Shuttle'}</Text>
+                      <Text style={styles.groupRowSub}>
+                        Driver: {driverFirstNames[id] ?? '…'}{loc.onBreak ? ' · On break' : ''}
+                      </Text>
+                    </View>
+                    <Icon name="chevron-right" size={20} color={GRAY_400} />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </>
+      )}
 
       {selectedStopCardId && !selectedBusId && (() => {
         const stop = stops.find((st) => st.id === selectedStopCardId);
@@ -3253,6 +3309,30 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   busIconWrap: { width: 70, height: 70, alignItems: 'center', justifyContent: 'center' },
+  busCountBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: WHITE,
+  },
+  busCountBadgeText: { color: WHITE, fontSize: 11, fontWeight: '800' },
+  groupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: GRAY_100,
+  },
+  groupRowTitle: { fontSize: 15, fontWeight: '700', color: GRAY_900 },
+  groupRowSub: { fontSize: 13, color: GRAY_500, marginTop: 1 },
   busRouteRing: {
     position: 'absolute',
     width: 52,
