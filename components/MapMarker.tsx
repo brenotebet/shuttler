@@ -10,15 +10,17 @@ type Props = {
   icon?: string;
   label?: string;
   color?: string;
+  /** Fade the name label out (kept in layout so the marker isn't re-laid-out). */
+  labelHidden?: boolean;
 };
 
-function MapMarker({ icon, label, color: colorProp }: Props) {
+function MapMarker({ icon, label, color: colorProp, labelHidden }: Props) {
   const { primaryColor } = useOrgTheme();
   const color = colorProp ?? primaryColor;
   return (
     <View style={styles.wrapper}>
       {label ? (
-        <View style={styles.chip}>
+        <View style={[styles.chip, labelHidden && { opacity: 0 }]}>
           <View style={[styles.chipAccent, { backgroundColor: color }]} />
           <Text style={styles.chipText} numberOfLines={1}>{label}</Text>
         </View>
