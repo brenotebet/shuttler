@@ -74,6 +74,7 @@ import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText 
 import { getBusRouteProgress, AT_STOP_METERS } from '../src/utils/busRoute';
 import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
+import { decodePath, snapToPath } from '../src/utils/routePath';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
@@ -247,6 +248,18 @@ export default function MapScreen() {
   useFirstLoginOnboarding();
   const stops = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
+  // Decoded road paths per route (stored by Org Setup). Kept in a ref too so
+  // the long-lived bus snapshot listener can snap to the latest paths.
+  const routePaths = useMemo(() => {
+    const map: Record<string, { latitude: number; longitude: number }[]> = {};
+    (org?.routes ?? []).forEach((r) => {
+      const coords = decodePath(r.path);
+      if (coords.length >= 2) map[r.id] = coords;
+    });
+    return map;
+  }, [org?.routes]);
+  const routePathsRef = useRef(routePaths);
+  routePathsRef.current = routePaths;
   // Returns a Firestore CollectionReference scoped to the current org.
   // Throws if orgId is not loaded — callers must only run after org is available.
   const orgCol = (name: string) => {
@@ -550,6 +563,20 @@ export default function MapScreen() {
 
   // Tapped stop: a small info card with routes, next bus, and Request.
   const [selectedStopCardId, setSelectedStopCardId] = useState<string | null>(null);
+  // Same pop-in as the bus card (fade + slight rise + scale), replayed for
+  // each new stop so switching stops reads as a new card.
+  const stopCardAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!selectedStopCardId) return;
+    stopCardAnim.stopAnimation();
+    stopCardAnim.setValue(0);
+    Animated.spring(stopCardAnim, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 6 }).start();
+  }, [selectedStopCardId, stopCardAnim]);
+  const closeStopCard = () => {
+    stopCardAnim.stopAnimation();
+    Animated.timing(stopCardAnim, { toValue: 0, duration: 140, useNativeDriver: true })
+      .start(() => setSelectedStopCardId(null));
+  };
   useEffect(() => {
     const r = regionRef.current ?? region ?? INITIAL_REGION;
     if (r) updateStopLabels(r as any);
@@ -994,7 +1021,13 @@ export default function MapScreen() {
         let anyBusMoved = visibleBuses.length !== Object.keys(lastCoords.current).length;
 
         visibleBuses.forEach((bus: any) => {
-          const { id, latitude, longitude, secondsAgo, timestamp } = bus;
+          const { id, secondsAgo, timestamp } = bus;
+          // Pull the fix onto the route's road when it's close (GPS drift
+          // onto lawns/buildings); a bus far off the path is left alone.
+          const path = bus.routeId ? routePathsRef.current[bus.routeId] : undefined;
+          const { latitude, longitude } = path
+            ? snapToPath({ latitude: bus.latitude, longitude: bus.longitude }, path)
+            : bus;
 
           const prev = lastCoords.current[id];
           const positionChanged = !prev || prev.latitude !== latitude || prev.longitude !== longitude;
@@ -2087,12 +2120,29 @@ const handleConfirmSheetConfirm = async () => {
         {campusHull.length >= 3 && (
           <Polygon
             coordinates={campusHull}
-            strokeColor={primaryColor + '99'}
-            fillColor={primaryColor + '12'}
-            strokeWidth={2}
-            lineDashPattern={[8, 6]}
+            strokeColor={primaryColor + '40'}
+            fillColor={primaryColor + '08'}
+            strokeWidth={1}
+            lineDashPattern={[6, 6]}
           />
         )}
+
+        {/* Route lines along the roads (only routes with a saved path). Drawn
+            first so stops and buses sit on top. Key includes the path so a
+            changed route replaces its line rather than mutating it. */}
+        {orgRoutes.map((r) => {
+          const coords = routePaths[r.id];
+          if (!coords) return null;
+          return (
+            <Polyline
+              key={`route-path-${r.id}-${r.pathKey ?? ''}`}
+              coordinates={coords}
+              strokeColor={primaryColor + '73'}
+              strokeWidth={4}
+              zIndex={1}
+            />
+          );
+        })}
 
         {/* Campus stops — hidden destination stop while ride is active */}
         {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
@@ -2284,10 +2334,23 @@ const handleConfirmSheetConfirm = async () => {
           : null;
         return (
           <>
-            <TouchableWithoutFeedback onPress={() => setSelectedStopCardId(null)}>
+            <TouchableWithoutFeedback onPress={closeStopCard}>
               <View style={styles.transparentOverlay} />
             </TouchableWithoutFeedback>
-            <View style={[styles.busInfoCardWrap, { top: topOverlay }]} pointerEvents="box-none">
+            <Animated.View
+              style={[
+                styles.busInfoCardWrap,
+                {
+                  top: topOverlay,
+                  opacity: stopCardAnim,
+                  transform: [
+                    { translateY: stopCardAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) },
+                    { scale: stopCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
+                  ],
+                },
+              ]}
+              pointerEvents="box-none"
+            >
               <View style={[styles.busCloudInner, { backgroundColor: WHITE }]}>
                 <View style={styles.busCloudHeader}>
                   <View style={{ flex: 1 }}>
@@ -2302,7 +2365,7 @@ const handleConfirmSheetConfirm = async () => {
                     )}
                   </View>
                   <TouchableOpacity
-                    onPress={() => setSelectedStopCardId(null)}
+                    onPress={closeStopCard}
                     hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                     accessibilityRole="button"
                     accessibilityLabel="Close stop info"
@@ -2339,7 +2402,7 @@ const handleConfirmSheetConfirm = async () => {
                   </TouchableOpacity>
                 )}
               </View>
-            </View>
+            </Animated.View>
           </>
         );
       })()}

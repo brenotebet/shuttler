@@ -8,7 +8,7 @@ import { View, ScrollView, TouchableOpacity, StyleSheet } from 'react-native'
 import { Text } from '../components/Text';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { collection, onSnapshot } from 'firebase/firestore';
 
 import ScreenContainer from '../components/ScreenContainer';
@@ -25,6 +25,7 @@ import {
   getTodayScheduleText,
 } from '../src/utils/scheduleUtils';
 import { getBusRouteProgress } from '../src/utils/busRoute';
+import { decodePath } from '../src/utils/routePath';
 import { STALE_WINDOW_SECONDS } from '../src/constants/stops';
 import type { Route, Stop, WeekSchedule } from '../src/org/OrgContext';
 import {
@@ -145,14 +146,16 @@ export default function RoutesScreen() {
     return { at, toward, total: onRoute.length, onBreak };
   }, [liveBuses, selectedRoute, routeStops]);
 
+  const roadPath = useMemo(() => decodePath(selectedRoute?.path), [selectedRoute?.path]);
+
   const mapRef = useRef<MapView>(null);
   const fitMap = useCallback(() => {
     if (routeStops.length === 0) return;
     mapRef.current?.fitToCoordinates(
-      routeStops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
+      [...routeStops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })), ...roadPath],
       { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: false },
     );
-  }, [routeStops]);
+  }, [routeStops, roadPath]);
 
   const requestStop = (stop: Stop) => {
     navigation.navigate('Map', { focusStopId: stop.id, focusStopName: stop.name });
@@ -257,6 +260,9 @@ export default function RoutesScreen() {
               rotateEnabled={false}
               toolbarEnabled={false}
             >
+              {roadPath.length >= 2 && (
+                <Polyline coordinates={roadPath} strokeColor={primaryColor} strokeWidth={4} />
+              )}
               {routeStops.map((s, i) => (
                 <Marker
                   key={`${selectedRoute.id}-${s.id}`}

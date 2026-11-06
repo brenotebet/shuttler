@@ -56,6 +56,10 @@ export type Route = {
   stopIds: string[];
   hoursOfOperation?: RouteHours[]; // legacy
   schedule?: WeekSchedule;         // per-weekday schedule
+  // Road-following path for the full loop, encoded polyline. Computed in Org
+  // Setup when the route is saved; see src/utils/routePath.ts.
+  path?: string;
+  pathKey?: string;                // stop sequence the path was computed for
 };
 
 export type AuthMethod = 'saml' | 'email' | 'phone' | 'google' | 'email+google';

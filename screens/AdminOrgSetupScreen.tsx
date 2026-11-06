@@ -52,6 +52,8 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useOrgSetupProgress } from '../src/hooks/useOrgSetupProgress';
 import { ORG_TYPES, allowsParentRole } from '../src/constants/orgTypes';
 import { getTodayScheduleText } from '../src/utils/scheduleUtils';
+import { fetchLoopPath } from '../src/utils/directions';
+import { routePathKey, encodePath } from '../src/utils/routePath';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
@@ -991,6 +993,24 @@ function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// Gives each route a road-following path for riders' maps. Only routes whose
+// stop sequence changed since their path was computed are refetched, so most
+// saves make no API call. A failed fetch saves the route without a path
+// (riders then see no road line) rather than blocking the save.
+async function withRoadPaths(nextRoutes: Route[], nextStops: Stop[]): Promise<Route[]> {
+  return Promise.all(nextRoutes.map(async (route) => {
+    const routeStops = route.stopIds
+      .map((id) => nextStops.find((st) => st.id === id))
+      .filter((st): st is Stop => !!st);
+    const { path: _oldPath, pathKey: _oldKey, ...bare } = route;
+    if (routeStops.length < 2) return bare;
+    const key = routePathKey(routeStops);
+    if (route.path && route.pathKey === key) return route;
+    const coords = await fetchLoopPath(routeStops);
+    return coords ? { ...bare, path: encodePath(coords), pathKey: key } : bare;
+  }));
+}
+
 function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   const { org, refreshOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
@@ -1134,7 +1154,8 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       setIsSaving(true);
       try {
         const bounds = calcBoundsFromStops(nextStops);
-        const payload: Record<string, unknown> = { stops: nextStops, routes: nextRoutes, updatedAt: serverTimestamp() };
+        const routesWithPaths = await withRoadPaths(nextRoutes, nextStops);
+        const payload: Record<string, unknown> = { stops: nextStops, routes: routesWithPaths, updatedAt: serverTimestamp() };
         // Route hours are evaluated in the org's timezone; fill it in from the
         // device the first time if the admin hasn't set one in Profile.
         if (!org.timezone) payload.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
