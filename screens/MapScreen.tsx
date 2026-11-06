@@ -1441,19 +1441,29 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.status, driverId, bottomCardHeight]);
 
-  // Keep the ride's bus and the rider's stop in view as the bus moves.
-  // Throttled so the camera isn't constantly moving; panning the map sets
-  // cameraMode to 'free' and stops this until the rider taps Fit.
-  const lastRideFitRef = useRef(0);
+  // Zoom in once when the bus gets close — the same moment the driver's app
+  // marks the request approachingAt and sends the "Bus On The Way!" push.
+  // Keyed off the request doc (not the push) so it also works with push
+  // notifications off, or when the app is opened from that push. Otherwise
+  // the camera stays where the rider left it for the whole ride.
+  const zoomedForRequestRef = useRef<string | null>(null);
   const rideBusLoc = resolvedDriverId ? busLocations[resolvedDriverId] : undefined;
+  const approachingMs: number | null = (request as any)?.approachingAt?.toMillis?.() ?? null;
   useEffect(() => {
-    if (!rideActive || !rideBusLoc) return;
-    if (cameraMode !== 'overview' || recentlyInteracted(4000)) return;
-    if (Date.now() - lastRideFitRef.current < 8000) return;
-    lastRideFitRef.current = Date.now();
-    fitActiveRide();
+    if (!rideActive || !approachingMs || !requestId || !request?.stop || !rideBusLoc) return;
+    if (zoomedForRequestRef.current === requestId) return;
+    if (recentlyInteracted(2000)) return; // retried on the next bus update
+    zoomedForRequestRef.current = requestId;
+    fitToPoints(
+      [
+        { latitude: request.stop.latitude, longitude: request.stop.longitude },
+        { latitude: rideBusLoc.latitude, longitude: rideBusLoc.longitude },
+      ],
+      'overview',
+      0.004,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rideActive, rideBusLoc?.latitude, rideBusLoc?.longitude, cameraMode]);
+  }, [rideActive, approachingMs, requestId, rideBusLoc?.latitude, rideBusLoc?.longitude]);
 
   useEffect(() => {
     if (request?.status === 'completed') {
