@@ -74,6 +74,7 @@ import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText 
 import { getBusProgress, AT_STOP_METERS } from '../src/utils/busRoute';
 import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
+import { spreadOffsets, type Offset } from '../src/utils/busSpread';
 import { decodePath, snapToPath } from '../src/utils/routePath';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
@@ -518,6 +519,43 @@ export default function MapScreen() {
   // Buses whose heading came from real movement (not the 0° placeholder) —
   // only those headings are trusted to tell direction on shared roads.
   const headingKnown = useRef<Set<string>>(new Set());
+  // Where each bus icon is currently heading on screen (true position plus a
+  // small spread offset when buses overlap). Only the icon uses this; ETAs,
+  // next stop and the bus card all use the true position in busLocations.
+  const busDisplayTargets = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
+
+  // Move each bus icon to its true position plus any spread offset. Buses
+  // that just moved glide over `glideById[id]`; buses only nudged because
+  // another bus arrived or the zoom changed take a short ease.
+  const applyBusSpread = (glideById: { [id: string]: number } = {}) => {
+    const ids = Object.keys(lastCoords.current);
+    const r = regionRef.current ?? INITIAL_REGION;
+    const { width, height } = Dimensions.get('window');
+    const offsets: Record<string, Offset> = spreadOffsets(
+      ids.map((id) => ({ id, ...lastCoords.current[id] })),
+      r,
+      { width, height },
+    );
+    ids.forEach((id) => {
+      const truePos = lastCoords.current[id];
+      const o = offsets[id] ?? { dLat: 0, dLng: 0 };
+      const target = { latitude: truePos.latitude + o.dLat, longitude: truePos.longitude + o.dLng };
+      const region = busRegions.current[id];
+      if (!region) return;
+      const prevTarget = busDisplayTargets.current[id];
+      if (prevTarget && prevTarget.latitude === target.latitude && prevTarget.longitude === target.longitude) return;
+      busDisplayTargets.current[id] = target;
+      region.stopAnimation(() => {});
+      region
+        .timing({
+          ...target,
+          duration: glideById[id] ?? 350,
+          easing: glideById[id] ? Easing.linear : Easing.out(Easing.quad),
+          useNativeDriver: false,
+        } as any)
+        .start();
+    });
+  };
   const fullRouteRef = useRef<{ latitude: number; longitude: number }[]>([]);
   const didInitialFitRef = useRef(false);
 
@@ -1022,6 +1060,7 @@ export default function MapScreen() {
         // With multiple buses updating at ~5s intervals, an unconditional bump
         // would keep forceBusTracks=true almost continuously.
         let anyBusMoved = visibleBuses.length !== Object.keys(lastCoords.current).length;
+        const glideById: { [id: string]: number } = {};
 
         visibleBuses.forEach((bus: any) => {
           const { id, secondsAgo, timestamp } = bus;
@@ -1070,21 +1109,12 @@ export default function MapScreen() {
               latitudeDelta: 0,
               longitudeDelta: 0,
             });
+            busDisplayTargets.current[id] = { latitude, longitude };
           } else if (positionChanged) {
-            // Only re-aim when this bus moved — other buses' updates also
-            // fire this snapshot and must not restart its glide.
-            busRegions.current[id].stopAnimation(() => {});
-            busRegions.current[id]
-              .timing({
-                latitude,
-                longitude,
-                duration: glideMs,
-                easing: Easing.linear,
-                useNativeDriver: false,
-              } as any)
-              .start();
+            glideById[id] = glideMs;
           }
         });
+
 
         // Only call setBusLocations when something actually changed — avoids
         // re-rendering all bus markers on every snapshot even for unchanged buses.
@@ -1129,6 +1159,15 @@ export default function MapScreen() {
         Object.keys(lastCoords.current).forEach((key) => {
           if (!recentIds.includes(key)) delete lastCoords.current[key];
         });
+        Object.keys(busDisplayTargets.current).forEach((key) => {
+          if (!recentIds.includes(key)) delete busDisplayTargets.current[key];
+        });
+
+        // Aim each icon at its true position plus a spread offset when buses
+        // overlap (after offline buses are dropped, so they can't push the
+        // others aside). A bus whose own position and offset are unchanged is
+        // left alone, so other buses' updates never restart its glide.
+        applyBusSpread(glideById);
         Object.keys(headings.current).forEach((key) => {
           if (!recentIds.includes(key)) delete headings.current[key];
         });
@@ -2156,6 +2195,8 @@ const handleConfirmSheetConfirm = async () => {
         onRegionChangeComplete={(newRegion) => {
           regionRef.current = newRegion;
           updateStopLabels(newRegion);
+          // Zoom changes how much buses overlap on screen; re-spread them.
+          applyBusSpread();
           if (!isProgrammaticMove() && userInteractingRef.current) {
             setCameraMode('free');
           }
