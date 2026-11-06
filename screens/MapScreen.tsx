@@ -2127,6 +2127,9 @@ const handleConfirmSheetConfirm = async () => {
           />
         )}
 
+        {/* Polylines pass strokeColors as well as strokeColor: with the Google
+            provider on iOS (react-native-maps 1.20) strokeColor alone is
+            overridden by a default style span and renders blue. */}
         {/* Route lines along the roads (only routes with a saved path). Drawn
             first so stops and buses sit on top. Key includes the path so a
             changed route replaces its line rather than mutating it. */}
@@ -2138,6 +2141,7 @@ const handleConfirmSheetConfirm = async () => {
               key={`route-path-${r.id}-${r.pathKey ?? ''}`}
               coordinates={coords}
               strokeColor={primaryColor + '73'}
+              strokeColors={[primaryColor + '73']}
               strokeWidth={4}
               zIndex={1}
             />
@@ -2233,6 +2237,7 @@ const handleConfirmSheetConfirm = async () => {
               coordinates={routeCoords}
               strokeWidth={2}
               strokeColor={primaryColor + '40'}
+              strokeColors={[primaryColor + '40']}
               lineCap="round"
               lineJoin="round"
               zIndex={1}
@@ -2241,6 +2246,7 @@ const handleConfirmSheetConfirm = async () => {
               coordinates={routeCoords}
               strokeWidth={5}
               strokeColor={primaryColor}
+              strokeColors={[primaryColor]}
               lineCap="round"
               lineJoin="round"
               zIndex={2}
