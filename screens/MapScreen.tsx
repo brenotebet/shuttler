@@ -1,7 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Image, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking } from 'react-native'
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, Image, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking } from 'react-native'
 import { Text } from '../components/Text';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -71,6 +71,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText } from '../src/utils/scheduleUtils';
 import { getBusRouteProgress, AT_STOP_METERS } from '../src/utils/busRoute';
+import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
@@ -84,19 +85,6 @@ import { borderRadius } from '../src/styles/common';
 // Keeps requests honest — students must physically be on/near campus.
 const STOP_REQUEST_RADIUS_M = 400;
 
-function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const toDeg = (r: number) => (r * 180) / Math.PI;
-  const φ1 = toRad(lat1),
-    φ2 = toRad(lat2),
-    Δλ = toRad(lon2 - lon1);
-  const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-  return (toDeg(Math.atan2(y, x)) + 360) % 360;
-}
-function quantizeBearing(bearing: number) {
-  return (Math.round(bearing / 90) * 90) % 360;
-}
 
 type Bounds = { latMin: number; latMax: number; lonMin: number; lonMax: number };
 
@@ -487,6 +475,8 @@ export default function MapScreen() {
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
   const headings = useRef<{ [id: string]: number }>({});
+  // Server timestamp of each bus's last position, to time the glide to the next one.
+  const lastUpdateMs = useRef<{ [id: string]: number }>({});
   const fullRouteRef = useRef<{ latitude: number; longitude: number }[]>([]);
   const didInitialFitRef = useRef(false);
 
@@ -951,15 +941,20 @@ export default function MapScreen() {
           const { id, latitude, longitude, secondsAgo, timestamp } = bus;
 
           const prev = lastCoords.current[id];
-          if (prev) {
-            if (!anyBusMoved && (prev.latitude !== latitude || prev.longitude !== longitude)) {
-              anyBusMoved = true;
-            }
-            headings.current[id] = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
-          } else {
-            anyBusMoved = true;
-            headings.current[id] = 0;
-          }
+          const positionChanged = !prev || prev.latitude !== latitude || prev.longitude !== longitude;
+          if (!prev) anyBusMoved = true;
+          // Parked buses keep their heading (they used to snap to north), and
+          // turns are eased over a couple of updates instead of snapping.
+          const prevHeading = headings.current[id] ?? null;
+          const heading = nextHeading(prevHeading, prev ?? null, { latitude, longitude }) ?? 0;
+          if (!anyBusMoved && prev && (positionChanged || heading !== prevHeading)) anyBusMoved = true;
+          headings.current[id] = heading;
+
+          // Glide over the real time since this bus's last update so it
+          // arrives as the next one lands, instead of moving then pausing.
+          const updateMs = timestamp.getTime();
+          const glideMs = glideDurationMs(lastUpdateMs.current[id] ?? null, updateMs);
+          if (positionChanged) lastUpdateMs.current[id] = updateMs;
 
           lastCoords.current[id] = { latitude, longitude };
           newLocations[id] = {
@@ -981,12 +976,16 @@ export default function MapScreen() {
               latitudeDelta: 0,
               longitudeDelta: 0,
             });
-          } else {
+          } else if (positionChanged) {
+            // Only re-aim when this bus moved — other buses' updates also
+            // fire this snapshot and must not restart its glide.
+            busRegions.current[id].stopAnimation(() => {});
             busRegions.current[id]
               .timing({
                 latitude,
                 longitude,
-                duration: 1800,
+                duration: glideMs,
+                easing: Easing.linear,
                 useNativeDriver: false,
               } as any)
               .start();
@@ -1038,6 +1037,9 @@ export default function MapScreen() {
         });
         Object.keys(headings.current).forEach((key) => {
           if (!recentIds.includes(key)) delete headings.current[key];
+        });
+        Object.keys(lastUpdateMs.current).forEach((key) => {
+          if (!recentIds.includes(key)) delete lastUpdateMs.current[key];
         });
       },
       (err) => {
