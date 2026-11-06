@@ -28,9 +28,9 @@ Riders normally must be within 400 m of a stop to request a pickup. **The demo o
 
 ### Navigating roles
 
-- **Rider view:** map with live shuttles, stop request flow, announcements.
-- **Driver view:** shift start/stop, boarding counts, route stops.
-- **Admin view:** org setup (profile, auth, stops/routes, members, billing, operations), analytics, AI assistant.
+- **Rider view:** map with live shuttles and road-drawn routes; tap a stop for its info card and "Request pickup here"; Routes tab with each route's map, stop order, and live bus position; service alerts.
+- **Driver view:** shift start/stop, breaks, seat availability, boarding counts, route stops.
+- **Admin view:** Menu → Dashboard (live driver cards), Analytics (AI insights, exports), Org Setup (profile, auth, stops/routes, people, billing, operations), AI assistant.
 
 ### AI Assistant
 
