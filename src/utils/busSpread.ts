@@ -10,8 +10,14 @@ export type SpreadBus = { id: string; latitude: number; longitude: number };
 export type SpreadRegion = { latitudeDelta: number; longitudeDelta: number };
 export type Offset = { dLat: number; dLng: number };
 
-/** Minimum on-screen distance between two bus icons' centres, in points. */
-export const BUS_MIN_SEPARATION_PT = 44;
+/**
+ * Minimum on-screen distance between two bus icons' centres, in points.
+ * The marker image is 70×70 pt but the bus drawn in it is only ~13×28 pt
+ * (assets/bus-icon.png is mostly transparent padding), so buses only touch
+ * within about one bus length. 30 pt = that plus a small gap; anything
+ * farther apart is already visibly separate and is left where it is.
+ */
+export const BUS_MIN_SEPARATION_PT = 30;
 
 /**
  * Display offsets (in degrees) for every bus. Buses not overlapping anything

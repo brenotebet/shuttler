@@ -56,3 +56,14 @@ describe('spreadOffsets', () => {
     expect(sameOffsets(spreadOffsets([a, b], campus, screen), spreadOffsets([b, a], campus, screen))).toBe(true);
   });
 });
+
+describe('spreadOffsets threshold', () => {
+  it('does not move buses that are visibly apart but within the old 44 pt', () => {
+    // ~38 pt apart at campus zoom: two separate icons, no overlap.
+    const ptLng = campus.longitudeDelta / screen.width;
+    const buses = [at('a', 38.6, -89.8), at('b', 38.6, -89.8 + 38 * ptLng)];
+    const r = spreadOffsets(buses, campus, screen);
+    expect(r.a).toEqual({ dLat: 0, dLng: 0 });
+    expect(r.b).toEqual({ dLat: 0, dLng: 0 });
+  });
+});
