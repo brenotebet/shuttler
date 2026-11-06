@@ -12,7 +12,7 @@ import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase/firebaseconfig';
-import MapView, { Marker, Region } from 'react-native-maps';
+import MapView, { Marker, Polyline, Region } from 'react-native-maps';
 import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
@@ -50,6 +50,10 @@ import AppButton from '../components/AppButton';
 import BottomSheet from '../components/BottomSheet';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useOrgSetupProgress } from '../src/hooks/useOrgSetupProgress';
+import { ORG_TYPES, allowsParentRole } from '../src/constants/orgTypes';
+import { getTodayScheduleText } from '../src/utils/scheduleUtils';
+import { fetchLoopPath } from '../src/utils/directions';
+import { routePathKey, encodePath } from '../src/utils/routePath';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
@@ -103,6 +107,11 @@ const COLOR_SWATCHES = [
 function ProfileTab() {
   const { org, refreshOrg } = useOrg();
   const [name, setName] = useState(org?.name ?? '');
+  const [orgType, setOrgType] = useState(org?.orgType ?? '');
+  // Default to the device's IANA timezone if the org hasn't saved one yet.
+  const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [timezone, setTimezone] = useState(org?.timezone ?? deviceTimezone);
+  const [showTzPicker, setShowTzPicker] = useState(false);
   const [logoUrl, setLogoUrl] = useState(org?.logoUrl ?? '');
   const [primaryColor, setPrimaryColor] = useState(org?.primaryColor ?? COLOR_SWATCHES[0]);
   const [customColor, setCustomColor] = useState('');
@@ -169,6 +178,8 @@ function ProfileTab() {
         name: name.trim(),
         logoUrl: logoUrl || null,
         primaryColor: effectiveColor,
+        ...(orgType && { orgType }),
+        timezone,
         updatedAt: serverTimestamp(),
       });
       await refreshOrg();
@@ -178,7 +189,7 @@ function ProfileTab() {
     } finally {
       setIsSaving(false);
     }
-  }, [org, name, logoUrl, primaryColor, customColor, refreshOrg]);
+  }, [org, name, orgType, timezone, logoUrl, primaryColor, customColor, refreshOrg]);
 
   const activeColor = customColor.match(/^#[0-9a-fA-F]{6}$/) ? customColor : primaryColor;
 
@@ -195,6 +206,76 @@ function ProfileTab() {
         autoCapitalize="words"
       />
       <Text style={styles.hint}>Shown in the org selector for all users.</Text>
+
+      {/* Org type */}
+      <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Organization Type</Text>
+      <View style={profileStyles.typeRow}>
+        {ORG_TYPES.map((t) => {
+          const selected = orgType === t.value;
+          return (
+            <TouchableOpacity
+              key={t.value}
+              onPress={() => setOrgType(t.value)}
+              style={[
+                profileStyles.typeChip,
+                selected && { borderColor: activeColor, backgroundColor: `${activeColor}14` },
+              ]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+            >
+              <Text style={[profileStyles.typeChipText, selected && { color: activeColor, fontWeight: '700' }]}>
+                {t.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={styles.hint}>
+        {!orgType
+          ? 'Not set yet. Choose one so the app shows the right options for your riders.'
+          : allowsParentRole(orgType)
+          ? 'K-12 schools can invite parents to track their children\'s shuttle.'
+          : 'Parent accounts are only offered for K-12 schools.'}
+      </Text>
+
+      {/* Timezone */}
+      <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Timezone</Text>
+      <TouchableOpacity style={styles.tzRow} onPress={() => setShowTzPicker(true)} activeOpacity={0.7}>
+        <Icon name="schedule" size={18} color={GRAY_500} />
+        <Text style={styles.tzValue}>
+          {COMMON_TIMEZONES.find((t) => t.value === timezone)?.label ?? timezone}
+        </Text>
+        <Icon name="expand-more" size={20} color={GRAY_500} />
+      </TouchableOpacity>
+      <Text style={styles.hint}>Route hours are shown and checked in this timezone.</Text>
+      <BottomSheet
+        visible={showTzPicker}
+        onClose={() => setShowTzPicker(false)}
+        sheetStyle={{ paddingHorizontal: 0, paddingBottom: 32, maxHeight: '75%' }}
+      >
+        <View style={styles.tzModalHeader}>
+          <Text style={styles.tzModalTitle}>Select Timezone</Text>
+          <TouchableOpacity onPress={() => setShowTzPicker(false)}>
+            <Icon name="close" size={22} color={GRAY_700} />
+          </TouchableOpacity>
+        </View>
+        <FlatList
+          data={COMMON_TIMEZONES}
+          keyExtractor={(item) => item.value}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.tzOption, timezone === item.value && { backgroundColor: '#f0f4ff' }]}
+              onPress={() => { setTimezone(item.value); setShowTzPicker(false); }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.tzOptionLabel}>{item.label}</Text>
+                <Text style={styles.tzOptionValue}>{item.value}</Text>
+              </View>
+              {timezone === item.value && <Icon name="check" size={18} color="#4f46e5" />}
+            </TouchableOpacity>
+          )}
+        />
+      </BottomSheet>
 
       {/* Logo */}
       <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Organization Logo</Text>
@@ -277,6 +358,16 @@ const profileStyles = StyleSheet.create({
   swatchSelected: { borderWidth: 3, borderColor: GRAY_900 },
   hexRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   hexPreview: { width: 36, height: 36, borderRadius: borderRadius.sm, borderWidth: 1, borderColor: GRAY_200 },
+  typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  typeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.xl,
+    borderWidth: 1.5,
+    borderColor: GRAY_200,
+    backgroundColor: WHITE,
+  },
+  typeChipText: { fontSize: 13, color: GRAY_700, fontWeight: '500' },
 });
 
 // ---- Auth Settings Tab ----
@@ -779,18 +870,6 @@ const hoursStyles = StyleSheet.create({
 
 // ---- Stop tab extra styles ----
 const stopStyles = StyleSheet.create({
-  manualToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    marginBottom: 6,
-  },
-  manualToggleText: {
-    flex: 1,
-    fontSize: 12,
-    color: GRAY_500,
-  },
   manualCoordsBox: {
     backgroundColor: GRAY_50,
     borderRadius: 10,
@@ -823,50 +902,6 @@ const stopStyles = StyleSheet.create({
 });
 
 const newStopStyles = StyleSheet.create({
-  card: {
-    backgroundColor: WHITE,
-    borderWidth: 1,
-    borderColor: GRAY_200,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 16,
-    gap: 10,
-  },
-  stepHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  stepHeaderDisabled: {
-    opacity: 0.4,
-  },
-  stepBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  stepBadgeInactive: {
-    backgroundColor: GRAY_200,
-  },
-  stepNum: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: GRAY_500,
-  },
-  stepLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: GRAY_900,
-  },
-  stepHint: {
-    fontSize: 11,
-    color: GRAY_400,
-    marginLeft: 2,
-  },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -913,12 +948,6 @@ const newStopStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
-  tapHint: {
-    fontSize: 12,
-    color: GRAY_400,
-    textAlign: 'center',
-    marginVertical: 2,
-  },
   manualToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -930,32 +959,7 @@ const newStopStyles = StyleSheet.create({
     fontSize: 12,
     color: GRAY_400,
   },
-  divider: {
-    height: 1,
-    backgroundColor: GRAY_100,
-    marginVertical: 4,
-  },
-  inputDisabled: {
-    backgroundColor: GRAY_50,
-    color: GRAY_400,
-  },
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderRadius: 10,
-    paddingVertical: 13,
-    marginTop: 4,
-  },
-  addBtnDisabled: {
-    opacity: 0.4,
-  },
-  addBtnText: {
-    color: WHITE,
-    fontWeight: '700',
-    fontSize: 15,
-  },
+
 });
 
 // ---- Stop Configuration Tab ----
@@ -977,26 +981,60 @@ function calcBoundsFromStops(stops: Stop[]) {
   };
 }
 
+// Stops and routes are edited in two views behind a Stops | Routes switch.
+// Every add, edit, or delete is written to Firestore immediately — there is
+// no global Save button, so nothing is lost by leaving the tab and a
+// background org refresh can't wipe unsaved work.
+type StopsView = 'stops' | 'routes';
+type StopPanelMode = 'list' | 'add' | 'edit';
+type LatLng = { latitude: number; longitude: number };
+
+function newId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// Gives each route a road-following path for riders' maps. Only routes whose
+// stop sequence changed since their path was computed are refetched, so most
+// saves make no API call. A failed fetch saves the route without a path
+// (riders then see no road line) rather than blocking the save.
+async function withRoadPaths(nextRoutes: Route[], nextStops: Stop[]): Promise<Route[]> {
+  return Promise.all(nextRoutes.map(async (route) => {
+    const routeStops = route.stopIds
+      .map((id) => nextStops.find((st) => st.id === id))
+      .filter((st): st is Stop => !!st);
+    const { path: _oldPath, pathKey: _oldKey, ...bare } = route;
+    if (routeStops.length < 2) return bare;
+    const key = routePathKey(routeStops);
+    if (route.path && route.pathKey === key) return route;
+    const coords = await fetchLoopPath(routeStops);
+    return coords ? { ...bare, path: encodePath(coords), pathKey: key } : bare;
+  }));
+}
+
 function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   const { org, refreshOrg } = useOrg();
   const { primaryColor } = useOrgTheme();
-  const navigation = useNavigation<any>();
   const planLimits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
   const mapRef = useRef<MapView>(null);
-  const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
-  const [routes, _setRoutes] = useState<Route[]>(org?.routes ?? []);
-  // Track whether the admin has unsaved route changes so a background Firestore
-  // snapshot (e.g. Stripe webhook updating subscriptionStatus) doesn't wipe them.
-  const routesDirtyRef = useRef(false);
-  const setRoutes = useCallback(
-    (updater: Route[] | ((prev: Route[]) => Route[])) => {
-      routesDirtyRef.current = true;
-      _setRoutes(updater as any);
-    },
-    [],
-  );
-  const [mapCollapsed, setMapCollapsed] = useState(false);
 
+  // Local copies so writes can be applied optimistically; reset from the org
+  // whenever it changes (every change is persisted, so nothing is lost).
+  const [stops, setStops] = useState<Stop[]>(org?.stops ?? []);
+  const [routes, setRoutes] = useState<Route[]>(org?.routes ?? []);
+  const stopsRef = useRef(stops);
+  stopsRef.current = stops;
+  useEffect(() => { setStops(org?.stops ?? []); }, [org?.stops]);
+  useEffect(() => { setRoutes(org?.routes ?? []); }, [org?.routes]);
+
+  const [view, setView] = useState<StopsView>('stops');
+  const [mode, setMode] = useState<StopPanelMode>('list');
+  const [editingStopId, setEditingStopId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const [draftCoords, setDraftCoords] = useState<LatLng | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [routeEditorTarget, setRouteEditorTarget] = useState<{ route: Route; isNew: boolean } | null>(null);
+
+  const [mapCollapsed, setMapCollapsed] = useState(false);
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -1011,36 +1049,17 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
     return () => { onShow.remove(); onHide.remove(); };
   }, []);
 
-  // Default to the device's IANA timezone if the org hasn't saved one yet.
-  const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const [timezone, setTimezone] = useState(org?.timezone ?? deviceTimezone);
-  const [showTzPicker, setShowTzPicker] = useState(false);
-  useEffect(() => { setTimezone(org?.timezone ?? deviceTimezone); }, [org?.timezone]);
-
-  // Keep local state in sync when org updates via real-time Firestore listener.
-  // Routes are only synced when the admin has no unsaved changes — a background
-  // snapshot (e.g. Stripe webhook) must not overwrite in-progress edits.
-  useEffect(() => { setStops(org?.stops ?? []); }, [org?.stops]);
-  useEffect(() => {
-    if (!routesDirtyRef.current) _setRoutes(org?.routes ?? []);
-  }, [org?.routes]);
-
-  const hasOrgCenter = org?.mapCenter && (org.mapCenter.latitude !== 0 || org.mapCenter.longitude !== 0);
-  const [mapCenter, setMapCenter] = useState(
+  const hasOrgCenter = !!org?.mapCenter && (org.mapCenter.latitude !== 0 || org.mapCenter.longitude !== 0);
+  const [mapCenter, setMapCenter] = useState<LatLng>(
     hasOrgCenter ? org!.mapCenter : { latitude: 39.5, longitude: -98.35 },
   );
-  const [pendingName, setPendingName] = useState('');
-  const [pendingCoords, setPendingCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
 
-  // Location search state
+  // Place search (Google Places autocomplete), biased to the visible map.
   type PlaceSuggestion = { placeId: string; description: string };
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<PlaceSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Manual coordinate entry
   const [showManualCoords, setShowManualCoords] = useState(false);
   const [manualLat, setManualLat] = useState('');
   const [manualLon, setManualLon] = useState('');
@@ -1051,24 +1070,15 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
     try {
       const bias = `${mapCenter.latitude},${mapCenter.longitude}`;
       const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&location=${bias}&radius=50000&key=${GOOGLE_MAPS_API_KEY}`;
-      if (__DEV__) console.log('[Places] autocomplete url:', url);
       const res = await fetch(url);
       const json = await res.json();
-      if (__DEV__) console.log('[Places] status:', json.status, json.error_message ?? '');
       if (json.status === 'OK') {
         setSearchResults(
-          (json.predictions ?? []).slice(0, 5).map((p: any) => ({
-            placeId: p.place_id,
-            description: p.description,
-          })),
+          (json.predictions ?? []).slice(0, 5).map((p: any) => ({ placeId: p.place_id, description: p.description })),
         );
       } else {
-        // Non-OK status — surface a hint in dev so the admin can diagnose
         if (__DEV__ && json.status !== 'ZERO_RESULTS') {
-          showToast(
-            `Places API: ${json.status} — ${json.error_message ?? 'check that the Places API is enabled for this key and that billing is active.'}`,
-            'error',
-          );
+          showToast(`Places API: ${json.status} — ${json.error_message ?? 'check the Places API key and billing.'}`, 'error');
         }
         setSearchResults([]);
       }
@@ -1086,28 +1096,34 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
     searchDebounceRef.current = setTimeout(() => searchPlaces(text), 350);
   }, [searchPlaces]);
 
+  const fitToStops = useCallback((list: Stop[]) => {
+    if (list.length === 0) return;
+    mapRef.current?.fitToCoordinates(
+      list.map((st) => ({ latitude: st.latitude, longitude: st.longitude })),
+      { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true },
+    );
+  }, []);
+
+  const focusMap = useCallback((coords: LatLng) => {
+    mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.008, longitudeDelta: 0.008 }, 400);
+  }, []);
+
   const handleSelectPlace = useCallback(async (suggestion: PlaceSuggestion) => {
     setSearchResults([]);
     setSearchQuery('');
+    Keyboard.dismiss();
     try {
       const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${suggestion.placeId}&fields=geometry,name&key=${GOOGLE_MAPS_API_KEY}`;
-      const res = await fetch(url);
-      const json = await res.json();
+      const json = await (await fetch(url)).json();
       if (json.status === 'OK') {
         const loc = json.result.geometry.location;
         const coords = { latitude: loc.lat, longitude: loc.lng };
-        setPendingCoords(coords);
-        // Pre-fill name from the first part of the description (before the first comma)
-        const autoName = suggestion.description.split(',')[0].trim();
-        if (!pendingName) setPendingName(autoName);
-        // Pan map to the pin
-        mapRef.current?.animateToRegion(
-          { ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 },
-          500,
-        );
+        setDraftCoords(coords);
+        if (!draftName.trim()) setDraftName(suggestion.description.split(',')[0].trim());
+        focusMap(coords);
       }
     } catch {}
-  }, [pendingName]);
+  }, [draftName, focusMap]);
 
   const handleApplyManualCoords = useCallback(() => {
     const lat = parseFloat(manualLat);
@@ -1117,603 +1133,883 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       return;
     }
     const coords = { latitude: lat, longitude: lon };
-    setPendingCoords(coords);
-    mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 500);
+    setDraftCoords(coords);
+    focusMap(coords);
     setShowManualCoords(false);
     setManualLat('');
     setManualLon('');
-  }, [manualLat, manualLon]);
+  }, [manualLat, manualLon, focusMap]);
 
-  // Route editing state
-  const [newRouteName, setNewRouteName] = useState('');
-  const [showRouteForm, setShowRouteForm] = useState(false);
-  const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+  // ---- Persistence ----
 
-  const handleMapPress = useCallback((e: any) => {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
-    setPendingCoords({ latitude, longitude });
-    setSearchResults([]);
-  }, []);
-
-  const handleAddStop = useCallback(() => {
-    if (!pendingName.trim()) {
-      showToast('Enter a stop name.', 'error');
-      return;
-    }
-    const stopNameError = validateUserText(pendingName, 'Stop name');
-    if (stopNameError) {
-      showToast(stopNameError, 'error');
-      return;
-    }
-    if (!pendingCoords) {
-      showToast('Tap the map or enter latitude and longitude.', 'error');
-      return;
-    }
-    if (stops.some((s) => s.name.trim().toLowerCase() === pendingName.trim().toLowerCase())) {
-      showToast('A stop with this name already exists.', 'error');
-      return;
-    }
-    if (stops.length >= planLimits.maxStops) {
-      const next = planFor('maxStops', stops.length + 1);
-      Alert.alert(
-        'Stop limit reached',
-        `Your ${planLimits.label} plan includes ${stopLimitText(planLimits)}. ` +
-          (next
-            ? `You need the ${next.label} plan (${next.price}) or higher for ${stopLimitText(next).toLowerCase()}.`
-            : 'Contact us about an Enterprise plan sized for your service.'),
-        [
-          { text: 'View Plans', onPress: onGoToBilling },
-          { text: 'OK', style: 'cancel' },
-        ],
-      );
-      return;
-    }
-    const newStop: Stop = {
-      id: `stop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-      name: pendingName.trim(),
-      latitude: pendingCoords.latitude,
-      longitude: pendingCoords.longitude,
-    };
-    setStops((prev) => [...prev, newStop]);
-    setPendingName('');
-    setPendingCoords(null);
-    setSearchQuery('');
-  }, [pendingCoords, pendingName, stops.length, planLimits]);
-
-  const handleDeleteStop = useCallback((id: string) => {
-    const stop = stops.find((s) => s.id === id);
-    const affectedRoutes = routes.filter((r) => r.stopIds.includes(id));
-    const message = affectedRoutes.length > 0
-      ? `Remove "${stop?.name ?? 'this stop'}"? It will also be removed from ${affectedRoutes.length} route${affectedRoutes.length !== 1 ? 's' : ''}: ${affectedRoutes.map((r) => r.name).join(', ')}.`
-      : `Remove "${stop?.name ?? 'this stop'}"?`;
-    Alert.alert('Remove stop', message, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: () => {
-          setStops((prev) => prev.filter((s) => s.id !== id));
-          // Remove from any routes that reference it
-          setRoutes((prev) =>
-            prev.map((r) => ({ ...r, stopIds: r.stopIds.filter((sid) => sid !== id) })),
-          );
-        },
-      },
-    ]);
-  }, [stops, routes]);
-
-  const handleSaveAll = useCallback(async () => {
-    if (!org) return;
-    const emptyRoutes = routes.filter((r) => r.stopIds.length === 0);
-    if (emptyRoutes.length > 0) {
+  // Writes stops + routes (and the map bounds derived from the stops). On
+  // failure the local state is rolled back to what was there before.
+  const persist = useCallback(
+    async (nextStops: Stop[], nextRoutes: Route[], successMessage: string): Promise<boolean> => {
+      if (!org) return false;
+      const prevStops = stops;
+      const prevRoutes = routes;
+      setStops(nextStops);
+      setRoutes(nextRoutes);
+      setIsSaving(true);
       try {
-        await new Promise<void>((resolve, reject) => {
-          Alert.alert(
-            'Route with no stops',
-            `${emptyRoutes.map((r) => `"${r.name}"`).join(', ')} ${emptyRoutes.length !== 1 ? 'have' : 'has'} no stops assigned. A driver on ${emptyRoutes.length !== 1 ? 'these routes' : 'this route'} won't see any stops to service.`,
-            [
-              { text: 'Go Back', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
-              { text: 'Save Anyway', onPress: () => resolve() },
-            ],
-          );
-        });
-      } catch {
-        return;
+        const bounds = calcBoundsFromStops(nextStops);
+        const routesWithPaths = await withRoadPaths(nextRoutes, nextStops);
+        const payload: Record<string, unknown> = { stops: nextStops, routes: routesWithPaths, updatedAt: serverTimestamp() };
+        // Route hours are evaluated in the org's timezone; fill it in from the
+        // device the first time if the admin hasn't set one in Profile.
+        if (!org.timezone) payload.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (bounds) {
+          payload.mapCenter = bounds.mapCenter;
+          payload.mapBoundingBox = bounds.mapBoundingBox;
+        } else if (nextStops.length === 1) {
+          payload.mapCenter = { latitude: nextStops[0].latitude, longitude: nextStops[0].longitude };
+        }
+        await updateDoc(doc(db, 'orgs', org.orgId), payload);
+        await refreshOrg();
+        showToast(successMessage, 'success');
+        return true;
+      } catch (e: any) {
+        setStops(prevStops);
+        setRoutes(prevRoutes);
+        showToast(e?.message ?? 'Could not save. Check your connection and try again.', 'error');
+        return false;
+      } finally {
+        setIsSaving(false);
       }
-    }
-    const isFirstSave = !(org.stops?.length);
-    setIsSaving(true);
-    try {
-      const bounds = calcBoundsFromStops(stops);
-      await updateDoc(doc(db, 'orgs', org.orgId), {
-        stops,
-        routes,
-        timezone,
-        mapCenter: bounds?.mapCenter ?? mapCenter,
-        ...(bounds ? { mapBoundingBox: bounds.mapBoundingBox } : {}),
-        updatedAt: serverTimestamp(),
-      });
-      routesDirtyRef.current = false;
-      await refreshOrg();
-      if (isFirstSave && stops.length > 0) {
-        // Keep the admin in the setup flow — invite a driver is the next
-        // checklist step — instead of dropping them onto the live map.
-        showToast('Stops saved — now invite a driver.', 'success');
-        navigation.navigate('AdminOrgSetup', { initialTab: 'users' });
-      } else {
-        showToast('Stops, routes, and map bounds updated.', 'success');
-      }
-    } catch (e: any) {
-      showToast(e?.message ?? 'Failed to save.', 'error');
-    } finally {
-      setIsSaving(false);
-    }
-  }, [org, stops, routes, timezone, mapCenter, refreshOrg, navigation]);
+    },
+    [org, stops, routes, refreshOrg],
+  );
 
-  // Route helpers
-  const showRouteLimitAlert = useCallback(() => {
-    const next = planFor('maxRoutes', routes.length + 1);
+  // ---- Stops ----
+
+  const showLimitAlert = useCallback((kind: 'maxStops' | 'maxRoutes', nextCount: number) => {
+    const next = planFor(kind, nextCount);
+    const isStops = kind === 'maxStops';
+    const limitText = isStops ? stopLimitText : routeLimitText;
     Alert.alert(
-      'Route limit reached',
-      `Your ${planLimits.label} plan includes ${routeLimitText(planLimits)}. ` +
+      isStops ? 'Stop limit reached' : 'Route limit reached',
+      `Your ${planLimits.label} plan includes ${limitText(planLimits)}. ` +
         (next
-          ? `You need the ${next.label} plan (${next.price}) or higher for ${routeLimitText(next).toLowerCase()}.`
+          ? `You need the ${next.label} plan (${next.price}) or higher for ${limitText(next).toLowerCase()}.`
           : 'Contact us about an Enterprise plan sized for your service.'),
       [
         { text: 'View Plans', onPress: onGoToBilling },
         { text: 'OK', style: 'cancel' },
       ],
     );
-  }, [routes.length, planLimits, onGoToBilling]);
+  }, [planLimits, onGoToBilling]);
 
-  const handleAddRoute = useCallback(() => {
-    if (!newRouteName.trim()) return;
-    const routeNameError = validateUserText(newRouteName, 'Route name');
-    if (routeNameError) {
-      showToast(routeNameError, 'error');
-      return;
-    }
-    if (routes.some((r) => r.name.trim().toLowerCase() === newRouteName.trim().toLowerCase())) {
-      showToast('A route with this name already exists.', 'error');
-      return;
-    }
-    if (routes.length >= planLimits.maxRoutes) {
-      showRouteLimitAlert();
-      return;
-    }
-    setRoutes((prev) => [
-      ...prev,
-      { id: `route_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, name: newRouteName.trim(), stopIds: [] },
-    ]);
-    setNewRouteName('');
-    setShowRouteForm(false);
-  }, [newRouteName, routes.length, planLimits, showRouteLimitAlert]);
+  const resetDraft = useCallback(() => {
+    setMode('list');
+    setEditingStopId(null);
+    setDraftName('');
+    setDraftCoords(null);
+    setSearchQuery('');
+    setSearchResults([]);
+    setShowManualCoords(false);
+    Keyboard.dismiss();
+    fitToStops(stopsRef.current);
+  }, [fitToStops]);
 
-  const handleDeleteRoute = useCallback((routeId: string) => {
-    const route = routes.find((r) => r.id === routeId);
+  const startAdd = useCallback((coords: LatLng | null = null) => {
+    if (stops.length >= planLimits.maxStops) {
+      showLimitAlert('maxStops', stops.length + 1);
+      return;
+    }
+    setMode('add');
+    setEditingStopId(null);
+    setDraftName('');
+    setDraftCoords(coords);
+  }, [stops.length, planLimits.maxStops, showLimitAlert]);
+
+  const startEdit = useCallback((stop: Stop) => {
+    setMode('edit');
+    setEditingStopId(stop.id);
+    setDraftName(stop.name);
+    setDraftCoords({ latitude: stop.latitude, longitude: stop.longitude });
+    setSearchQuery('');
+    setSearchResults([]);
+    focusMap({ latitude: stop.latitude, longitude: stop.longitude });
+  }, [focusMap]);
+
+  const handleMapPress = useCallback((e: any) => {
+    // A press on a marker also fires the map's onPress on iOS — ignore it.
+    if (e?.nativeEvent?.action === 'marker-press') return;
+    const coords = e.nativeEvent.coordinate as LatLng;
+    if (mode === 'list') startAdd(coords);
+    else setDraftCoords(coords);
+    setSearchResults([]);
+  }, [mode, startAdd]);
+
+  const handleSaveStop = useCallback(async () => {
+    const name = draftName.trim();
+    if (!name) { showToast('Give the stop a name.', 'error'); return; }
+    const nameError = validateUserText(name, 'Stop name');
+    if (nameError) { showToast(nameError, 'error'); return; }
+    if (!draftCoords) { showToast('Search for a place or tap the map to place the stop.', 'error'); return; }
+    if (stops.some((s) => s.id !== editingStopId && s.name.trim().toLowerCase() === name.toLowerCase())) {
+      showToast('A stop with this name already exists.', 'error');
+      return;
+    }
+    if (mode === 'add') {
+      const isFirst = stops.length === 0;
+      const ok = await persist(
+        [...stops, { id: newId('stop'), name, ...draftCoords }],
+        routes,
+        isFirst ? 'First stop added. Add the rest, then build a route.' : `"${name}" added.`,
+      );
+      if (ok) resetDraft();
+    } else if (editingStopId) {
+      const ok = await persist(
+        stops.map((s) => (s.id === editingStopId ? { ...s, name, ...draftCoords } : s)),
+        routes,
+        `"${name}" updated.`,
+      );
+      if (ok) resetDraft();
+    }
+  }, [draftName, draftCoords, stops, routes, editingStopId, mode, persist, resetDraft]);
+
+  const handleDeleteStop = useCallback((id: string) => {
+    const stop = stops.find((s) => s.id === id);
+    const affected = routes.filter((r) => r.stopIds.includes(id));
     Alert.alert(
-      'Delete route',
-      `Remove "${route?.name ?? 'this route'}"? Any driver defaulted to it will need a new route assigned.`,
+      'Delete stop',
+      affected.length > 0
+        ? `Delete "${stop?.name ?? 'this stop'}"? It will also be removed from ${affected.map((r) => r.name).join(', ')}.`
+        : `Delete "${stop?.name ?? 'this stop'}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => setRoutes((prev) => prev.filter((r) => r.id !== routeId)),
+          onPress: async () => {
+            const ok = await persist(
+              stops.filter((s) => s.id !== id),
+              routes.map((r) => ({ ...r, stopIds: r.stopIds.filter((sid) => sid !== id) })),
+              `"${stop?.name ?? 'Stop'}" deleted.`,
+            );
+            if (ok) resetDraft();
+          },
         },
       ],
     );
-  }, [routes]);
+  }, [stops, routes, persist, resetDraft]);
 
-  const handleToggleStopInRoute = useCallback((routeId: string, stopId: string) => {
-    setRoutes((prev) =>
-      prev.map((r) => {
-        if (r.id !== routeId) return r;
-        if (r.stopIds.includes(stopId)) {
-          return { ...r, stopIds: r.stopIds.filter((id) => id !== stopId) };
-        }
-        return { ...r, stopIds: [...r.stopIds, stopId] };
-      }),
-    );
-  }, []);
+  // ---- Routes ----
 
-  const handleMoveStop = useCallback(
-    (routeId: string, stopId: string, direction: 'up' | 'down') => {
-      setRoutes((prev) =>
-        prev.map((r) => {
-          if (r.id !== routeId) return r;
-          const idx = r.stopIds.indexOf(stopId);
-          if (idx < 0) return r;
-          const newIds = [...r.stopIds];
-          if (direction === 'up' && idx > 0) {
-            [newIds[idx - 1], newIds[idx]] = [newIds[idx], newIds[idx - 1]];
-          } else if (direction === 'down' && idx < newIds.length - 1) {
-            [newIds[idx + 1], newIds[idx]] = [newIds[idx], newIds[idx + 1]];
-          }
-          return { ...r, stopIds: newIds };
-        }),
-      );
-    },
-    [],
-  );
+  const startNewRoute = useCallback(() => {
+    if (routes.length >= planLimits.maxRoutes) {
+      showLimitAlert('maxRoutes', routes.length + 1);
+      return;
+    }
+    setRouteEditorTarget({ route: { id: newId('route'), name: '', stopIds: [] }, isNew: true });
+  }, [routes.length, planLimits.maxRoutes, showLimitAlert]);
 
-  const handleUpdateSchedule = useCallback(
-    (routeId: string, schedule: WeekSchedule) => {
-      setRoutes((prev) =>
-        prev.map((r) => (r.id !== routeId ? r : { ...r, schedule })),
-      );
-    },
-    [],
-  );
+  const handleSaveRoute = useCallback(async (route: Route, isNew: boolean): Promise<boolean> => {
+    const nextRoutes = isNew ? [...routes, route] : routes.map((r) => (r.id === route.id ? route : r));
+    return persist(stops, nextRoutes, isNew ? `"${route.name}" created.` : `"${route.name}" saved.`);
+  }, [routes, stops, persist]);
+
+  const handleDeleteRoute = useCallback(async (route: Route): Promise<boolean> => {
+    return persist(stops, routes.filter((r) => r.id !== route.id), `"${route.name}" deleted.`);
+  }, [routes, stops, persist]);
+
+  const routesUsing = (stopId: string) => routes.filter((r) => r.stopIds.includes(stopId));
 
   const initialRegion: Region = {
     latitude: mapCenter.latitude,
     longitude: mapCenter.longitude,
-    latitudeDelta: hasOrgCenter ? 0.04 : 30,
-    longitudeDelta: hasOrgCenter ? 0.04 : 55,
+    latitudeDelta: hasOrgCenter ? 0.03 : 30,
+    longitudeDelta: hasOrgCenter ? 0.03 : 55,
   };
+
+  const stopLimitLabel = planLimits.maxStops === Infinity ? '' : ` / ${planLimits.maxStops}`;
+  const routeLimitLabel = planLimits.maxRoutes === Infinity ? '' : ` / ${planLimits.maxRoutes}`;
 
   return (
     <View style={styles.stopsContainer}>
-      <MapView
-        ref={mapRef}
-        style={[styles.map, mapCollapsed && styles.mapCollapsed]}
-        initialRegion={initialRegion}
-        onPress={handleMapPress}
-        onRegionChangeComplete={(r) =>
-          setMapCenter({ latitude: r.latitude, longitude: r.longitude })
-        }
-      >
-        {stops.map((stop) => (
-          <Marker
-            key={stop.id}
-            coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
-            title={stop.name}
-            pinColor={primaryColor}
-            onCalloutPress={() => handleDeleteStop(stop.id)}
-          />
-        ))}
-        {pendingCoords && (
-          <Marker coordinate={pendingCoords} pinColor="orange" title="New stop" />
-        )}
-      </MapView>
-
-      <ScrollView
-        style={styles.stopsPanel}
-        contentContainerStyle={styles.stopsPanelContent}
-        nestedScrollEnabled
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-      >
-        {/* --- Stops section --- */}
-        <View style={styles.routesHeader}>
-          <Text style={styles.sectionLabel}>Stops</Text>
-          <Text style={styles.planLimitBadge}>
-            {stops.length}/{planLimits.maxStops === Infinity ? '∞' : planLimits.maxStops}
-          </Text>
-        </View>
-
-        {/* Unified add-stop card */}
-        <View style={newStopStyles.card}>
-
-          {/* ── Step 1: Find a location ── */}
-          <View style={newStopStyles.stepHeader}>
-            <View style={[newStopStyles.stepBadge, pendingCoords ? { backgroundColor: primaryColor } : newStopStyles.stepBadgeInactive]}>
-              {pendingCoords
-                ? <Icon name="check" size={12} color={WHITE} />
-                : <Text style={newStopStyles.stepNum}>1</Text>}
-            </View>
-            <Text style={newStopStyles.stepLabel}>Find a location</Text>
-            <Text style={newStopStyles.stepHint}>search or tap the map</Text>
-          </View>
-
-          {/* Search bar */}
-          <View style={newStopStyles.searchRow}>
-            <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 6 }} />
-            <TextInput
-              style={newStopStyles.searchInput}
-              placeholder="Search address or place…"
-              value={searchQuery}
-              onChangeText={handleSearchChange}
-              placeholderTextColor={GRAY_400}
-              returnKeyType="search"
-              autoCorrect={false}
-            />
-            {isSearching && <ActivityIndicator size="small" color={primaryColor} style={{ marginLeft: 6 }} />}
-            {searchQuery.length > 0 && !isSearching && (
-              <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                <Icon name="close" size={16} color={GRAY_400} style={{ marginLeft: 6 }} />
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Autocomplete dropdown */}
-          {searchResults.length > 0 && (
-            <View style={newStopStyles.dropdown}>
-              {searchResults.map((s) => (
-                <TouchableOpacity
-                  key={s.placeId}
-                  style={newStopStyles.dropdownItem}
-                  onPress={() => handleSelectPlace(s)}
-                >
-                  <Icon name="place" size={14} color={GRAY_400} style={{ marginRight: 8, marginTop: 1 }} />
-                  <Text style={styles.searchDropdownText} numberOfLines={2}>{s.description}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {/* Selected location chip OR tap hint */}
-          {pendingCoords ? (
-            <View style={[newStopStyles.locationChip, { borderColor: `${primaryColor}40`, backgroundColor: `${primaryColor}0d` }]}>
-              <Icon name="place" size={15} color={primaryColor} />
-              <Text style={[newStopStyles.locationChipText, { color: primaryColor }]} numberOfLines={1}>
-                {pendingCoords.latitude.toFixed(5)}, {pendingCoords.longitude.toFixed(5)}
-              </Text>
-              <TouchableOpacity onPress={() => setPendingCoords(null)} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                <Icon name="close" size={14} color={primaryColor} />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <Text style={newStopStyles.tapHint}>
-              {searchQuery.trim().length >= 3 && !isSearching && searchResults.length === 0
-                ? 'No matches for that search — tap the map above or enter coordinates manually below.'
-                : '— or tap directly on the map above —'}
-            </Text>
-          )}
-
-          {/* Manual coordinate entry — collapsible */}
-          <TouchableOpacity
-            style={newStopStyles.manualToggle}
-            onPress={() => setShowManualCoords((v) => !v)}
-          >
-            <Icon name="my-location" size={13} color={GRAY_400} />
-            <Text style={newStopStyles.manualToggleText}>Enter coordinates manually</Text>
-            <Icon name={showManualCoords ? 'expand-less' : 'expand-more'} size={16} color={GRAY_400} />
-          </TouchableOpacity>
-
-          {showManualCoords && (
-            <View style={stopStyles.manualCoordsBox}>
-              <View style={stopStyles.manualCoordsRow}>
-                <TextInput
-                  style={[styles.input, stopStyles.coordInput]}
-                  placeholder="Latitude (e.g. 38.9071)"
-                  value={manualLat}
-                  onChangeText={setManualLat}
-                  keyboardType="numbers-and-punctuation"
-                  placeholderTextColor={GRAY_400}
-                  returnKeyType="next"
-                />
-                <TextInput
-                  style={[styles.input, stopStyles.coordInput]}
-                  placeholder="Longitude (e.g. −77.0369)"
-                  value={manualLon}
-                  onChangeText={setManualLon}
-                  keyboardType="numbers-and-punctuation"
-                  placeholderTextColor={GRAY_400}
-                  returnKeyType="done"
-                  onSubmitEditing={handleApplyManualCoords}
-                />
-              </View>
-              <TouchableOpacity
-                style={[stopStyles.applyBtn, { backgroundColor: primaryColor }, (!manualLat || !manualLon) && { opacity: 0.4 }]}
-                onPress={handleApplyManualCoords}
-                disabled={!manualLat || !manualLon}
-              >
-                <Text style={stopStyles.applyBtnText}>Use These Coordinates</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* ── Divider ── */}
-          <View style={newStopStyles.divider} />
-
-          {/* ── Step 2: Name this stop ── */}
-          <View style={[newStopStyles.stepHeader, !pendingCoords && newStopStyles.stepHeaderDisabled]}>
-            <View style={[newStopStyles.stepBadge, pendingName.trim() && pendingCoords ? { backgroundColor: primaryColor } : newStopStyles.stepBadgeInactive]}>
-              {pendingName.trim() && pendingCoords
-                ? <Icon name="check" size={12} color={WHITE} />
-                : <Text style={newStopStyles.stepNum}>2</Text>}
-            </View>
-            <Text style={newStopStyles.stepLabel}>Name this stop</Text>
-          </View>
-
-          <TextInput
-            style={[styles.input, !pendingCoords && newStopStyles.inputDisabled]}
-            placeholder={pendingCoords ? 'e.g. Main Entrance, Library Loop' : 'Pick a location first'}
-            value={pendingName}
-            onChangeText={setPendingName}
-            placeholderTextColor={pendingCoords ? GRAY_400 : GRAY_300}
-            editable={!!pendingCoords}
-          />
-
-          <TouchableOpacity
-            style={[newStopStyles.addBtn, { backgroundColor: primaryColor }, (!pendingName.trim() || !pendingCoords) && newStopStyles.addBtnDisabled]}
-            onPress={handleAddStop}
-            disabled={!pendingName.trim() || !pendingCoords}
-          >
-            <Icon name="add-location-alt" size={20} color={WHITE} />
-            <Text style={newStopStyles.addBtnText}>Add Stop</Text>
-          </TouchableOpacity>
-        </View>
-
-        {stops.map((stop) => (
-          <View key={stop.id} style={styles.stopRow}>
-            <Icon name="place" size={18} color={primaryColor} />
-            <Text style={styles.stopName} numberOfLines={1}>{stop.name}</Text>
-            <TouchableOpacity onPress={() => handleDeleteStop(stop.id)}>
-              <Icon name="close" size={18} color={DANGER_COLOR} />
-            </TouchableOpacity>
-          </View>
-        ))}
-        {stops.length === 0 && <Text style={styles.hint}>No stops yet. Fill the form above and tap Add Stop.</Text>}
-
-        {/* --- Timezone --- */}
-        <Text style={[styles.sectionLabel, { marginTop: 24 }]}>Timezone</Text>
-        <Text style={styles.hint}>Route schedules are evaluated in this timezone.</Text>
-        <TouchableOpacity
-          style={styles.tzRow}
-          onPress={() => setShowTzPicker(true)}
-          activeOpacity={0.7}
-        >
-          <Icon name="schedule" size={18} color={GRAY_500} />
-          <Text style={styles.tzValue}>{timezone}</Text>
-          <Icon name="expand-more" size={20} color={GRAY_500} />
-        </TouchableOpacity>
-
-        <BottomSheet
-          visible={showTzPicker}
-          onClose={() => setShowTzPicker(false)}
-          sheetStyle={{ paddingHorizontal: 0, paddingBottom: 32, maxHeight: '75%' }}
-        >
-          <View style={styles.tzModalHeader}>
-            <Text style={styles.tzModalTitle}>Select Timezone</Text>
-            <TouchableOpacity onPress={() => setShowTzPicker(false)}>
-              <Icon name="close" size={22} color={GRAY_700} />
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={COMMON_TIMEZONES}
-            keyExtractor={(item) => item.value}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[styles.tzOption, timezone === item.value && { backgroundColor: '#f0f4ff' }]}
-                onPress={() => { setTimezone(item.value); setShowTzPicker(false); }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.tzOptionLabel}>{item.label}</Text>
-                  <Text style={styles.tzOptionValue}>{item.value}</Text>
-                </View>
-                {timezone === item.value && <Icon name="check" size={18} color="#4f46e5" />}
-              </TouchableOpacity>
-            )}
-          />
-        </BottomSheet>
-
-        {/* --- Routes section --- */}
-        <View style={styles.routesHeader}>
-          <Text style={styles.sectionLabel}>Routes</Text>
-          <Text style={styles.planLimitBadge}>
-            {routes.length}/{planLimits.maxRoutes === Infinity ? '∞' : planLimits.maxRoutes}
-          </Text>
-          <TouchableOpacity
-            onPress={() => {
-              if (routes.length >= planLimits.maxRoutes) {
-                showRouteLimitAlert();
-                return;
-              }
-              setShowRouteForm(true);
-            }}
-          >
-            <Icon
-              name="add-circle"
-              size={24}
-              color={routes.length >= planLimits.maxRoutes ? GRAY_300 : primaryColor}
-            />
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.hint}>
-          A route is an ordered sequence of stops a bus follows. Assign stops to each route below.
-        </Text>
-
-        {showRouteForm && (
-          <View style={styles.addStopRow}>
-            <TextInput
-              style={[styles.input, styles.stopNameInput]}
-              placeholder="Route name (e.g. Morning Loop)"
-              value={newRouteName}
-              onChangeText={setNewRouteName}
-              placeholderTextColor={GRAY_400}
-            />
-            <TouchableOpacity style={[styles.addStopBtn, { backgroundColor: primaryColor }]} onPress={handleAddRoute}>
-              <Icon name="check" size={22} color={WHITE} />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {routes.map((route) => {
-          const isExpanded = editingRouteId === route.id;
+      {/* Stops | Routes switch */}
+      <View style={stopsUi.segmentWrap}>
+        {([
+          { key: 'stops', label: `Stops (${stops.length}${stopLimitLabel})`, icon: 'place' },
+          { key: 'routes', label: `Routes (${routes.length}${routeLimitLabel})`, icon: 'alt-route' },
+        ] as const).map((seg) => {
+          const active = view === seg.key;
           return (
-            <View key={route.id} style={styles.routeCard}>
-              <TouchableOpacity
-                style={styles.routeCardHeader}
-                onPress={() => setEditingRouteId(isExpanded ? null : route.id)}
-              >
-                <Icon name="directions-bus" size={18} color={primaryColor} />
-                <Text style={styles.routeName}>{route.name}</Text>
-                <Text style={styles.routeStopCount}>{route.stopIds.length} stop{route.stopIds.length !== 1 ? 's' : ''}</Text>
-                <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={20} color={GRAY_500} />
-                <TouchableOpacity onPress={() => handleDeleteRoute(route.id)} style={styles.routeDeleteBtn}>
-                  <Icon name="delete-outline" size={18} color={DANGER_COLOR} />
-                </TouchableOpacity>
-              </TouchableOpacity>
-
-              {isExpanded && (
-                <View style={styles.routeEditor}>
-                  <Text style={styles.routeEditorLabel}>Stop order (tap to add/remove, arrows to reorder):</Text>
-
-                  {/* Stops in this route, in order */}
-                  {route.stopIds.map((stopId, idx) => {
-                    const stop = stops.find((s) => s.id === stopId);
-                    if (!stop) return null;
-                    return (
-                      <View key={stopId} style={styles.routeStopRow}>
-                        <Text style={styles.routeStopIndex}>{idx + 1}.</Text>
-                        <Text style={styles.routeStopName}>{stop.name}</Text>
-                        <TouchableOpacity onPress={() => handleMoveStop(route.id, stopId, 'up')} disabled={idx === 0}>
-                          <Icon name="arrow-upward" size={16} color={idx === 0 ? GRAY_300 : GRAY_700} />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => handleMoveStop(route.id, stopId, 'down')} disabled={idx === route.stopIds.length - 1}>
-                          <Icon name="arrow-downward" size={16} color={idx === route.stopIds.length - 1 ? GRAY_300 : GRAY_700} />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => handleToggleStopInRoute(route.id, stopId)}>
-                          <Icon name="remove-circle-outline" size={18} color={DANGER_COLOR} />
-                        </TouchableOpacity>
-                      </View>
-                    );
-                  })}
-
-                  {/* Stops not yet in this route */}
-                  {stops.filter((s) => !route.stopIds.includes(s.id)).map((stop) => (
-                    <TouchableOpacity
-                      key={stop.id}
-                      style={styles.routeStopAvailable}
-                      onPress={() => handleToggleStopInRoute(route.id, stop.id)}
-                    >
-                      <Icon name="add-circle-outline" size={18} color={primaryColor} />
-                      <Text style={styles.routeStopName}>{stop.name}</Text>
-                    </TouchableOpacity>
-                  ))}
-
-                  {stops.length === 0 && (
-                    <Text style={styles.hint}>Add stops above first.</Text>
-                  )}
-
-                  {/* Hours of operation */}
-                  <ScheduleEditor
-                    route={route}
-                    onChange={(schedule) => handleUpdateSchedule(route.id, schedule)}
-                  />
-                </View>
-              )}
-            </View>
+            <TouchableOpacity
+              key={seg.key}
+              style={[stopsUi.segment, active && stopsUi.segmentActive]}
+              onPress={() => { resetDraft(); setView(seg.key); }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+            >
+              <Icon name={seg.icon} size={16} color={active ? primaryColor : GRAY_500} />
+              <Text style={[stopsUi.segmentText, active && { color: primaryColor }]}>{seg.label}</Text>
+            </TouchableOpacity>
           );
         })}
+      </View>
 
-        {routes.length === 0 && !showRouteForm && (
-          <Text style={styles.hint}>No routes yet. Tap + to create one.</Text>
-        )}
+      {view === 'stops' ? (
+        <>
+          <MapView
+            ref={mapRef}
+            style={[stopsUi.map, mapCollapsed && styles.mapCollapsed]}
+            initialRegion={initialRegion}
+            onMapReady={() => fitToStops(stops)}
+            onPress={handleMapPress}
+            onRegionChangeComplete={(r) => setMapCenter({ latitude: r.latitude, longitude: r.longitude })}
+          >
+            {stops.map((stop) => {
+              // Hidden (not unmounted) while it's being edited — removing and
+              // re-adding a marker on iOS can leave it missing after Cancel.
+              const isEditing = mode === 'edit' && stop.id === editingStopId;
+              return (
+                <Marker
+                  key={stop.id}
+                  coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+                  title={stop.name}
+                  opacity={isEditing ? 0 : 1}
+                  pinColor={mode === 'list' ? primaryColor : GRAY_400}
+                  onPress={() => { if (mode === 'list') startEdit(stop); }}
+                />
+              );
+            })}
+            {mode !== 'list' && draftCoords && (
+              <Marker
+                coordinate={draftCoords}
+                pinColor="orange"
+                draggable
+                onDragEnd={(e) => setDraftCoords(e.nativeEvent.coordinate)}
+                title={draftName.trim() || 'New stop'}
+              />
+            )}
+          </MapView>
 
-        <AppButton
-          label={isSaving ? 'Saving…' : 'Save Stops & Routes'}
-          onPress={handleSaveAll}
-          disabled={isSaving}
-          style={styles.actionButton}
+          <ScrollView
+            style={styles.stopsPanel}
+            contentContainerStyle={styles.stopsPanelContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+          >
+            {mode === 'list' ? (
+              <>
+                <View style={stopsUi.panelHeader}>
+                  <Text style={stopsUi.panelTitle}>Stops</Text>
+                  <TouchableOpacity
+                    style={[stopsUi.addBtn, { backgroundColor: primaryColor }]}
+                    onPress={() => startAdd()}
+                    accessibilityRole="button"
+                  >
+                    <Icon name="add" size={18} color={WHITE} />
+                    <Text style={stopsUi.addBtnText}>Add stop</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.hint}>
+                  {stops.length === 0
+                    ? 'Tap "Add stop", or tap the map where riders get picked up.'
+                    : 'Tap a stop to rename it, move it, or delete it.'}
+                </Text>
+
+                {stops.map((stop) => {
+                  const used = routesUsing(stop.id);
+                  return (
+                    <TouchableOpacity
+                      key={stop.id}
+                      style={stopsUi.row}
+                      onPress={() => startEdit(stop)}
+                      accessibilityRole="button"
+                      accessibilityHint="Edit this stop"
+                    >
+                      <Icon name="place" size={20} color={primaryColor} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={stopsUi.rowTitle} numberOfLines={1}>{stop.name}</Text>
+                        <Text style={stopsUi.rowSub} numberOfLines={1}>
+                          {used.length === 0 ? 'Not on a route yet' : `On ${used.map((r) => r.name).join(', ')}`}
+                        </Text>
+                      </View>
+                      <Icon name="chevron-right" size={20} color={GRAY_400} />
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {stops.length > 0 && routes.length === 0 && (
+                  <TouchableOpacity style={stopsUi.nextStep} onPress={() => setView('routes')}>
+                    <Icon name="alt-route" size={18} color={primaryColor} />
+                    <Text style={[stopsUi.nextStepText, { color: primaryColor }]}>
+                      Next: put your stops in order on a route
+                    </Text>
+                    <Icon name="chevron-right" size={18} color={primaryColor} />
+                  </TouchableOpacity>
+                )}
+              </>
+            ) : (
+              <>
+                {/* Cancel / Save live in the header so they stay visible above the keyboard and map. */}
+                <View style={stopsUi.panelHeader}>
+                  <TouchableOpacity onPress={resetDraft} disabled={isSaving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <Text style={stopsUi.headerCancel}>Cancel</Text>
+                  </TouchableOpacity>
+                  <Text style={stopsUi.formTitle}>{mode === 'add' ? 'New stop' : 'Edit stop'}</Text>
+                  <TouchableOpacity
+                    style={[stopsUi.headerSaveBtn, { backgroundColor: primaryColor }, (!draftName.trim() || !draftCoords || isSaving) && { opacity: 0.4 }]}
+                    onPress={handleSaveStop}
+                    disabled={!draftName.trim() || !draftCoords || isSaving}
+                  >
+                    {isSaving
+                      ? <ActivityIndicator size="small" color={WHITE} />
+                      : <Text style={stopsUi.headerSaveText}>{mode === 'add' ? 'Add' : 'Save'}</Text>}
+                  </TouchableOpacity>
+                </View>
+
+                {/* 1. Where */}
+                <Text style={stopsUi.fieldLabel}>Location</Text>
+                {draftCoords ? (
+                  <View style={[newStopStyles.locationChip, { borderColor: `${primaryColor}40`, backgroundColor: `${primaryColor}0d` }]}>
+                    <Icon name="place" size={15} color={primaryColor} />
+                    <Text style={[newStopStyles.locationChipText, { color: primaryColor }]} numberOfLines={1}>
+                      Pin placed · drag it on the map to adjust
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.hint}>Search for a place, or tap the map to drop a pin.</Text>
+                )}
+
+                <View style={[newStopStyles.searchRow, { marginTop: 8 }]}>
+                  <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 6 }} />
+                  <TextInput
+                    style={newStopStyles.searchInput}
+                    placeholder={draftCoords ? 'Search to move the pin…' : 'Search address or place…'}
+                    value={searchQuery}
+                    onChangeText={handleSearchChange}
+                    placeholderTextColor={GRAY_400}
+                    returnKeyType="search"
+                    autoCorrect={false}
+                  />
+                  {isSearching && <ActivityIndicator size="small" color={primaryColor} style={{ marginLeft: 6 }} />}
+                </View>
+                {searchResults.length > 0 && (
+                  <View style={[newStopStyles.dropdown, { marginTop: 4 }]}>
+                    {searchResults.map((s) => (
+                      <TouchableOpacity key={s.placeId} style={newStopStyles.dropdownItem} onPress={() => handleSelectPlace(s)}>
+                        <Icon name="place" size={14} color={GRAY_400} style={{ marginRight: 8, marginTop: 1 }} />
+                        <Text style={styles.searchDropdownText} numberOfLines={2}>{s.description}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                <TouchableOpacity style={[newStopStyles.manualToggle, { marginTop: 6 }]} onPress={() => setShowManualCoords((v) => !v)}>
+                  <Icon name="my-location" size={13} color={GRAY_400} />
+                  <Text style={newStopStyles.manualToggleText}>Enter coordinates instead</Text>
+                  <Icon name={showManualCoords ? 'expand-less' : 'expand-more'} size={16} color={GRAY_400} />
+                </TouchableOpacity>
+                {showManualCoords && (
+                  <View style={stopStyles.manualCoordsBox}>
+                    <View style={stopStyles.manualCoordsRow}>
+                      <TextInput
+                        style={[styles.input, stopStyles.coordInput]}
+                        placeholder="Latitude"
+                        value={manualLat}
+                        onChangeText={setManualLat}
+                        keyboardType="numbers-and-punctuation"
+                        placeholderTextColor={GRAY_400}
+                      />
+                      <TextInput
+                        style={[styles.input, stopStyles.coordInput]}
+                        placeholder="Longitude"
+                        value={manualLon}
+                        onChangeText={setManualLon}
+                        keyboardType="numbers-and-punctuation"
+                        placeholderTextColor={GRAY_400}
+                        onSubmitEditing={handleApplyManualCoords}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={[stopStyles.applyBtn, { backgroundColor: primaryColor }, (!manualLat || !manualLon) && { opacity: 0.4 }]}
+                      onPress={handleApplyManualCoords}
+                      disabled={!manualLat || !manualLon}
+                    >
+                      <Text style={stopStyles.applyBtnText}>Use these coordinates</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* 2. Name */}
+                <Text style={[stopsUi.fieldLabel, { marginTop: 14 }]}>Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. Library, Main Entrance"
+                  value={draftName}
+                  onChangeText={setDraftName}
+                  placeholderTextColor={GRAY_400}
+                  returnKeyType="done"
+                />
+
+                {mode === 'edit' && editingStopId && routesUsing(editingStopId).length > 0 && (
+                  <Text style={[styles.hint, { marginTop: 8 }]}>
+                    Used on {routesUsing(editingStopId).map((r) => r.name).join(', ')}.
+                  </Text>
+                )}
+
+                {mode === 'edit' && editingStopId && (
+                  <TouchableOpacity style={stopsUi.deleteLink} onPress={() => handleDeleteStop(editingStopId)} disabled={isSaving}>
+                    <Icon name="delete-outline" size={18} color={DANGER_COLOR} />
+                    <Text style={stopsUi.deleteLinkText}>Delete stop</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </ScrollView>
+        </>
+      ) : (
+        <ScrollView style={styles.stopsPanel} contentContainerStyle={styles.stopsPanelContent}>
+          <View style={stopsUi.panelHeader}>
+            <Text style={stopsUi.panelTitle}>Routes</Text>
+            <TouchableOpacity
+              style={[stopsUi.addBtn, { backgroundColor: routes.length >= planLimits.maxRoutes ? GRAY_300 : primaryColor }]}
+              onPress={startNewRoute}
+              accessibilityRole="button"
+            >
+              <Icon name="add" size={18} color={WHITE} />
+              <Text style={stopsUi.addBtnText}>New route</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.hint}>
+            A route is the loop a bus drives: its stops in order, plus the hours it runs. Tap a route to edit it.
+          </Text>
+
+          {stops.length === 0 && (
+            <TouchableOpacity style={stopsUi.nextStep} onPress={() => setView('stops')}>
+              <Icon name="place" size={18} color={primaryColor} />
+              <Text style={[stopsUi.nextStepText, { color: primaryColor }]}>Add your stops first</Text>
+              <Icon name="chevron-right" size={18} color={primaryColor} />
+            </TouchableOpacity>
+          )}
+
+          {routes.map((route) => {
+            const hours = getTodayScheduleText(route, new Date(), org?.timezone);
+            return (
+              <TouchableOpacity
+                key={route.id}
+                style={stopsUi.row}
+                onPress={() => setRouteEditorTarget({ route, isNew: false })}
+                accessibilityRole="button"
+                accessibilityHint="Edit this route"
+              >
+                <Icon name="directions-bus" size={20} color={route.color ?? primaryColor} />
+                <View style={{ flex: 1 }}>
+                  <Text style={stopsUi.rowTitle} numberOfLines={1}>{route.name}</Text>
+                  <Text style={[stopsUi.rowSub, route.stopIds.length === 0 && { color: '#b45309' }]} numberOfLines={1}>
+                    {route.stopIds.length === 0
+                      ? 'No stops yet'
+                      : `${route.stopIds.length} stop${route.stopIds.length === 1 ? '' : 's'}`}
+                    {hours ? ` · ${hours}` : ''}
+                  </Text>
+                </View>
+                <Icon name="chevron-right" size={20} color={GRAY_400} />
+              </TouchableOpacity>
+            );
+          })}
+
+          {routes.length === 0 && stops.length > 0 && (
+            <Text style={[styles.hint, { marginTop: 12 }]}>No routes yet. Tap "New route" to create one.</Text>
+          )}
+        </ScrollView>
+      )}
+
+      {routeEditorTarget && (
+        <RouteEditorModal
+          route={routeEditorTarget.route}
+          isNew={routeEditorTarget.isNew}
+          stops={stops}
+          otherRouteNames={routes.filter((r) => r.id !== routeEditorTarget.route.id).map((r) => r.name)}
+          onClose={() => setRouteEditorTarget(null)}
+          onSave={async (route) => {
+            const ok = await handleSaveRoute(route, routeEditorTarget.isNew);
+            if (ok) setRouteEditorTarget(null);
+          }}
+          onDelete={async (route) => {
+            const ok = await handleDeleteRoute(route);
+            if (ok) setRouteEditorTarget(null);
+          }}
+          isSaving={isSaving}
         />
-      </ScrollView>
+      )}
     </View>
   );
 }
+
+// ---- Route editor (full-screen sheet) ----
+// Edits a draft copy of one route; nothing is written until Save.
+
+function RouteEditorModal({
+  route,
+  isNew,
+  stops,
+  otherRouteNames,
+  onClose,
+  onSave,
+  onDelete,
+  isSaving,
+}: {
+  route: Route;
+  isNew: boolean;
+  stops: Stop[];
+  otherRouteNames: string[];
+  onClose: () => void;
+  onSave: (route: Route) => void;
+  onDelete: (route: Route) => void;
+  isSaving: boolean;
+}) {
+  const { primaryColor } = useOrgTheme();
+  const [draft, setDraft] = useState<Route>(route);
+  const mapRef = useRef<MapView>(null);
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(route);
+
+  const routeStops = draft.stopIds
+    .map((id) => stops.find((s) => s.id === id))
+    .filter((s): s is Stop => !!s);
+  const otherStops = stops.filter((s) => !draft.stopIds.includes(s.id));
+
+  // Fit the map to all stops once it's laid out.
+  const fitMap = useCallback(() => {
+    if (stops.length === 0) return;
+    mapRef.current?.fitToCoordinates(
+      stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
+      { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: false },
+    );
+  }, [stops]);
+
+  const toggleStop = (stopId: string) => {
+    setDraft((d) => ({
+      ...d,
+      stopIds: d.stopIds.includes(stopId) ? d.stopIds.filter((id) => id !== stopId) : [...d.stopIds, stopId],
+    }));
+  };
+
+  const moveStop = (index: number, direction: -1 | 1) => {
+    setDraft((d) => {
+      const ids = [...d.stopIds];
+      const target = index + direction;
+      if (target < 0 || target >= ids.length) return d;
+      [ids[index], ids[target]] = [ids[target], ids[index]];
+      return { ...d, stopIds: ids };
+    });
+  };
+
+  const handleClose = () => {
+    if (!isDirty) { onClose(); return; }
+    Alert.alert('Discard changes?', 'Your changes to this route haven\'t been saved.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: onClose },
+    ]);
+  };
+
+  const handleSave = () => {
+    const name = draft.name.trim();
+    if (!name) { showToast('Give the route a name.', 'error'); return; }
+    const nameError = validateUserText(name, 'Route name');
+    if (nameError) { showToast(nameError, 'error'); return; }
+    if (otherRouteNames.some((n) => n.trim().toLowerCase() === name.toLowerCase())) {
+      showToast('A route with this name already exists.', 'error');
+      return;
+    }
+    const finalRoute = { ...draft, name };
+    if (finalRoute.stopIds.length === 0) {
+      Alert.alert(
+        'No stops on this route',
+        'Drivers on this route won\'t see any stops to service until you add some.',
+        [
+          { text: 'Add stops', style: 'cancel' },
+          { text: 'Save anyway', onPress: () => onSave(finalRoute) },
+        ],
+      );
+      return;
+    }
+    onSave(finalRoute);
+  };
+
+  const handleDelete = () => {
+    Alert.alert(
+      'Delete route',
+      `Delete "${route.name}"? Drivers who default to it will need a new route.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => onDelete(route) },
+      ],
+    );
+  };
+
+  const loopCoords = routeStops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
+
+  return (
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: WHITE }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={routeUi.header}>
+          <TouchableOpacity onPress={handleClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={routeUi.headerCancel}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={routeUi.headerTitle} numberOfLines={1}>{isNew ? 'New route' : 'Edit route'}</Text>
+          <TouchableOpacity onPress={handleSave} disabled={isSaving} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            {isSaving
+              ? <ActivityIndicator size="small" color={primaryColor} />
+              : <Text style={[routeUi.headerSave, { color: primaryColor }]}>Save</Text>}
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView contentContainerStyle={routeUi.body} keyboardShouldPersistTaps="handled">
+          <Text style={stopsUi.fieldLabel}>Route name</Text>
+          <TextInput
+            style={styles.input}
+            value={draft.name}
+            onChangeText={(name) => setDraft((d) => ({ ...d, name }))}
+            placeholder="e.g. Weekday Loop"
+            placeholderTextColor={GRAY_400}
+            autoFocus={isNew}
+          />
+
+          <Text style={[stopsUi.fieldLabel, { marginTop: 14 }]}>Color on the map</Text>
+          <View style={routeUi.colorRow}>
+            {[null, ...COLOR_SWATCHES].map((c) => {
+              const swatch = c ?? primaryColor;
+              const active = (draft.color ?? null) === c;
+              return (
+                <TouchableOpacity
+                  key={c ?? 'org'}
+                  onPress={() => setDraft((d) => {
+                    const { color: _old, ...rest } = d;
+                    return c ? { ...rest, color: c } : rest;
+                  })}
+                  style={[routeUi.colorSwatch, { backgroundColor: swatch }, active && routeUi.colorSwatchActive]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={c ? `Route color ${c}` : 'Use organization color'}
+                >
+                  {!c && <Text style={routeUi.colorSwatchText}>Org</Text>}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {stops.length > 0 && (
+            <MapView
+              ref={mapRef}
+              style={routeUi.map}
+              onMapReady={fitMap}
+              scrollEnabled
+              pitchEnabled={false}
+              rotateEnabled={false}
+            >
+              {loopCoords.length >= 2 && (
+                <Polyline coordinates={[...loopCoords, loopCoords[0]]} strokeColor={draft.color ?? primaryColor} strokeColors={[draft.color ?? primaryColor]} strokeWidth={4} />
+              )}
+              {routeStops.map((s, i) => (
+                <Marker
+                  key={`${s.id}-${i}`}
+                  coordinate={{ latitude: s.latitude, longitude: s.longitude }}
+                  title={`${i + 1}. ${s.name}`}
+                  onPress={() => toggleStop(s.id)}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={[routeUi.numberPin, { backgroundColor: draft.color ?? primaryColor }]}>
+                    <Text style={routeUi.numberPinText}>{i + 1}</Text>
+                  </View>
+                </Marker>
+              ))}
+              {otherStops.map((s) => (
+                <Marker
+                  key={s.id}
+                  coordinate={{ latitude: s.latitude, longitude: s.longitude }}
+                  title={`${s.name} (tap to add)`}
+                  onPress={() => toggleStop(s.id)}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={routeUi.otherPin} />
+                </Marker>
+              ))}
+            </MapView>
+          )}
+
+          <Text style={[stopsUi.fieldLabel, { marginTop: 16 }]}>
+            Stops in order{routeStops.length > 0 ? ` (${routeStops.length})` : ''}
+          </Text>
+          <Text style={styles.hint}>
+            The bus visits these in order, then loops back to the first. Tap a stop on the map or below to add or remove it.
+          </Text>
+          {routeStops.length === 0 && (
+            <Text style={[styles.hint, { marginTop: 8, color: '#b45309' }]}>No stops on this route yet.</Text>
+          )}
+          {routeStops.map((s, i) => (
+            <View key={s.id} style={routeUi.orderRow}>
+              <View style={[routeUi.orderNum, { backgroundColor: `${primaryColor}18` }]}>
+                <Text style={[routeUi.orderNumText, { color: primaryColor }]}>{i + 1}</Text>
+              </View>
+              <Text style={routeUi.orderName} numberOfLines={1}>{s.name}</Text>
+              <TouchableOpacity onPress={() => moveStop(i, -1)} disabled={i === 0} style={routeUi.iconBtn} accessibilityLabel={`Move ${s.name} up`}>
+                <Icon name="arrow-upward" size={18} color={i === 0 ? GRAY_300 : GRAY_700} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => moveStop(i, 1)} disabled={i === routeStops.length - 1} style={routeUi.iconBtn} accessibilityLabel={`Move ${s.name} down`}>
+                <Icon name="arrow-downward" size={18} color={i === routeStops.length - 1 ? GRAY_300 : GRAY_700} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => toggleStop(s.id)} style={routeUi.iconBtn} accessibilityLabel={`Remove ${s.name}`}>
+                <Icon name="remove-circle-outline" size={20} color={DANGER_COLOR} />
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {otherStops.length > 0 && (
+            <>
+              <Text style={[stopsUi.fieldLabel, { marginTop: 16 }]}>Add stops</Text>
+              {otherStops.map((s) => (
+                <TouchableOpacity key={s.id} style={routeUi.addRow} onPress={() => toggleStop(s.id)}>
+                  <Icon name="add-circle-outline" size={20} color={primaryColor} />
+                  <Text style={routeUi.orderName} numberOfLines={1}>{s.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </>
+          )}
+
+          <View style={{ marginTop: 8 }}>
+            <ScheduleEditor route={draft} onChange={(schedule) => setDraft((d) => ({ ...d, schedule }))} />
+          </View>
+
+          {!isNew && (
+            <TouchableOpacity style={[stopsUi.deleteLink, { marginTop: 24 }]} onPress={handleDelete} disabled={isSaving}>
+              <Icon name="delete-outline" size={18} color={DANGER_COLOR} />
+              <Text style={stopsUi.deleteLinkText}>Delete route</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+const stopsUi = StyleSheet.create({
+  segmentWrap: {
+    flexDirection: 'row',
+    margin: 12,
+    marginBottom: 8,
+    padding: 3,
+    backgroundColor: GRAY_100,
+    borderRadius: borderRadius.md,
+  },
+  segment: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: borderRadius.sm,
+  },
+  segmentActive: { backgroundColor: WHITE, ...cardShadow },
+  segmentText: { fontSize: 14, fontWeight: '600', color: GRAY_500 },
+  map: { height: 240 },
+  panelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  panelTitle: { fontSize: 18, fontWeight: '700', color: GRAY_900 },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.xl,
+  },
+  addBtnText: { color: WHITE, fontWeight: '700', fontSize: 14 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    backgroundColor: WHITE,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: GRAY_100,
+  },
+  rowTitle: { fontSize: 15, fontWeight: '600', color: GRAY_900 },
+  rowSub: { fontSize: 12, color: GRAY_500, marginTop: 2 },
+  nextStep: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+    padding: 12,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: GRAY_300,
+  },
+  nextStepText: { flex: 1, fontSize: 14, fontWeight: '600' },
+  fieldLabel: { fontSize: 13, fontWeight: '700', color: GRAY_700, marginTop: 8, marginBottom: 6 },
+  headerCancel: { fontSize: 15, color: GRAY_500, fontWeight: '600' },
+  formTitle: { fontSize: 16, fontWeight: '700', color: GRAY_900 },
+  headerSaveBtn: { minWidth: 64, alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, borderRadius: borderRadius.xl },
+  headerSaveText: { color: WHITE, fontWeight: '700', fontSize: 14 },
+  deleteLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 18, paddingVertical: 8 },
+  deleteLinkText: { color: DANGER_COLOR, fontWeight: '600', fontSize: 14 },
+});
+
+const routeUi = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: GRAY_200,
+  },
+  headerCancel: { fontSize: 16, color: GRAY_500 },
+  headerTitle: { fontSize: 16, fontWeight: '700', color: GRAY_900, flex: 1, textAlign: 'center' },
+  headerSave: { fontSize: 16, fontWeight: '700' },
+  body: { padding: 16, paddingBottom: 48 },
+  map: { height: 220, borderRadius: borderRadius.md, marginTop: 14 },
+  numberPin: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: WHITE,
+  },
+  numberPinText: { color: WHITE, fontSize: 12, fontWeight: '800' },
+  otherPin: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: GRAY_400,
+    borderWidth: 2,
+    borderColor: WHITE,
+  },
+  orderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: GRAY_100,
+  },
+  orderNum: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  orderNumText: { fontSize: 12, fontWeight: '800' },
+  orderName: { flex: 1, fontSize: 15, color: GRAY_900 },
+  iconBtn: { padding: 6 },
+  addRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
+  colorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  colorSwatch: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  colorSwatchActive: { borderWidth: 3, borderColor: GRAY_900 },
+  colorSwatchText: { color: WHITE, fontSize: 10, fontWeight: '800' },
+});
 
 // ---- Users Tab ----
 
@@ -1723,6 +2019,8 @@ type OrgMember = {
   displayName?: string;
   role: 'student' | 'driver' | 'admin' | 'parent';
   defaultRouteId?: string | null;
+  // Firestore Timestamp serialized by the backend's JSON response.
+  createdAt?: { _seconds?: number; seconds?: number } | null;
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -1749,11 +2047,17 @@ function UsersTab() {
   // uid → defaultRouteId currently saved in Firestore for drivers
   const [driverDefaults, setDriverDefaults] = useState<Record<string, string | null>>({});
   const [savingRoute, setSavingRoute] = useState<string | null>(null);
-  const [rolePickerTarget, setRolePickerTarget] = useState<OrgMember | null>(null);
-  const [routePickerTarget, setRoutePickerTarget] = useState<OrgMember | null>(null);
+  const [personTarget, setPersonTarget] = useState<OrgMember | null>(null);
+  const [showInvite, setShowInvite] = useState(false);
+  const [memberFilter, setMemberFilter] = useState<'staff' | 'riders' | 'parents'>('staff');
   const [search, setSearch] = useState('');
   // Invite controls — must stay above all early returns
   const [inviteRole, setInviteRole] = useState<'student' | 'driver' | 'parent'>('student');
+  // Parent accounts only make sense for K-12 orgs (see src/constants/orgTypes).
+  const parentsAllowed = allowsParentRole(org?.orgType);
+  useEffect(() => {
+    if (!parentsAllowed && inviteRole === 'parent') setInviteRole('student');
+  }, [parentsAllowed, inviteRole]);
   const [copiedId, setCopiedId] = useState(false);
 
   const orgRoutes = org?.routes ?? [];
@@ -1786,14 +2090,6 @@ function UsersTab() {
 
   useEffect(() => { loadMembers(); }, [loadMembers]);
 
-  const handleAssignRoute = useCallback(
-    (member: OrgMember) => {
-      if (!org || orgRoutes.length === 0) return;
-      setRoutePickerTarget(member);
-    },
-    [org, orgRoutes],
-  );
-
   const saveDefaultRoute = useCallback(
     async (uid: string, routeId: string | null) => {
       if (!org) return;
@@ -1812,22 +2108,6 @@ function UsersTab() {
       }
     },
     [org],
-  );
-
-  const handleChangeRole = useCallback(
-    (member: OrgMember) => {
-      if (!org) return;
-      if (member.uid === currentUser?.uid) {
-        showToast('Ask another admin to change your role.', 'error');
-        return;
-      }
-      if (org.ownerUid && member.uid === org.ownerUid) {
-        showToast('The org owner\'s role cannot be changed.', 'error');
-        return;
-      }
-      setRolePickerTarget(member);
-    },
-    [org, currentUser?.uid],
   );
 
   const applyRole = useCallback(
@@ -1910,13 +2190,27 @@ function UsersTab() {
   const orgSlug = org?.slug ?? org?.orgId ?? '';
 
   const searchQuery = search.trim().toLowerCase();
-  const filteredMembers = searchQuery
-    ? members.filter(
-        (m) =>
-          (m.displayName ?? '').toLowerCase().includes(searchQuery) ||
-          m.email.toLowerCase().includes(searchQuery),
-      )
-    : members;
+  const matchesSearch = (m: OrgMember) =>
+    !searchQuery ||
+    (m.displayName ?? '').toLowerCase().includes(searchQuery) ||
+    m.email.toLowerCase().includes(searchQuery);
+
+  const staff = members.filter((m) => m.role === 'driver' || m.role === 'admin');
+  const riders = members.filter((m) => m.role === 'student');
+  const parents = members.filter((m) => m.role === 'parent');
+  const showParentsFilter = parentsAllowed || parents.length > 0;
+  const inFilter =
+    memberFilter === 'staff' ? staff : memberFilter === 'parents' ? parents : riders;
+  const visibleMembers = inFilter.filter(matchesSearch);
+
+  // People who joined in the last 7 days — shown first under Riders so an
+  // admin can find a newly signed-up driver and switch their role.
+  const weekAgoSec = Date.now() / 1000 - 7 * 86_400;
+  const joinedSec = (m: OrgMember) => m.createdAt?._seconds ?? m.createdAt?.seconds ?? 0;
+  const newRiders = memberFilter === 'riders' && !searchQuery
+    ? visibleMembers.filter((m) => joinedSec(m) >= weekAgoSec)
+    : [];
+  const otherMembers = visibleMembers.filter((m) => !newRiders.includes(m));
 
   const INVITE_MESSAGES: Record<typeof inviteRole, string> = {
     student: `You're invited to use ${org?.name ?? 'our shuttle'} on Shuttler!\n\n1. Download the Shuttler app\n2. Search for "${org?.name ?? orgSlug}" (Org ID: ${orgSlug})\n3. Sign up and you're all set — track the bus and request pickups in real time.`,
@@ -1937,81 +2231,108 @@ function UsersTab() {
   const INVITE_ROLE_LABELS: { key: typeof inviteRole; label: string; icon: string }[] = [
     { key: 'student', label: 'Student', icon: 'school' },
     { key: 'driver',  label: 'Driver',  icon: 'directions-bus' },
-    { key: 'parent',  label: 'Parent',  icon: 'family-restroom' },
+    ...(parentsAllowed ? [{ key: 'parent' as const, label: 'Parent', icon: 'family-restroom' }] : []),
+  ];
+
+  const roleColor = (role: string) => (role === 'admin' ? primaryColor : ROLE_COLORS[role]);
+
+  const renderMember = (member: OrgMember) => {
+    const isStaffMember = member.role === 'driver' || member.role === 'admin';
+    const assignedRouteId = driverDefaults[member.uid] ?? null;
+    const assignedRoute = assignedRouteId ? orgRoutes.find((r) => r.id === assignedRouteId) : null;
+    const isSelf = member.uid === currentUser?.uid;
+    const isOwner = !!(org?.ownerUid && member.uid === org.ownerUid);
+    const detail = [
+      ROLE_LABELS[member.role],
+      isStaffMember && orgRoutes.length > 0 ? (assignedRoute ? assignedRoute.name : 'No default route') : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <TouchableOpacity
+        key={member.uid}
+        style={usersStyles.personRow}
+        onPress={() => setPersonTarget(member)}
+        accessibilityRole="button"
+        accessibilityHint="Change role, route, or remove"
+      >
+        <View style={[styles.memberAvatar, { backgroundColor: `${roleColor(member.role)}20` }]}>
+          <Text style={[styles.memberAvatarText, { color: roleColor(member.role) }]}>
+            {(member.displayName ?? member.email).charAt(0).toUpperCase()}
+          </Text>
+        </View>
+        <View style={styles.memberInfo}>
+          <View style={usersStyles.nameRow}>
+            <Text style={styles.memberName} numberOfLines={1}>{member.displayName ?? member.email}</Text>
+            {isOwner && (
+              <View style={usersStyles.ownerBadge}><Text style={usersStyles.ownerBadgeText}>Owner</Text></View>
+            )}
+            {isSelf && !isOwner && (
+              <View style={usersStyles.youBadge}><Text style={usersStyles.youBadgeText}>You</Text></View>
+            )}
+          </View>
+          <Text style={styles.memberEmail} numberOfLines={1}>{detail}</Text>
+        </View>
+        <Icon name="chevron-right" size={20} color={GRAY_400} />
+      </TouchableOpacity>
+    );
+  };
+
+  // ---- Person sheet ----
+  const target = personTarget ? members.find((m) => m.uid === personTarget.uid) ?? personTarget : null;
+  const targetIsSelf = !!target && target.uid === currentUser?.uid;
+  const targetIsOwner = !!target && !!org?.ownerUid && target.uid === org.ownerUid;
+  const targetIsStaff = !!target && (target.role === 'driver' || target.role === 'admin');
+  const targetRouteId = target ? driverDefaults[target.uid] ?? null : null;
+  const roleOptions = (['student', 'driver', 'admin', 'parent'] as const).filter(
+    (role) => role !== 'parent' || parentsAllowed || target?.role === 'parent',
+  );
+
+  const filterTabs = [
+    { key: 'staff' as const, label: 'Staff', count: staff.length },
+    { key: 'riders' as const, label: 'Students', count: riders.length },
+    ...(showParentsFilter ? [{ key: 'parents' as const, label: 'Parents', count: parents.length }] : []),
   ];
 
   return (
     <>
-    <ScrollView contentContainerStyle={styles.tabContent}>
-      {/* Invite card */}
-      <View style={[usersStyles.inviteCard, { backgroundColor: `${primaryColor}0d`, borderColor: `${primaryColor}30` }]}>
-        {/* Header row */}
-        <View style={usersStyles.inviteHeader}>
-          <View style={[usersStyles.inviteIconWrap, { backgroundColor: `${primaryColor}18` }]}>
-            <Icon name="person-add" size={20} color={primaryColor} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={usersStyles.inviteTitle}>Invite people to join</Text>
-            <Text style={usersStyles.inviteBody}>Choose a role, then share</Text>
-          </View>
+    <ScrollView contentContainerStyle={styles.tabContent} keyboardShouldPersistTaps="handled">
+      {/* Header */}
+      <View style={usersStyles.header}>
+        <View style={{ flex: 1 }}>
+          <Text style={usersStyles.headerTitle}>People</Text>
+          <Text style={usersStyles.headerSub}>{members.length} member{members.length === 1 ? '' : 's'}</Text>
         </View>
-
-        {/* Role chips */}
-        <View style={usersStyles.roleChips}>
-          {INVITE_ROLE_LABELS.map(({ key, label, icon }) => (
-            <TouchableOpacity
-              key={key}
-              style={[
-                usersStyles.roleChip,
-                inviteRole === key && { backgroundColor: primaryColor, borderColor: primaryColor },
-              ]}
-              onPress={() => setInviteRole(key)}
-            >
-              <Icon name={icon} size={14} color={inviteRole === key ? WHITE : GRAY_500} />
-              <Text style={[usersStyles.roleChipText, inviteRole === key && { color: WHITE }]}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Org ID row + actions */}
-        <View style={usersStyles.inviteActions}>
-          <View style={usersStyles.orgIdRow}>
-            <Text style={usersStyles.orgIdLabel}>Org ID</Text>
-            <Text style={[usersStyles.inviteSlug, { color: primaryColor }]} numberOfLines={1}>{orgSlug}</Text>
-          </View>
-          <View style={usersStyles.inviteBtns}>
-            <TouchableOpacity
-              style={[usersStyles.inviteBtn, usersStyles.inviteBtnSecondary]}
-              onPress={handleCopyId}
-            >
-              <Icon name={copiedId ? 'check' : 'content-copy'} size={15} color={copiedId ? PRIMARY_COLOR : GRAY_500} />
-              <Text style={[usersStyles.inviteBtnText, copiedId && { color: PRIMARY_COLOR }]}>
-                {copiedId ? 'Copied!' : 'Copy ID'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[usersStyles.inviteBtn, { backgroundColor: primaryColor }]}
-              onPress={handleShareInvite}
-            >
-              <Icon name="share" size={15} color={WHITE} />
-              <Text style={[usersStyles.inviteBtnText, { color: WHITE }]}>Share invite</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <TouchableOpacity
+          style={[usersStyles.inviteHeaderBtn, { backgroundColor: primaryColor }]}
+          onPress={() => setShowInvite(true)}
+          accessibilityRole="button"
+        >
+          <Icon name="person-add" size={18} color={WHITE} />
+          <Text style={usersStyles.inviteHeaderBtnText}>Invite</Text>
+        </TouchableOpacity>
       </View>
 
-      <Text style={styles.hint}>
-        Tap a member's role badge to change it. Tap the route badge on drivers to assign a default route.
-      </Text>
+      {/* Filter */}
+      <View style={usersStyles.filterWrap}>
+        {filterTabs.map((t) => {
+          const active = memberFilter === t.key;
+          return (
+            <TouchableOpacity
+              key={t.key}
+              style={[usersStyles.filterTab, active && usersStyles.filterTabActive]}
+              onPress={() => setMemberFilter(t.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[usersStyles.filterText, active && { color: primaryColor }]}>
+                {t.label} <Text style={usersStyles.filterCount}>{t.count}</Text>
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
-      {members.length === 0 && (
-        <Text style={styles.hint}>No members yet — share your org ID above so people can find you.</Text>
-      )}
-
-      {members.length > 0 && (
-        <View style={[newStopStyles.searchRow, { marginBottom: 4 }]}>
+      {inFilter.length > 6 && (
+        <View style={[newStopStyles.searchRow, { marginBottom: 8 }]}>
           <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 8 }} />
           <TextInput
             style={newStopStyles.searchInput}
@@ -2026,197 +2347,174 @@ function UsersTab() {
         </View>
       )}
 
-      {filteredMembers.length === 0 && search.trim() !== '' && (
-        <Text style={styles.hint}>No members match "{search.trim()}".</Text>
+      {memberFilter === 'staff' && (
+        <Text style={[styles.hint, { marginBottom: 8 }]}>
+          Drivers and admins. To add a driver, invite them, then find them under Students once they sign up and change their role.
+        </Text>
       )}
 
-      {filteredMembers.map((member) => {
-        const isDriver = member.role === 'driver' || member.role === 'admin';
-        const assignedRouteId = driverDefaults[member.uid] ?? null;
-        const assignedRoute = assignedRouteId ? orgRoutes.find((r) => r.id === assignedRouteId) : null;
-        const isSelf = member.uid === currentUser?.uid;
-        const isOwner = !!(org?.ownerUid && member.uid === org.ownerUid);
-        return (
-          <View key={member.uid} style={styles.memberRow}>
-            <View style={[styles.memberAvatar, isSelf && usersStyles.selfAvatar, isSelf && { backgroundColor: `${primaryColor}25` }]}>
-              <Text style={[styles.memberAvatarText, { color: primaryColor }]}>
-                {(member.displayName ?? member.email).charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View style={styles.memberInfo}>
-              <View style={usersStyles.nameRow}>
-                <Text style={styles.memberName} numberOfLines={1}>
-                  {member.displayName ?? '—'}
-                </Text>
-                {isOwner && (
-                  <View style={usersStyles.ownerBadge}>
-                    <Text style={usersStyles.ownerBadgeText}>Owner</Text>
-                  </View>
-                )}
-                {isSelf && !isOwner && (
-                  <View style={usersStyles.youBadge}>
-                    <Text style={usersStyles.youBadgeText}>You</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.memberEmail} numberOfLines={1}>{member.email}</Text>
-            </View>
-            {isDriver && orgRoutes.length > 0 && (
-              <TouchableOpacity
-                style={styles.routeBadge}
-                onPress={() => handleAssignRoute(member)}
-                disabled={savingRoute === member.uid}
-              >
-                {savingRoute === member.uid ? (
-                  <ActivityIndicator size="small" color={primaryColor} />
-                ) : (
-                  <Text style={styles.routeBadgeText} numberOfLines={1}>
-                    {assignedRoute ? assignedRoute.name : 'Route…'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={[styles.roleBadge, { backgroundColor: `${member.role === 'admin' ? primaryColor : ROLE_COLORS[member.role]}20` }, (isSelf || isOwner) && usersStyles.roleBadgeSelf]}
-              onPress={() => handleChangeRole(member)}
-              disabled={isOwner}
-            >
-              <Text style={[styles.roleBadgeText, { color: member.role === 'admin' ? primaryColor : ROLE_COLORS[member.role] }]}>
-                {ROLE_LABELS[member.role]}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => handleRemoveUser(member)}
-              style={[styles.removeUserBtn, (isSelf || isOwner) && usersStyles.removeDisabled]}
-              disabled={isOwner}
-            >
-              <Icon name="person-remove" size={18} color={(isSelf || isOwner) ? GRAY_300 : DANGER_COLOR} />
-            </TouchableOpacity>
-          </View>
-        );
-      })}
+      {newRiders.length > 0 && (
+        <>
+          <Text style={usersStyles.groupLabel}>New this week</Text>
+          {newRiders.map(renderMember)}
+          {otherMembers.length > 0 && <Text style={usersStyles.groupLabel}>Everyone else</Text>}
+        </>
+      )}
+
+      {otherMembers.map(renderMember)}
+
+      {visibleMembers.length === 0 && (
+        <View style={usersStyles.empty}>
+          <Icon name={searchQuery ? 'search-off' : 'people-outline'} size={32} color={GRAY_300} />
+          <Text style={usersStyles.emptyText}>
+            {searchQuery
+              ? `No one matches "${search.trim()}".`
+              : memberFilter === 'staff'
+              ? 'No drivers yet. Tap Invite to bring your first driver on board.'
+              : memberFilter === 'parents'
+              ? 'No parents have joined yet.'
+              : 'No students yet. Tap Invite to share your org.'}
+          </Text>
+        </View>
+      )}
     </ScrollView>
 
-    {/* Role Picker Sheet */}
-    <BottomSheet visible={rolePickerTarget !== null} onClose={() => setRolePickerTarget(null)}>
+    {/* Invite sheet */}
+    <BottomSheet visible={showInvite} onClose={() => setShowInvite(false)}>
       <View style={pickerSheetStyles.handle} />
-      <Text style={pickerSheetStyles.title} numberOfLines={1}>
-        {rolePickerTarget?.displayName ?? rolePickerTarget?.email}
+      <Text style={pickerSheetStyles.title}>Invite people</Text>
+      <Text style={pickerSheetStyles.subtitle}>Pick who you're inviting, then share the message.</Text>
+
+      <View style={usersStyles.roleChips}>
+        {INVITE_ROLE_LABELS.map(({ key, label, icon }) => {
+          const active = inviteRole === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              onPress={() => setInviteRole(key)}
+              style={[
+                usersStyles.roleChip,
+                active ? { backgroundColor: primaryColor, borderColor: primaryColor } : { borderColor: GRAY_200 },
+              ]}
+            >
+              <Icon name={icon} size={14} color={active ? WHITE : GRAY_500} />
+              <Text style={[usersStyles.roleChipText, { color: active ? WHITE : GRAY_500 }]}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <Text style={[styles.hint, { marginVertical: 12 }]}>
+        {inviteRole === 'driver'
+          ? 'Drivers sign up like everyone else. Once they have, find them under Students (they\'ll be at the top under "New this week") and change their role to Driver.'
+          : inviteRole === 'parent'
+          ? 'Parents sign up with their phone number and add their child\'s profile.'
+          : 'Students search for your org in the app and sign up — no approval needed.'}
       </Text>
-      <Text style={pickerSheetStyles.subtitle}>Select a role</Text>
-      {(['student', 'driver', 'parent', 'admin'] as const).map((role) => {
-        const color = role === 'admin' ? primaryColor : ROLE_COLORS[role];
-        const isCurrent = rolePickerTarget?.role === role;
-        return (
-          <TouchableOpacity
-            key={role}
-            style={pickerSheetStyles.option}
-            onPress={() => {
-              applyRole(rolePickerTarget!.uid, role);
-              setRolePickerTarget(null);
-            }}
-          >
-            <View style={[pickerSheetStyles.roleCircle, { backgroundColor: `${color}18` }]}>
-              <Text style={[pickerSheetStyles.roleCircleText, { color }]}>
-                {ROLE_LABELS[role].charAt(0)}
-              </Text>
-            </View>
-            <Text style={[pickerSheetStyles.optionLabel, isCurrent && pickerSheetStyles.optionLabelActive]}>
-              {ROLE_LABELS[role]}
-            </Text>
-            {isCurrent && <Icon name="check" size={18} color={primaryColor} />}
-          </TouchableOpacity>
-        );
-      })}
-      <TouchableOpacity style={pickerSheetStyles.cancelBtn} onPress={() => setRolePickerTarget(null)}>
-        <Text style={pickerSheetStyles.cancelText}>Cancel</Text>
-      </TouchableOpacity>
+
+      <View style={usersStyles.orgIdRow}>
+        <Text style={usersStyles.orgIdLabel}>Org ID</Text>
+        <Text style={[usersStyles.inviteSlug, { color: primaryColor }]} numberOfLines={1}>{orgSlug}</Text>
+      </View>
+      <View style={[usersStyles.inviteBtns, { marginTop: 12 }]}>
+        <TouchableOpacity style={[usersStyles.inviteBtn, usersStyles.inviteBtnSecondary]} onPress={handleCopyId}>
+          <Icon name={copiedId ? 'check' : 'content-copy'} size={15} color={copiedId ? PRIMARY_COLOR : GRAY_500} />
+          <Text style={[usersStyles.inviteBtnText, copiedId && { color: PRIMARY_COLOR }]}>
+            {copiedId ? 'Copied!' : 'Copy ID'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[usersStyles.inviteBtn, { backgroundColor: primaryColor }]} onPress={handleShareInvite}>
+          <Icon name="share" size={15} color={WHITE} />
+          <Text style={[usersStyles.inviteBtnText, { color: WHITE }]}>Share invite</Text>
+        </TouchableOpacity>
+      </View>
     </BottomSheet>
 
-    {/* Route Picker Sheet */}
-    <BottomSheet visible={routePickerTarget !== null} onClose={() => setRoutePickerTarget(null)}>
-      <View style={pickerSheetStyles.handle} />
-      <Text style={pickerSheetStyles.title} numberOfLines={1}>
-        {routePickerTarget?.displayName ?? routePickerTarget?.email}
-      </Text>
-      <Text style={pickerSheetStyles.subtitle}>Assign a default route</Text>
-      <TouchableOpacity
-        style={pickerSheetStyles.option}
-        onPress={() => {
-          saveDefaultRoute(routePickerTarget!.uid, null);
-          setRoutePickerTarget(null);
-        }}
-      >
-        <View style={[pickerSheetStyles.roleCircle, { backgroundColor: GRAY_100 }]}>
-          <Icon name="remove" size={14} color={GRAY_400} />
-        </View>
-        <Text style={[pickerSheetStyles.optionLabel, !driverDefaults[routePickerTarget?.uid ?? ''] && pickerSheetStyles.optionLabelActive]}>
-          No default route
-        </Text>
-        {!driverDefaults[routePickerTarget?.uid ?? ''] && <Icon name="check" size={18} color={primaryColor} />}
-      </TouchableOpacity>
-      {orgRoutes.map((route) => {
-        const isAssigned = driverDefaults[routePickerTarget?.uid ?? ''] === route.id;
-        return (
-          <TouchableOpacity
-            key={route.id}
-            style={pickerSheetStyles.option}
-            onPress={() => {
-              saveDefaultRoute(routePickerTarget!.uid, route.id);
-              setRoutePickerTarget(null);
-            }}
-          >
-            <View style={[pickerSheetStyles.roleCircle, { backgroundColor: `${primaryColor}15` }]}>
-              <Icon name="directions-bus" size={14} color={primaryColor} />
-            </View>
-            <Text style={[pickerSheetStyles.optionLabel, isAssigned && pickerSheetStyles.optionLabelActive]} numberOfLines={1}>
-              {route.name}
+    {/* Person sheet: role, default route, remove */}
+    <BottomSheet visible={target !== null} onClose={() => setPersonTarget(null)}>
+      {target && (
+        <>
+          <View style={pickerSheetStyles.handle} />
+          <Text style={pickerSheetStyles.title} numberOfLines={1}>{target.displayName ?? target.email}</Text>
+          <Text style={pickerSheetStyles.subtitle} numberOfLines={1}>{target.email}</Text>
+
+          <Text style={usersStyles.sheetLabel}>Role</Text>
+          {targetIsOwner || targetIsSelf ? (
+            <Text style={styles.hint}>
+              {targetIsOwner
+                ? 'The org owner is always an admin.'
+                : 'Ask another admin to change your role.'}
             </Text>
-            {isAssigned && <Icon name="check" size={18} color={primaryColor} />}
+          ) : (
+            <View style={usersStyles.roleChips}>
+              {roleOptions.map((role) => {
+                const active = target.role === role;
+                const color = roleColor(role);
+                return (
+                  <TouchableOpacity
+                    key={role}
+                    onPress={() => { if (!active) applyRole(target.uid, role); }}
+                    style={[
+                      usersStyles.roleChip,
+                      active ? { backgroundColor: color, borderColor: color } : { borderColor: GRAY_200 },
+                    ]}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[usersStyles.roleChipText, { color: active ? WHITE : GRAY_700 }]}>
+                      {ROLE_LABELS[role]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          {targetIsStaff && orgRoutes.length > 0 && (
+            <>
+              <Text style={usersStyles.sheetLabel}>Default route</Text>
+              <Text style={[styles.hint, { marginBottom: 6 }]}>Pre-selected when they go online. They can still switch.</Text>
+              {[{ id: null as string | null, name: 'No default' }, ...orgRoutes.map((r) => ({ id: r.id as string | null, name: r.name }))].map((r) => {
+                const active = targetRouteId === r.id;
+                return (
+                  <TouchableOpacity
+                    key={r.id ?? 'none'}
+                    style={pickerSheetStyles.option}
+                    onPress={() => { if (!active) saveDefaultRoute(target.uid, r.id); }}
+                    disabled={savingRoute === target.uid}
+                  >
+                    <Icon name={r.id ? 'directions-bus' : 'block'} size={18} color={active ? primaryColor : GRAY_400} />
+                    <Text style={[pickerSheetStyles.optionLabel, active && pickerSheetStyles.optionLabelActive]}>{r.name}</Text>
+                    {savingRoute === target.uid && active
+                      ? <ActivityIndicator size="small" color={primaryColor} />
+                      : active && <Icon name="check" size={18} color={primaryColor} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </>
+          )}
+
+          {!targetIsOwner && !targetIsSelf && (
+            <TouchableOpacity
+              style={stopsUi.deleteLink}
+              onPress={() => { const m = target; setPersonTarget(null); handleRemoveUser(m); }}
+            >
+              <Icon name="person-remove" size={18} color={DANGER_COLOR} />
+              <Text style={stopsUi.deleteLinkText}>Remove from {org?.name ?? 'org'}</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={pickerSheetStyles.cancelBtn} onPress={() => setPersonTarget(null)}>
+            <Text style={pickerSheetStyles.cancelText}>Done</Text>
           </TouchableOpacity>
-        );
-      })}
-      <TouchableOpacity style={pickerSheetStyles.cancelBtn} onPress={() => setRoutePickerTarget(null)}>
-        <Text style={pickerSheetStyles.cancelText}>Cancel</Text>
-      </TouchableOpacity>
+        </>
+      )}
     </BottomSheet>
     </>
   );
 }
 
 const usersStyles = StyleSheet.create({
-  inviteCard: {
-    borderWidth: 1,
-    borderColor: `${PRIMARY_COLOR}30`,
-    borderRadius: borderRadius.md,
-    padding: 14,
-    marginBottom: 16,
-    gap: 12,
-  },
-  inviteHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  inviteIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: `${PRIMARY_COLOR}18`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  inviteTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: GRAY_900,
-    marginBottom: 2,
-  },
-  inviteBody: {
-    fontSize: 12,
-    color: GRAY_500,
-  },
   roleChips: {
     flexDirection: 'row',
     gap: 8,
@@ -2236,9 +2534,6 @@ const usersStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: GRAY_500,
-  },
-  inviteActions: {
-    gap: 8,
   },
   orgIdRow: {
     flexDirection: 'row',
@@ -2281,9 +2576,6 @@ const usersStyles = StyleSheet.create({
     fontWeight: '600',
     color: GRAY_500,
   },
-  selfAvatar: {
-    backgroundColor: `${PRIMARY_COLOR}25`,
-  },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2311,12 +2603,49 @@ const usersStyles = StyleSheet.create({
     fontWeight: '700',
     color: '#0369a1',
   },
-  roleBadgeSelf: {
-    opacity: 0.5,
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: GRAY_900 },
+  headerSub: { fontSize: 13, color: GRAY_500, marginTop: 2 },
+  inviteHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: borderRadius.xl,
   },
-  removeDisabled: {
-    opacity: 0.3,
+  inviteHeaderBtnText: { color: WHITE, fontWeight: '700', fontSize: 14 },
+  filterWrap: {
+    flexDirection: 'row',
+    padding: 3,
+    backgroundColor: GRAY_100,
+    borderRadius: borderRadius.md,
+    marginBottom: 12,
   },
+  filterTab: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: borderRadius.sm },
+  filterTabActive: { backgroundColor: WHITE, ...cardShadow },
+  filterText: { fontSize: 14, fontWeight: '600', color: GRAY_500 },
+  filterCount: { fontSize: 13, fontWeight: '500', color: GRAY_400 },
+  groupLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: GRAY_400,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  personRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: GRAY_100,
+  },
+  empty: { alignItems: 'center', paddingVertical: 32, gap: 8 },
+  emptyText: { fontSize: 14, color: GRAY_500, textAlign: 'center', paddingHorizontal: 24 },
+  sheetLabel: { fontSize: 13, fontWeight: '700', color: GRAY_700, marginTop: 16, marginBottom: 8 },
 });
 
 const pickerSheetStyles = StyleSheet.create({
@@ -3584,14 +3913,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 14,
   },
-  memberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: GRAY_100,
-    gap: 10,
-  },
   memberAvatar: {
     width: 38,
     height: 38,
@@ -3609,10 +3930,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  removeUserBtn: {
-    padding: 4,
-    marginLeft: 4,
-  },
   memberName: {
     fontSize: 14,
     fontWeight: '600',
@@ -3623,30 +3940,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: GRAY_500,
     marginTop: 1,
-  },
-  roleBadge: {
-    borderRadius: borderRadius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  roleBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  routeBadge: {
-    borderRadius: borderRadius.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: '#e0f2fe',
-    marginRight: 4,
-    maxWidth: 90,
-    minWidth: 36,
-    alignItems: 'center',
-  },
-  routeBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#0369a1',
   },
   tabContent: {
     padding: spacing.section,
@@ -3810,9 +4103,6 @@ const styles = StyleSheet.create({
   stopsContainer: {
     flex: 1,
   },
-  map: {
-    height: 260,
-  },
   mapCollapsed: {
     height: 120,
   },
@@ -3823,183 +4113,12 @@ const styles = StyleSheet.create({
   stopsPanelContent: {
     paddingBottom: 80,
   },
-  searchBarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: WHITE,
-    borderWidth: 1,
-    borderColor: GRAY_200,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginBottom: 8,
-  },
-  searchBarInput: {
-    flex: 1,
-    fontSize: 14,
-    color: GRAY_900,
-    padding: 0,
-  },
-  searchDropdown: {
-    backgroundColor: WHITE,
-    borderWidth: 1,
-    borderColor: GRAY_200,
-    borderRadius: 10,
-    marginBottom: 12,
-    overflow: 'hidden',
-  },
-  searchDropdownItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: GRAY_100,
-  },
   searchDropdownText: {
     flex: 1,
     fontSize: 13,
     color: GRAY_700,
     lineHeight: 19,
   },
-  coordPreview: {
-    fontSize: 12,
-    color: GRAY_500,
-    marginTop: 2,
-    marginBottom: 4,
-    paddingHorizontal: 2,
-  },
-  addStopForm: {
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: GRAY_200,
-    borderRadius: borderRadius.md,
-    padding: 14,
-    marginBottom: 16,
-    gap: 10,
-  },
-  addStopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  stopNameInput: {
-    flex: 1,
-    marginBottom: 0,
-  },
-  addStopBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: PRIMARY_COLOR,
-    borderRadius: borderRadius.md,
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-  },
-  addStopBtnDisabled: {
-    opacity: 0.45,
-  },
-  addStopBtnText: {
-    color: WHITE,
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  stopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 13,
-    paddingHorizontal: 12,
-    marginBottom: 4,
-    backgroundColor: WHITE,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: GRAY_100,
-    gap: 10,
-  },
-  stopName: {
-    flex: 1,
-    fontSize: 15,
-    color: GRAY_900,
-  },
-  // Routes
-  routesHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: spacing.section,
-  },
-  planLimitBadge: {
-    fontSize: 12,
-    color: GRAY_500,
-    marginLeft: 'auto' as any,
-    marginRight: 8,
-  },
-  routeCard: {
-    borderWidth: 1,
-    borderColor: GRAY_200,
-    borderRadius: borderRadius.md,
-    marginBottom: 8,
-    overflow: 'hidden',
-  },
-  routeCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    gap: 8,
-    backgroundColor: GRAY_50,
-  },
-  routeName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-    color: GRAY_900,
-  },
-  routeStopCount: {
-    fontSize: 12,
-    color: GRAY_500,
-  },
-  routeDeleteBtn: {
-    paddingLeft: 4,
-  },
-  routeEditor: {
-    padding: spacing.item,
-    backgroundColor: WHITE,
-    borderTopWidth: 1,
-    borderTopColor: GRAY_200,
-  },
-  routeEditorLabel: {
-    fontSize: 12,
-    color: GRAY_600,
-    marginBottom: 8,
-  },
-  routeStopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 11,
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: GRAY_100,
-  },
-  routeStopIndex: {
-    fontSize: 13,
-    color: GRAY_400,
-    width: 20,
-  },
-  routeStopName: {
-    flex: 1,
-    fontSize: 14,
-    color: GRAY_900,
-  },
-  routeStopAvailable: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-    gap: 8,
-    opacity: 0.6,
-  },
-  // Billing
   statusCard: {
     backgroundColor: WHITE,
     borderRadius: borderRadius.xl,

@@ -32,20 +32,12 @@ import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import { SHUTTLER_API_URL } from '../config';
 import PhoneInput from '../src/components/PhoneInput';
 import { showAlert } from '../src/utils/alerts';
+import { ORG_TYPES } from '../src/constants/orgTypes';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CreateOrg'>;
 
 // ---- Static option sets ----
 
-const ORG_TYPES = [
-  { value: 'university', label: 'University / College' },
-  { value: 'k12', label: 'K-12 School' },
-  { value: 'corporate', label: 'Corporate Campus' },
-  { value: 'healthcare', label: 'Hospital / Healthcare' },
-  { value: 'government', label: 'Government / Municipal' },
-  { value: 'nonprofit', label: 'Non-profit' },
-  { value: 'other', label: 'Other' },
-];
 
 const RIDER_RANGES = [
   { value: 'under_50', label: 'Under 50' },

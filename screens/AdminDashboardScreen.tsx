@@ -38,14 +38,15 @@ import { FRESHNESS_WINDOW_SECONDS, STALE_WINDOW_SECONDS } from '../src/constants
 import HeaderBar from '../components/HeaderBar';
 import ScreenContainer from '../components/ScreenContainer';
 import { useOrgTheme } from '../src/org/useOrgTheme';
-import { showAlert } from '../src/utils/alerts';
-import { shareCsvFile } from '../src/utils/exportCsv';
-import { csvRow } from '../src/utils/csv';
+
+function startOfDay(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
 
 function todayStart(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return new Date(startOfDay(Date.now()));
 }
 
 function sevenDaysAgo(): Date {
@@ -53,6 +54,12 @@ function sevenDaysAgo(): Date {
   d.setDate(d.getDate() - 6);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+// Same local-date format LocationContext writes to bus.breakShiftDate.
+function localDateString(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function formatDuration(ms: number): string {
@@ -67,139 +74,424 @@ function formatDuration(ms: number): string {
 function formatTimeAgo(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s ago`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  return `${Math.round(seconds / 3600)}h ago`;
+  if (seconds < 48 * 3600) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)} days ago`;
 }
 
 function getDayLabel(date: Date): string {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
 }
 
+function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Within this distance the bus is "at" a stop; beyond it, "near" the closest one.
+const AT_STOP_METERS = 75;
+
+const OCCUPANCY_LABEL: Record<string, { label: string; color: string; bg: string }> = {
+  open: { label: 'Seats open', color: '#166534', bg: '#dcfce7' },
+  filling: { label: 'Filling up', color: '#854d0e', bg: '#fef9c3' },
+  full: { label: 'Full', color: '#991b1b', bg: '#fee2e2' },
+};
+
 // ---- Driver Analytics Types & Helpers ----
 
 type StopStat = { stopId: string; stopName: string; count: number; pct: number };
 type DriverStatsData = {
-  uid: string;
-  name: string;
   totalAllTime: number;
-  totalToday: number;
-  todayVisits: number;
   activeDays: number;
   avgPerDay: number;
   avgPerVisit: number;
-  topStop: string | null;
   stops: StopStat[];
+};
+type DriverShiftData = {
+  shiftCount: number;
+  totalMs: number;
+  avgMs: number;
+  longestMs: number;
+  days: { label: string; ms: number }[];
+};
+
+type WaitingRequest = { id: string; stopName: string; createdAtMs: number };
+
+type DriverRow = {
+  uid: string;
+  name: string;
+  isAdmin: boolean;
+  isOnline: boolean;
+  isGpsLost: boolean;
+  secondsAgo: number | null;
+  onlineDurationMs: number | null;
+  todayOnlineMs: number;
+  routeName: string | null;
+  todayPickups: number;
+  waitingRequests: WaitingRequest[];
+  completedToday: number;
+  cancelledToday: number;
+  onBreak: boolean;
+  breakEndsAtMs: number | null;
+  breaksToday: number;
+  occupancy: string | null;
+  nearestStop: { name: string; meters: number } | null;
 };
 
 // Stats window for the expandable driver cards. Bounded so the dashboard
 // stays fast as boarding history grows — full history lives in CSV export.
 const DRIVER_STATS_WINDOW_DAYS = 90;
+const DRIVER_SHIFT_WINDOW_DAYS = 7;
 
-async function fetchDriverStats(uid: string, orgId: string): Promise<DriverStatsData | null> {
-  try {
-    const windowStart = Timestamp.fromMillis(Date.now() - DRIVER_STATS_WINDOW_DAYS * 86_400_000);
-    const snap = await getDocs(
-      query(
-        collection(db, 'orgs', orgId, 'boardingCounts'),
-        where('driverUid', '==', uid),
-        where('createdAt', '>=', windowStart),
-      ),
-    );
-    const docs = snap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+async function fetchDriverStats(uid: string, orgId: string): Promise<DriverStatsData> {
+  const windowStart = Timestamp.fromMillis(Date.now() - DRIVER_STATS_WINDOW_DAYS * 86_400_000);
+  // Explicit DESC order so this matches the deployed composite index
+  // (driverUid ASC, createdAt DESC). Without it Firestore orders createdAt
+  // ASC implicitly, needs a different index, and the query fails.
+  const snap = await getDocs(
+    query(
+      collection(db, 'orgs', orgId, 'boardingCounts'),
+      where('driverUid', '==', uid),
+      where('createdAt', '>=', windowStart),
+      orderBy('createdAt', 'desc'),
+    ),
+  );
 
-    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
-    const midnightMs = midnight.getTime();
+  let totalAllTime = 0;
+  const daySet = new Set<string>();
+  const stopCounts: Record<string, { name: string; count: number }> = {};
 
-    let totalAllTime = 0;
-    let totalToday = 0;
-    let todayVisits = 0;
-    const daySet = new Set<string>();
-    const stopCounts: Record<string, { name: string; count: number }> = {};
+  snap.docs.forEach((doc) => {
+    const d = doc.data() as any;
+    const count = d.count ?? 0;
+    totalAllTime += count;
+    daySet.add(new Date(d.createdAt?.toMillis?.() ?? 0).toDateString());
+    const sid = d.stopId ?? d.stop?.id ?? 'unknown';
+    const sname = d.stopName ?? d.stop?.name ?? 'Unknown stop';
+    if (!stopCounts[sid]) stopCounts[sid] = { name: sname, count: 0 };
+    stopCounts[sid].count += count;
+  });
 
-    for (const d of docs) {
-      const count = d.count ?? 0;
-      const ms = d.createdAt?.toMillis?.() ?? 0;
-      totalAllTime += count;
-      const dayKey = new Date(ms).toDateString();
-      daySet.add(dayKey);
-      if (ms >= midnightMs) { totalToday += count; todayVisits++; }
-      const sid = d.stopId ?? d.stop?.id ?? 'unknown';
-      const sname = d.stopName ?? d.stop?.name ?? 'Unknown stop';
-      if (!stopCounts[sid]) stopCounts[sid] = { name: sname, count: 0 };
-      stopCounts[sid].count += count;
-    }
+  const activeDays = daySet.size;
+  const stops: StopStat[] = Object.entries(stopCounts)
+    .map(([sid, { name, count }]) => ({ stopId: sid, stopName: name, count, pct: totalAllTime > 0 ? Math.round((count / totalAllTime) * 100) : 0 }))
+    .sort((a, b) => b.count - a.count);
 
-    const activeDays = daySet.size;
-    const stops: StopStat[] = Object.entries(stopCounts)
-      .map(([sid, { name, count }]) => ({ stopId: sid, stopName: name, count, pct: totalAllTime > 0 ? Math.round((count / totalAllTime) * 100) : 0 }))
-      .sort((a, b) => b.count - a.count);
-
-    return {
-      uid,
-      name: '',
-      totalAllTime,
-      totalToday,
-      todayVisits,
-      activeDays,
-      avgPerDay: activeDays > 0 ? Math.round(totalAllTime / activeDays) : 0,
-      avgPerVisit: docs.length > 0 ? Math.round(totalAllTime / docs.length) : 0,
-      topStop: stops[0]?.stopName ?? null,
-      stops,
-    };
-  } catch (e) {
-    console.error('fetchDriverStats error', e);
-    return null;
-  }
+  return {
+    totalAllTime,
+    activeDays,
+    avgPerDay: activeDays > 0 ? Math.round(totalAllTime / activeDays) : 0,
+    avgPerVisit: snap.size > 0 ? Math.round(totalAllTime / snap.size) : 0,
+    stops,
+  };
 }
 
-const DriverStatCard = memo(function DriverStatCard({ driver, orgId }: { driver: { uid: string; name: string }; orgId: string }) {
+async function fetchDriverShifts(uid: string, orgId: string): Promise<DriverShiftData> {
+  // Step by calendar day, not 24h — days around a DST change are 23h or 25h,
+  // and fixed 24h steps duplicate or skip a day label.
+  const dayStarts = Array.from({ length: DRIVER_SHIFT_WINDOW_DAYS }, (_, i) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - (DRIVER_SHIFT_WINDOW_DAYS - 1 - i));
+    return d.getTime();
+  });
+  const windowStartMs = dayStarts[0];
+  // Matches the (driverUid ASC, startedAt DESC) index.
+  const snap = await getDocs(
+    query(
+      collection(db, 'orgs', orgId, 'driverSessions'),
+      where('driverUid', '==', uid),
+      where('startedAt', '>=', Timestamp.fromMillis(windowStartMs)),
+      orderBy('startedAt', 'desc'),
+    ),
+  );
+
+  const days = dayStarts.map((startMs) => ({
+    label: getDayLabel(new Date(startMs)),
+    startMs,
+    ms: 0,
+  }));
+
+  let shiftCount = 0;
+  let totalMs = 0;
+  let longestMs = 0;
+  snap.docs.forEach((doc) => {
+    const d = doc.data() as any;
+    // Open sessions have no durationMs yet — the live card covers the current one.
+    if (typeof d.durationMs !== 'number') return;
+    shiftCount += 1;
+    totalMs += d.durationMs;
+    longestMs = Math.max(longestMs, d.durationMs);
+    const startedMs = d.startedAt?.toMillis?.() ?? 0;
+    const day = days.find((x) => x.startMs === startOfDay(startedMs));
+    if (day) day.ms += d.durationMs;
+  });
+
+  return {
+    shiftCount,
+    totalMs,
+    avgMs: shiftCount > 0 ? Math.round(totalMs / shiftCount) : 0,
+    longestMs,
+    days: days.map(({ label, ms }) => ({ label, ms })),
+  };
+}
+
+function StatusBadge({ driver, primaryColor }: { driver: DriverRow; primaryColor: string }) {
+  const variant = driver.isGpsLost
+    ? { badge: styles.badgeWarn, dot: styles.dotWarn, text: styles.textWarn, label: 'GPS Lost' }
+    : driver.isOnline && driver.onBreak
+    ? { badge: styles.badgeBreak, dot: styles.dotBreak, text: styles.textBreak, label: 'On break' }
+    : driver.isOnline
+    ? { badge: styles.badgeOnline, dot: { backgroundColor: primaryColor }, text: { color: primaryColor }, label: 'Online' }
+    : { badge: styles.badgeOffline, dot: styles.dotOffline, text: styles.textOffline, label: 'Offline' };
+  return (
+    <View style={[styles.statusBadge, variant.badge]}>
+      <View style={[styles.statusDot, variant.dot]} />
+      <Text style={[styles.statusText, variant.text]}>{variant.label}</Text>
+    </View>
+  );
+}
+
+function statusLine(driver: DriverRow, nowMs: number): string {
+  if (driver.isGpsLost && driver.secondsAgo !== null) return `Signal lost ${formatTimeAgo(driver.secondsAgo)}`;
+  if (driver.isOnline && driver.onBreak) {
+    if (driver.breakEndsAtMs) {
+      const remainingMs = driver.breakEndsAtMs - nowMs;
+      return remainingMs > 0
+        ? `Break ends in ${formatDuration(remainingMs)}`
+        : `Break ran over by ${formatDuration(-remainingMs)}`;
+    }
+    return 'On break';
+  }
+  if (driver.isOnline && driver.onlineDurationMs !== null) {
+    const updated = driver.secondsAgo !== null ? ` · GPS ${formatTimeAgo(driver.secondsAgo)}` : '';
+    return `Online for ${formatDuration(driver.onlineDurationMs)}${updated}`;
+  }
+  if (driver.secondsAgo !== null) return `Last seen ${formatTimeAgo(driver.secondsAgo)}`;
+  return 'Never connected';
+}
+
+const DriverCard = memo(function DriverCard({
+  driver,
+  orgId,
+  nowMs,
+}: {
+  driver: DriverRow;
+  orgId: string;
+  nowMs: number;
+}) {
   const { primaryColor } = useOrgTheme();
   const [open, setOpen] = useState(false);
   const [stats, setStats] = useState<DriverStatsData | null>(null);
+  const [shifts, setShifts] = useState<DriverShiftData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(async () => {
-    if (stats) { setOpen(true); return; }
-    setLoading(true);
-    const s = await fetchDriverStats(driver.uid, orgId);
-    if (s) { s.name = driver.name; setStats(s); }
-    setLoading(false);
+    if (loading) return;
     setOpen(true);
-  }, [driver, orgId, stats]);
+    if (stats && shifts) return;
+    setLoading(true);
+    setFailed(false);
+    try {
+      const [s, sh] = await Promise.all([
+        fetchDriverStats(driver.uid, orgId),
+        fetchDriverShifts(driver.uid, orgId),
+      ]);
+      setStats(s);
+      setShifts(sh);
+    } catch (e) {
+      console.error('Driver details load failed', e);
+      setFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [driver.uid, orgId, stats, shifts, loading]);
 
+  const expanded = open && !!stats && !!shifts;
   const maxStopCount = Math.max(...(stats?.stops.map((s) => s.count) ?? [1]), 1);
+  const maxShiftDay = Math.max(...(shifts?.days.map((d) => d.ms) ?? [1]), 1);
+  const occupancy = driver.isOnline && driver.occupancy ? OCCUPANCY_LABEL[driver.occupancy] : null;
+  // "Online for X" already covers today when this is the only shift, so only
+  // show the daily total when it differs (earlier shifts, or now offline).
+  const showTodayOnline =
+    driver.todayOnlineMs > 0 &&
+    (driver.onlineDurationMs === null || driver.todayOnlineMs - driver.onlineDurationMs >= 60_000);
 
   return (
-    <TouchableOpacity style={styles.card} onPress={open ? () => setOpen(false) : load} activeOpacity={0.85}>
-      <View style={styles.analyticsCardHeader}>
-        <View style={styles.analyticsIconWrap}>
-          <Icon name="person" size={18} color={primaryColor} />
+    <TouchableOpacity
+      style={styles.card}
+      onPress={open && !failed ? () => setOpen(false) : load}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityHint={open ? 'Hides driver details' : 'Shows shift history and stats'}
+      accessibilityState={{ expanded, busy: loading }}
+    >
+      {/* Header row */}
+      <View style={styles.cardHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.driverName}>{driver.name}</Text>
+          {driver.routeName || driver.isAdmin ? (
+            <Text style={styles.routeLabel}>
+              {[driver.isAdmin ? 'Admin' : null, driver.routeName].filter(Boolean).join(' · ')}
+            </Text>
+          ) : null}
         </View>
-        <Text style={styles.analyticsDriverName}>{driver.name}</Text>
+        <StatusBadge driver={driver} primaryColor={primaryColor} />
         {loading
-          ? <ActivityIndicator size="small" color={primaryColor} />
-          : <Icon name={open ? 'expand-less' : 'bar-chart'} size={20} color={GRAY_400} />}
+          ? <ActivityIndicator size="small" color={primaryColor} style={styles.chevron} />
+          : <Icon name={expanded ? 'expand-less' : 'expand-more'} size={22} color={GRAY_400} style={styles.chevron} />}
       </View>
 
-      {open && stats && (
-        <>
-          <View style={styles.analyticsChips}>
-            {[
-              { label: '90 days', value: stats.totalAllTime },
-              { label: 'Today', value: stats.totalToday },
-              { label: 'Active days', value: stats.activeDays },
-              { label: 'Avg/day', value: stats.avgPerDay },
-              { label: 'Avg/visit', value: stats.avgPerVisit },
-            ].map((chip) => (
-              <View key={chip.label} style={styles.analyticsChip}>
-                <Text style={[styles.analyticsChipValue, { color: primaryColor }]}>{chip.value}</Text>
-                <Text style={styles.analyticsChipLabel}>{chip.label}</Text>
-              </View>
-            ))}
-          </View>
+      <Text style={styles.durationText}>{statusLine(driver, nowMs)}</Text>
 
-          {stats.stops.length > 0 && (
+      {/* Live details — only meaningful while the bus is online */}
+      {driver.isOnline && (driver.nearestStop || occupancy) && (
+        <View style={styles.liveRow}>
+          {driver.nearestStop && (
+            <View style={styles.liveItem}>
+              <Icon name="place" size={13} color={GRAY_500} />
+              <Text style={styles.liveText} numberOfLines={1}>
+                {driver.nearestStop.meters <= AT_STOP_METERS
+                  ? `At ${driver.nearestStop.name}`
+                  : `Near ${driver.nearestStop.name} · ${Math.round(driver.nearestStop.meters)} m`}
+              </Text>
+            </View>
+          )}
+          {occupancy && (
+            <View style={[styles.occupancyChip, { backgroundColor: occupancy.bg }]}>
+              <Text style={[styles.occupancyText, { color: occupancy.color }]}>{occupancy.label}</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {(showTodayOnline || driver.breaksToday > 0) && (
+        <View style={styles.onlineTimeRow}>
+          {showTodayOnline && (
             <>
-              <Text style={styles.analyticsStopTitle}>Stop breakdown</Text>
+              <Icon name="timer" size={13} color={GRAY_500} />
+              <Text style={styles.onlineTimeText}>{formatDuration(driver.todayOnlineMs)} online today</Text>
+            </>
+          )}
+          {driver.breaksToday > 0 && (
+            <>
+              <Icon name="free-breakfast" size={13} color={GRAY_500} style={showTodayOnline ? { marginLeft: 8 } : undefined} />
+              <Text style={styles.onlineTimeText}>
+                {driver.breaksToday} break{driver.breaksToday === 1 ? '' : 's'}
+              </Text>
+            </>
+          )}
+        </View>
+      )}
+
+      {/* Today stats */}
+      <View style={styles.statsRow}>
+        <View style={styles.statCell}>
+          <Text style={styles.statValue}>{driver.todayPickups}</Text>
+          <Text style={styles.statLabel}>Riders boarded</Text>
+        </View>
+        <View style={styles.statCell}>
+          <Text style={styles.statValue}>{driver.waitingRequests.length}</Text>
+          <Text style={styles.statLabel}>Waiting</Text>
+        </View>
+        <View style={styles.statCell}>
+          <Text style={styles.statValue}>{driver.completedToday}</Text>
+          <Text style={styles.statLabel}>Requests done</Text>
+        </View>
+        <View style={styles.statCell}>
+          <Text style={[styles.statValue, driver.cancelledToday > 0 && styles.statValueWarn]}>
+            {driver.cancelledToday}
+          </Text>
+          <Text style={styles.statLabel}>Cancelled</Text>
+        </View>
+      </View>
+
+      {open && failed && (
+        <Text style={styles.analyticsError}>Couldn't load driver details. Tap to retry.</Text>
+      )}
+
+      {expanded && stats && shifts && (
+        <View style={styles.expandedSection}>
+          {/* Waiting requests */}
+          {driver.waitingRequests.length > 0 && (
+            <>
+              <Text style={styles.analyticsStopTitle}>Riders waiting{driver.routeName ? ' on this route' : ''}</Text>
+              {driver.waitingRequests.slice(0, 6).map((r) => (
+                <View key={r.id} style={styles.waitingRow}>
+                  <Text style={styles.waitingStop} numberOfLines={1}>{r.stopName}</Text>
+                  <Text style={styles.waitingAge}>
+                    {r.createdAtMs ? `waiting ${formatTimeAgo((nowMs - r.createdAtMs) / 1000).replace(' ago', '')}` : ''}
+                  </Text>
+                </View>
+              ))}
+              {driver.waitingRequests.length > 6 && (
+                <Text style={styles.moreText}>+{driver.waitingRequests.length - 6} more</Text>
+              )}
+            </>
+          )}
+
+          {/* Shift history */}
+          <Text style={styles.analyticsStopTitle}>Shifts — last {DRIVER_SHIFT_WINDOW_DAYS} days</Text>
+          {shifts.shiftCount === 0 ? (
+            <Text style={styles.analyticsEmpty}>No completed shifts in the last {DRIVER_SHIFT_WINDOW_DAYS} days.</Text>
+          ) : (
+            <>
+              <View style={styles.analyticsChipsTight}>
+                {[
+                  { label: 'Shifts', value: String(shifts.shiftCount) },
+                  { label: 'Hours online', value: formatDuration(shifts.totalMs) },
+                  { label: 'Avg shift', value: formatDuration(shifts.avgMs) },
+                  { label: 'Longest', value: formatDuration(shifts.longestMs) },
+                ].map((chip) => (
+                  <View key={chip.label} style={styles.analyticsChip}>
+                    <Text style={[styles.analyticsChipValueSm, { color: primaryColor }]}>{chip.value}</Text>
+                    <Text style={styles.analyticsChipLabel}>{chip.label}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={styles.shiftBarsRow}>
+                {shifts.days.map((d, i) => (
+                  <View key={`${d.label}-${i}`} style={styles.trendCol}>
+                    <View style={styles.shiftBarBg}>
+                      <View
+                        style={[
+                          styles.trendBar,
+                          { height: d.ms > 0 ? Math.max(3, (d.ms / maxShiftDay) * 32) : 0, backgroundColor: primaryColor },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.trendLabel}>{d.label}</Text>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+
+          {/* 90-day boarding stats */}
+          <Text style={styles.analyticsStopTitle}>Boardings — last {DRIVER_STATS_WINDOW_DAYS} days</Text>
+          {stats.totalAllTime === 0 ? (
+            <Text style={styles.analyticsEmpty}>No boardings logged in the last {DRIVER_STATS_WINDOW_DAYS} days.</Text>
+          ) : (
+            <>
+              <View style={styles.analyticsChipsTight}>
+                {[
+                  { label: 'Boarded', value: stats.totalAllTime },
+                  { label: 'Active days', value: stats.activeDays },
+                  { label: 'Avg/day', value: stats.avgPerDay },
+                  { label: 'Avg/stop', value: stats.avgPerVisit },
+                ].map((chip) => (
+                  <View key={chip.label} style={styles.analyticsChip}>
+                    <Text style={[styles.analyticsChipValue, { color: primaryColor }]}>{chip.value}</Text>
+                    <Text style={styles.analyticsChipLabel}>{chip.label}</Text>
+                  </View>
+                ))}
+              </View>
               {stats.stops.slice(0, 8).map((s) => (
                 <View key={s.stopId} style={styles.analyticsStopRow}>
                   <Text style={styles.analyticsStopName} numberOfLines={1}>{s.stopName}</Text>
@@ -211,7 +503,7 @@ const DriverStatCard = memo(function DriverStatCard({ driver, orgId }: { driver:
               ))}
             </>
           )}
-        </>
+        </View>
       )}
     </TouchableOpacity>
   );
@@ -222,8 +514,9 @@ export default function AdminDashboardScreen() {
   const { org } = useOrg();
   const { orgId } = useAuth();
   const { primaryColor } = useOrgTheme();
-  // Memoized: a fresh `[]` each render would invalidate the driverStats memo.
+  // Memoized: a fresh `[]` each render would invalidate the driverRows memo.
   const orgRoutes = useMemo(() => org?.routes ?? [], [org?.routes]);
+  const orgStops = useMemo(() => org?.stops ?? [], [org?.stops]);
 
   const [drivers, setDrivers] = useState<any[]>([]);
   const [buses, setBuses] = useState<Record<string, any>>({});
@@ -233,13 +526,17 @@ export default function AdminDashboardScreen() {
   const [todaySessions, setTodaySessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(Date.now());
-  const [analyticsQuery, setAnalyticsQuery] = useState('');
-  const [isExporting, setIsExporting] = useState(false);
+  const [driverQuery, setDriverQuery] = useState('');
 
   useEffect(() => {
-    const t = setInterval(() => setTick(Date.now()), 60000);
+    // 30s keeps "online for" / break countdowns reasonably current.
+    const t = setInterval(() => setTick(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
+
+  // Changes at local midnight, which re-subscribes the "today" queries below.
+  // Previously they kept their mount-time start and counted yesterday forever.
+  const dayStartMs = startOfDay(tick);
 
   // All drivers/admins in the org
   useEffect(() => {
@@ -274,7 +571,7 @@ export default function AdminDashboardScreen() {
     );
   }, [orgId]);
 
-  // Currently active stop requests (any date — TTL is 15 min so set is small)
+  // Currently open stop requests (any date — TTL is 15 min so set is small)
   useEffect(() => {
     if (!orgId) return;
     return onSnapshot(
@@ -283,20 +580,22 @@ export default function AdminDashboardScreen() {
         where('status', 'in', ['pending', 'accepted']),
       ),
       (snap) => setActiveRequests(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
+      (err) => console.error('AdminDashboard active requests snapshot error', err),
     );
   }, [orgId]);
 
-  // Today's stop requests (all statuses — for completed/cancelled/response-rate)
+  // Today's stop requests (all statuses — for completed/cancelled/completion rate)
   useEffect(() => {
     if (!orgId) return;
     return onSnapshot(
       query(
         collection(db, 'orgs', orgId, 'stopRequests'),
-        where('createdAt', '>=', Timestamp.fromDate(todayStart())),
+        where('createdAt', '>=', Timestamp.fromMillis(dayStartMs)),
       ),
       (snap) => setTodayRequests(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
+      (err) => console.error('AdminDashboard today requests snapshot error', err),
     );
-  }, [orgId]);
+  }, [orgId, dayStartMs]);
 
   // Today's driver sessions (for time-online stats)
   useEffect(() => {
@@ -304,12 +603,12 @@ export default function AdminDashboardScreen() {
     return onSnapshot(
       query(
         collection(db, 'orgs', orgId, 'driverSessions'),
-        where('startedAt', '>=', Timestamp.fromDate(todayStart())),
+        where('startedAt', '>=', Timestamp.fromMillis(dayStartMs)),
       ),
       (snap) => setTodaySessions(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
-      () => {},
+      (err) => console.error('AdminDashboard sessions snapshot error', err),
     );
-  }, [orgId]);
+  }, [orgId, dayStartMs]);
 
   // Last 7 days of boarding counts (pickups)
   useEffect(() => {
@@ -321,22 +620,73 @@ export default function AdminDashboardScreen() {
         orderBy('createdAt', 'asc'),
       ),
       (snap) => setWeekBoardings(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
+      (err) => console.error('AdminDashboard boardings snapshot error', err),
     );
-  }, [orgId]);
+  }, [orgId, dayStartMs]);
 
-  // --- Derived: per-driver stats ---
-  const driverStats = useMemo(() => {
+  // --- Per-driver indexes (built once per data change, not once per driver) ---
+  const todayPickupsByDriver = useMemo(() => {
+    const map: Record<string, number> = {};
+    weekBoardings.forEach((b) => {
+      if (!b.driverUid || (b.createdAt?.toMillis?.() ?? 0) < dayStartMs) return;
+      map[b.driverUid] = (map[b.driverUid] ?? 0) + (b.count ?? 0);
+    });
+    return map;
+  }, [weekBoardings, dayStartMs]);
+
+  const todayRequestsByDriver = useMemo(() => {
+    const map: Record<string, { completed: number; cancelled: number }> = {};
+    todayRequests.forEach((r) => {
+      const uid = r.driverUid ?? r.driverId;
+      if (!uid) return;
+      if (!map[uid]) map[uid] = { completed: 0, cancelled: 0 };
+      // awaiting_confirmation = driver logged the pickup, rider hasn't confirmed yet.
+      if (r.status === 'completed' || r.status === 'awaiting_confirmation') map[uid].completed += 1;
+      else if (r.status === 'cancelled') map[uid].cancelled += 1;
+    });
+    return map;
+  }, [todayRequests]);
+
+  // Admins only appear in the driver list if they actually drove recently;
+  // otherwise every non-driving admin shows up as a row of zeros.
+  const boardedThisWeek = useMemo(() => {
+    const set = new Set<string>();
+    weekBoardings.forEach((b) => { if (b.driverUid) set.add(b.driverUid); });
+    return set;
+  }, [weekBoardings]);
+
+  const sessionMsByDriver = useMemo(() => {
+    const map: Record<string, number> = {};
+    todaySessions.forEach((s) => {
+      if (!s.driverUid || s.durationMs == null) return;
+      map[s.driverUid] = (map[s.driverUid] ?? 0) + s.durationMs;
+    });
+    return map;
+  }, [todaySessions]);
+
+  // --- Derived: per-driver rows ---
+  const driverRows = useMemo<DriverRow[]>(() => {
     const nowMs = tick;
-    const todayMs = todayStart().getTime();
+    const todayKey = localDateString(nowMs);
+
+    const activeSinceMs = sevenDaysAgo().getTime();
+    const isActiveAdmin = (uid: string) => {
+      const bus = buses[uid];
+      const lastMs: number = bus?.updatedAt?.toMillis?.() ?? bus?.lastSeen?.toMillis?.() ?? 0;
+      // Not bus.online: it stays true when the app dies mid-shift, so an admin
+      // who drove once weeks ago would show forever.
+      return lastMs >= activeSinceMs || boardedThisWeek.has(uid);
+    };
 
     return drivers
+      .filter((user) => user.role === 'driver' || (user.role === 'admin' && isActiveAdmin(user.uid)))
       .map((user) => {
         const uid = user.uid;
         const bus = buses[uid] ?? null;
 
         const lastMs: number | null =
           bus?.updatedAt?.toMillis?.() ?? bus?.lastSeen?.toMillis?.() ?? null;
-        const secondsAgo = lastMs !== null ? (nowMs - lastMs) / 1000 : null;
+        const secondsAgo = lastMs !== null ? Math.max(0, (nowMs - lastMs) / 1000) : null;
 
         const isOnline =
           bus?.online === true &&
@@ -344,88 +694,112 @@ export default function AdminDashboardScreen() {
           secondsAgo < STALE_WINDOW_SECONDS;
         const isFresh =
           isOnline && secondsAgo !== null && secondsAgo < FRESHNESS_WINDOW_SECONDS;
-        const isGpsLost = isOnline && !isFresh;
+        const onBreak = isOnline && bus?.onBreak === true;
+        // A driver on break may stop sending GPS — that's expected, not "lost".
+        const isGpsLost = isOnline && !isFresh && !onBreak;
 
         const sessionStartMs: number | null = bus?.sessionStartAt?.toMillis?.() ?? null;
         const onlineDurationMs =
-          isOnline && sessionStartMs ? nowMs - sessionStartMs : null;
+          isOnline && sessionStartMs ? Math.max(0, nowMs - sessionStartMs) : null;
 
         const routeId = bus?.routeId ?? null;
         const routeName = orgRoutes.find((r) => r.id === routeId)?.name ?? null;
 
-        const todayPickups = weekBoardings
-          .filter((b) => b.driverUid === uid && (b.createdAt?.toMillis?.() ?? 0) >= todayMs)
-          .reduce((sum, b) => sum + (b.count ?? 0), 0);
+        // Requests aren't assigned to a driver until pickup, so "waiting" is
+        // every pending request on this driver's route (or all, if no route).
+        const waitingRequests: WaitingRequest[] = isOnline
+          ? activeRequests
+              .filter((r) => {
+                if (r.status !== 'pending' && r.status !== 'accepted') return false;
+                const assigned = r.driverUid ?? r.driverId ?? null;
+                if (assigned) return assigned === uid;
+                return !routeId || !r.routeId || r.routeId === routeId;
+              })
+              .map((r) => ({
+                id: r.id,
+                stopName: r.stop?.name ?? 'Unknown stop',
+                createdAtMs: r.createdAt?.toMillis?.() ?? 0,
+              }))
+              .sort((a, b) => a.createdAtMs - b.createdAtMs)
+          : [];
 
-        // Active requests: assigned to this driver, or unassigned pending
-        const activeCount = activeRequests.filter((r) => {
-          const assigned = r.driverUid ?? r.driverId ?? null;
-          return assigned === uid || (r.status === 'pending' && !assigned);
-        }).length;
+        const reqs = todayRequestsByDriver[uid] ?? { completed: 0, cancelled: 0 };
 
-        const myToday = todayRequests.filter(
-          (r) => (r.driverUid ?? r.driverId) === uid,
-        );
-        const completedToday = myToday.filter((r) => r.status === 'completed').length;
-        const cancelledToday = myToday.filter((r) => r.status === 'cancelled').length;
-        const totalClosed = completedToday + cancelledToday;
-        const responseRate =
-          totalClosed > 0 ? Math.round((completedToday / totalClosed) * 100) : null;
+        const todayOnlineMs = (sessionMsByDriver[uid] ?? 0) + (onlineDurationMs ?? 0);
 
-        // Sum up completed session durations today + current live session if online
-        const completedSessionsToday = todaySessions.filter(
-          (s) => s.driverUid === uid && s.durationMs != null,
-        );
-        const completedMs = completedSessionsToday.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
-        const todayOnlineMs = completedMs + (onlineDurationMs ?? 0);
+        let nearestStop: DriverRow['nearestStop'] = null;
+        if (isOnline && typeof bus?.latitude === 'number' && typeof bus?.longitude === 'number') {
+          for (const stop of orgStops) {
+            const meters = getDistanceInMeters(bus.latitude, bus.longitude, stop.latitude, stop.longitude);
+            if (!nearestStop || meters < nearestStop.meters) nearestStop = { name: stop.name, meters };
+          }
+        }
+
+        const breakEndsAtMs: number | null =
+          bus?.breakEndsAt?.toMillis?.() ?? (bus?.breakEndsAt instanceof Date ? bus.breakEndsAt.getTime() : null);
 
         return {
           uid,
           name: user.displayName ?? user.email ?? uid,
+          isAdmin: user.role === 'admin',
           isOnline,
           isGpsLost,
-          isFresh,
           secondsAgo,
           onlineDurationMs,
           todayOnlineMs,
           routeName,
-          todayPickups,
-          activeCount,
-          completedToday,
-          cancelledToday,
-          responseRate,
+          todayPickups: todayPickupsByDriver[uid] ?? 0,
+          waitingRequests,
+          completedToday: reqs.completed,
+          cancelledToday: reqs.cancelled,
+          onBreak,
+          breakEndsAtMs: onBreak ? breakEndsAtMs : null,
+          breaksToday: bus?.breakShiftDate === todayKey ? (bus?.breaksTakenThisShift ?? 0) : 0,
+          occupancy: typeof bus?.occupancy === 'string' ? bus.occupancy : null,
+          nearestStop,
         };
       })
       .sort((a, b) => {
         if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
-  }, [drivers, buses, activeRequests, todayRequests, weekBoardings, todaySessions, orgRoutes, tick]);
+  }, [drivers, buses, activeRequests, todayRequestsByDriver, todayPickupsByDriver, sessionMsByDriver, boardedThisWeek, orgRoutes, orgStops, tick]);
+
+  const filteredDriverRows = useMemo(() => {
+    const q = driverQuery.toLowerCase().trim();
+    return q ? driverRows.filter((d) => d.name.toLowerCase().includes(q)) : driverRows;
+  }, [driverQuery, driverRows]);
 
   // --- Derived: fleet summary ---
   const fleetSummary = useMemo(() => {
-    const todayMs = todayStart().getTime();
+    let todayPickups = 0;
+    Object.values(todayPickupsByDriver).forEach((n) => { todayPickups += n; });
     return {
-      onlineCount: driverStats.filter((d) => d.isOnline).length,
-      totalDrivers: driverStats.length,
+      onlineCount: driverRows.filter((d) => d.isOnline).length,
+      onBreakCount: driverRows.filter((d) => d.onBreak).length,
+      totalDrivers: driverRows.length,
       totalActive: activeRequests.length,
-      todayPickups: weekBoardings
-        .filter((b) => (b.createdAt?.toMillis?.() ?? 0) >= todayMs)
-        .reduce((sum, b) => sum + (b.count ?? 0), 0),
+      todayPickups,
     };
-  }, [driverStats, activeRequests, weekBoardings]);
+  }, [driverRows, activeRequests, todayPickupsByDriver]);
 
   // --- Derived: busiest stops today ---
   const busiestStops = useMemo(() => {
+    // A request created today that's still open is in BOTH lists — dedupe by
+    // id so it isn't counted twice.
+    const byId = new Map<string, any>();
+    todayRequests.forEach((r) => byId.set(r.id, r));
+    activeRequests.forEach((r) => byId.set(r.id, r));
     const counts: Record<string, { name: string; count: number }> = {};
-    [...activeRequests, ...todayRequests].forEach((r) => {
+    byId.forEach((r) => {
       const id = r.stop?.id ?? r.stopId;
       const name = r.stop?.name ?? id ?? 'Unknown';
       if (!id) return;
       if (!counts[id]) counts[id] = { name, count: 0 };
       counts[id].count++;
     });
-    return Object.values(counts)
+    return Object.entries(counts)
+      .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
   }, [activeRequests, todayRequests]);
@@ -433,9 +807,8 @@ export default function AdminDashboardScreen() {
   // --- Derived: 7-day pickup trend ---
   const weekTrend = useMemo(() => {
     const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
+      const d = new Date(dayStartMs);
       d.setDate(d.getDate() - (6 - i));
-      d.setHours(0, 0, 0, 0);
       return { label: getDayLabel(d), dateMs: d.getTime(), count: 0 };
     });
     weekBoardings.forEach((b) => {
@@ -448,132 +821,12 @@ export default function AdminDashboardScreen() {
       }
     });
     return days;
-  }, [weekBoardings]);
+  }, [weekBoardings, dayStartMs]);
 
   const maxTrend = useMemo(
     () => Math.max(...weekTrend.map((d) => d.count), 1),
     [weekTrend],
   );
-
-  const filteredDriversForAnalytics = useMemo(() => {
-    const q = analyticsQuery.toLowerCase().trim();
-    return q ? drivers.filter((d) => (d.displayName ?? d.email ?? '').toLowerCase().includes(q)) : drivers;
-  }, [analyticsQuery, drivers]);
-
-  const handleExportCSV = useCallback(async () => {
-    if (!orgId || isExporting) return;
-
-    // All plans include basicExport. If entitlements haven't loaded yet (org
-    // just provisioned), fall back to allowing the export rather than blocking.
-    const canExport = org?.entitlements?.basicExport !== false;
-    if (!canExport) {
-      showAlert('Data export is not available on your current plan. Please upgrade in the Billing tab.', 'Upgrade Required', 'error');
-      return;
-    }
-
-    // Extended retention (>90 days) requires the dataApi add-on.
-    const extendedRetention = org?.entitlements?.extendedRetention ?? false;
-    const BASIC_DAYS = 90;
-    const cutoffMs = extendedRetention
-      ? 0 // no cutoff — all historical data
-      : Date.now() - BASIC_DAYS * 24 * 60 * 60 * 1000;
-
-    setIsExporting(true);
-    try {
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const todayMs = today.getTime();
-      // Filter in the query, not after downloading the whole history — the
-      // export only uses the retention window and today's requests.
-      const boardingCol = collection(db, 'orgs', orgId, 'boardingCounts');
-      const [boardingSnap, reqSnap] = await Promise.all([
-        getDocs(cutoffMs > 0
-          ? query(boardingCol, where('createdAt', '>=', Timestamp.fromMillis(cutoffMs)))
-          : boardingCol),
-        getDocs(query(
-          collection(db, 'orgs', orgId, 'stopRequests'),
-          where('createdAt', '>=', Timestamp.fromMillis(todayMs)),
-        )),
-      ]);
-
-      // Single pass over boarding docs to build all three derived structures at once.
-      const boardingRows: string[] = [];
-      const driverTotals: Record<string, { all: number; today: number }> = {};
-      const stopSummary: Record<string, { name: string; count: number }> = {};
-
-      boardingSnap.docs.forEach((d) => {
-        const data = d.data() as any;
-        const count: number = data.count ?? 0;
-        const driverUid: string = data.driverUid ?? '';
-        const stopId: string = data.stopId ?? data.stop?.id ?? 'unknown';
-        const stopName: string = data.stopName ?? data.stop?.name ?? 'Unknown';
-        const createdAtMs: number = data.createdAt?.toMillis?.() ?? 0;
-        const createdAtIso: string = data.createdAt?.toDate?.()?.toISOString() ?? '';
-
-        if (cutoffMs > 0 && createdAtMs < cutoffMs) return; // enforce retention window
-
-        boardingRows.push(csvRow([d.id, driverUid, stopName, count, createdAtIso]));
-
-        if (driverUid) {
-          if (!driverTotals[driverUid]) driverTotals[driverUid] = { all: 0, today: 0 };
-          driverTotals[driverUid].all += count;
-          if (createdAtMs >= todayMs) driverTotals[driverUid].today += count;
-        }
-
-        if (!stopSummary[stopId]) stopSummary[stopId] = { name: stopName, count: 0 };
-        stopSummary[stopId].count += count;
-      });
-
-      const driverSummary = drivers.map((driver) => {
-        const totals = driverTotals[driver.uid] ?? { all: 0, today: 0 };
-        return csvRow([driver.uid, (driver as any).displayName ?? (driver as any).email ?? '', totals.all, totals.today]);
-      });
-      const stopRows = Object.entries(stopSummary)
-        .sort((a, b) => b[1].count - a[1].count)
-        .map(([sid, { name, count }]) => csvRow([sid, name, count]));
-
-      const todayReqRows = reqSnap.docs
-        .filter((d) => {
-          const ms = (d.data() as any).createdAt?.toMillis?.() ?? 0;
-          return ms >= todayMs && (cutoffMs === 0 || ms >= cutoffMs);
-        })
-        .map((d) => {
-          const data = d.data() as any;
-          return csvRow([d.id, data.studentEmail ?? '', data.stop?.name ?? '', data.status ?? '', data.createdAt?.toDate?.()?.toISOString() ?? '']);
-        });
-
-      const rangeNote = extendedRetention
-        ? `# Data range: all-time (Data Add-on active)`
-        : `# Data range: last ${BASIC_DAYS} days — upgrade to Data Add-on for full history`;
-
-      const csv = [
-        rangeNote,
-        '',
-        'BOARDING EVENTS',
-        'id,driverUid,stopName,count,createdAt',
-        ...boardingRows,
-        '',
-        'DRIVER SUMMARY',
-        'uid,name,totalAllTime,totalToday',
-        ...driverSummary,
-        '',
-        'STOP POPULARITY (ALL-TIME)',
-        'stopId,stopName,totalBoarded',
-        ...stopRows,
-        '',
-        "TODAY'S REQUESTS",
-        'id,studentEmail,stopName,status,createdAt',
-        ...todayReqRows,
-      ].join('\n');
-
-      const dateStamp = today.toISOString().slice(0, 10);
-      await shareCsvFile(csv, `shuttler-export-${dateStamp}.csv`, 'Shuttler Export');
-    } catch (e) {
-      console.error('CSV export failed', e);
-      showAlert('Export failed. Check your connection and try again.', 'Error', 'error');
-    } finally {
-      setIsExporting(false);
-    }
-  }, [orgId, drivers, isExporting]);
 
   if (loading) {
     return (
@@ -610,24 +863,26 @@ export default function AdminDashboardScreen() {
             <Text style={styles.summaryValue}>
               {fleetSummary.onlineCount}/{fleetSummary.totalDrivers}
             </Text>
-            <Text style={styles.summaryLabel}>Online</Text>
+            <Text style={styles.summaryLabel}>
+              {fleetSummary.onBreakCount > 0 ? `Online · ${fleetSummary.onBreakCount} on break` : 'Online'}
+            </Text>
           </View>
           <View style={styles.summarySep} />
           <View style={styles.summaryCell}>
             <Text style={styles.summaryValue}>{fleetSummary.todayPickups}</Text>
-            <Text style={styles.summaryLabel}>Pickups today</Text>
+            <Text style={styles.summaryLabel}>Boarded today</Text>
           </View>
           <View style={styles.summarySep} />
           <View style={styles.summaryCell}>
             <Text style={styles.summaryValue}>{fleetSummary.totalActive}</Text>
-            <Text style={styles.summaryLabel}>Active requests</Text>
+            <Text style={styles.summaryLabel}>Riders waiting</Text>
           </View>
         </View>
 
         {/* Drivers */}
         <Text style={styles.sectionTitle}>Drivers</Text>
 
-        {driverStats.length === 0 && (
+        {driverRows.length === 0 && (
           <View style={styles.driversEmptyState}>
             <Icon name="directions-bus" size={40} color={GRAY_300} />
             <Text style={styles.driversEmptyTitle}>No drivers yet</Text>
@@ -644,116 +899,27 @@ export default function AdminDashboardScreen() {
           </View>
         )}
 
-        {driverStats.map((driver) => (
-          <View key={driver.uid} style={styles.card}>
-            {/* Header row */}
-            <View style={styles.cardHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.driverName}>{driver.name}</Text>
-                {driver.routeName ? (
-                  <Text style={styles.routeLabel}>{driver.routeName}</Text>
-                ) : null}
-              </View>
-              <View
-                style={[
-                  styles.statusBadge,
-                  driver.isGpsLost
-                    ? styles.badgeWarn
-                    : driver.isOnline
-                    ? styles.badgeOnline
-                    : styles.badgeOffline,
-                ]}
-              >
-                <View
-                  style={[
-                    styles.statusDot,
-                    driver.isGpsLost
-                      ? styles.dotWarn
-                      : driver.isOnline
-                      ? { backgroundColor: primaryColor }
-                      : styles.dotOffline,
-                  ]}
-                />
-                <Text
-                  style={[
-                    styles.statusText,
-                    driver.isGpsLost
-                      ? styles.textWarn
-                      : driver.isOnline
-                      ? { color: primaryColor }
-                      : styles.textOffline,
-                  ]}
-                >
-                  {driver.isGpsLost
-                    ? 'GPS Lost'
-                    : driver.isOnline
-                    ? 'Online'
-                    : 'Offline'}
-                </Text>
-              </View>
-            </View>
-
-            {/* Duration / last seen */}
-            <Text style={styles.durationText}>
-              {driver.isGpsLost && driver.secondsAgo !== null
-                ? `Signal lost ${formatTimeAgo(driver.secondsAgo)}`
-                : driver.isOnline && driver.onlineDurationMs !== null
-                ? `Online for ${formatDuration(driver.onlineDurationMs)}`
-                : driver.secondsAgo !== null
-                ? `Last seen ${formatTimeAgo(driver.secondsAgo)}`
-                : 'Never connected'}
-            </Text>
-
-            {/* Today's total online time */}
-            {driver.todayOnlineMs > 0 && (
-              <View style={styles.onlineTimeRow}>
-                <Icon name="timer" size={13} color={GRAY_500} />
-                <Text style={styles.onlineTimeText}>
-                  {formatDuration(driver.todayOnlineMs)} online today
-                </Text>
-              </View>
-            )}
-
-            {/* Stats */}
-            <View style={styles.statsRow}>
-              <View style={styles.statCell}>
-                <Text style={styles.statValue}>{driver.todayPickups}</Text>
-                <Text style={styles.statLabel}>Pickups</Text>
-              </View>
-              <View style={styles.statCell}>
-                <Text style={styles.statValue}>{driver.activeCount}</Text>
-                <Text style={styles.statLabel}>Active</Text>
-              </View>
-              <View style={styles.statCell}>
-                <Text style={styles.statValue}>{driver.completedToday}</Text>
-                <Text style={styles.statLabel}>Done</Text>
-              </View>
-              <View style={styles.statCell}>
-                <Text
-                  style={[
-                    styles.statValue,
-                    driver.cancelledToday > 0 && styles.statValueWarn,
-                  ]}
-                >
-                  {driver.cancelledToday}
-                </Text>
-                <Text style={styles.statLabel}>Cancelled</Text>
-              </View>
-              {driver.responseRate !== null && (
-                <View style={styles.statCell}>
-                  <Text
-                    style={[
-                      styles.statValue,
-                      driver.responseRate < 60 && styles.statValueWarn,
-                    ]}
-                  >
-                    {driver.responseRate}%
-                  </Text>
-                  <Text style={styles.statLabel}>Rate</Text>
-                </View>
-              )}
-            </View>
+        {driverRows.length > 5 && (
+          <View style={styles.analyticsSearchRow}>
+            <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 6 }} />
+            <TextInput
+              style={styles.analyticsSearchInput}
+              placeholder="Search drivers…"
+              placeholderTextColor={GRAY_400}
+              value={driverQuery}
+              onChangeText={setDriverQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
           </View>
+        )}
+
+        {driverRows.length > 0 && (
+          <Text style={styles.sectionHint}>Tap a driver for shift history and stats.</Text>
+        )}
+
+        {filteredDriverRows.map((driver) => (
+          <DriverCard key={driver.uid} driver={driver} orgId={orgId ?? ''} nowMs={tick} />
         ))}
 
         {/* Busiest Stops */}
@@ -763,7 +929,7 @@ export default function AdminDashboardScreen() {
             <View style={styles.card}>
               {busiestStops.map((stop, idx) => (
                 <View
-                  key={stop.name}
+                  key={stop.id}
                   style={[
                     styles.stopRow,
                     idx < busiestStops.length - 1 && styles.stopRowBorder,
@@ -782,7 +948,7 @@ export default function AdminDashboardScreen() {
         )}
 
         {/* 7-Day Trend */}
-        <Text style={styles.sectionTitle}>Pickups — Last 7 Days</Text>
+        <Text style={styles.sectionTitle}>Boardings — Last 7 Days</Text>
         <View style={styles.card}>
           <View style={styles.trendRow}>
             {weekTrend.map((day) => (
@@ -792,7 +958,7 @@ export default function AdminDashboardScreen() {
                   <View
                     style={[
                       styles.trendBar,
-                      { height: Math.max(4, (day.count / maxTrend) * 48), backgroundColor: primaryColor },
+                      { height: day.count > 0 ? Math.max(4, (day.count / maxTrend) * 48) : 0, backgroundColor: primaryColor },
                     ]}
                   />
                 </View>
@@ -802,45 +968,15 @@ export default function AdminDashboardScreen() {
           </View>
         </View>
 
-        {/* Driver Analytics */}
-        <Text style={styles.sectionTitle}>Driver Analytics</Text>
-        <View style={styles.analyticsSearchRow}>
-          <Icon name="search" size={18} color={GRAY_400} style={{ marginRight: 6 }} />
-          <TextInput
-            style={styles.analyticsSearchInput}
-            placeholder="Search driver…"
-            placeholderTextColor={GRAY_400}
-            value={analyticsQuery}
-            onChangeText={setAnalyticsQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-        {filteredDriversForAnalytics.map((driver) => (
-          <DriverStatCard
-            key={driver.uid}
-            driver={{ uid: driver.uid, name: driver.displayName ?? driver.email ?? driver.uid }}
-            orgId={orgId ?? ''}
-          />
-        ))}
-
-        {/* CSV Export */}
         <TouchableOpacity
-          style={[styles.exportBtn, { backgroundColor: primaryColor }]}
-          onPress={handleExportCSV}
-          activeOpacity={0.8}
-          disabled={isExporting}
+          style={styles.analyticsLink}
+          onPress={() => navigation.navigate('AdminAnalytics')}
+          accessibilityRole="link"
         >
-          {isExporting
-            ? <ActivityIndicator size="small" color={WHITE} />
-            : <Icon name="file-download" size={18} color={WHITE} />}
-          <Text style={styles.exportBtnText}>{isExporting ? 'Exporting…' : 'Export CSV'}</Text>
+          <Text style={[styles.analyticsLinkText, { color: primaryColor }]}>
+            Longer trends, AI insights, and data exports are in Analytics →
+          </Text>
         </TouchableOpacity>
-        <Text style={styles.exportHint}>
-          {org?.entitlements?.extendedRetention
-            ? 'Full history export (Data Add-on active)'
-            : 'Last 90 days · Upgrade to Data Add-on for full history'}
-        </Text>
 
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -957,6 +1093,25 @@ const styles = StyleSheet.create({
   badgeOnline: { backgroundColor: '#dcfce7' },
   badgeOffline: { backgroundColor: '#f1f5f9' },
   badgeWarn: { backgroundColor: '#fef9c3' },
+  badgeBreak: { backgroundColor: '#e0f2fe' },
+  dotBreak: { backgroundColor: '#0284c7' },
+  textBreak: { color: '#075985' },
+  chevron: { marginLeft: 6, marginTop: 2 },
+  sectionHint: { fontSize: 12, color: GRAY_400, marginTop: -4, marginBottom: 8 },
+  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  liveItem: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 },
+  liveText: { fontSize: 12, color: GRAY_700, flexShrink: 1 },
+  occupancyChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: borderRadius.xl },
+  occupancyText: { fontSize: 11, fontWeight: '600' },
+  expandedSection: { marginTop: 12, paddingTop: 2, borderTopWidth: 1, borderTopColor: GRAY_100 },
+  waitingRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+  waitingStop: { flex: 1, fontSize: 13, color: TEXT_PRIMARY },
+  waitingAge: { fontSize: 12, color: TEXT_SECONDARY },
+  moreText: { fontSize: 12, color: TEXT_SECONDARY, marginTop: 2 },
+  analyticsChipsTight: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  analyticsChipValueSm: { fontSize: 15, fontWeight: '700' },
+  shiftBarsRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', marginBottom: 4 },
+  shiftBarBg: { width: 18, height: 32, justifyContent: 'flex-end', backgroundColor: BORDER_COLOR, borderRadius: 3, overflow: 'hidden' },
   statusDot: { width: 7, height: 7, borderRadius: 4, marginRight: 5 },
   dotOnline: {},
   dotOffline: { backgroundColor: '#94a3b8' },
@@ -1007,25 +1162,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   analyticsSearchInput: { flex: 1, fontSize: 14, color: GRAY_900 },
-  analyticsCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  analyticsIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: borderRadius.lg,
-    backgroundColor: '#f0f4ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  analyticsDriverName: { flex: 1, fontSize: 15, fontWeight: '600', color: TEXT_PRIMARY },
-  analyticsChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: GRAY_100,
-  },
+  analyticsError: { marginTop: 12, fontSize: 13, color: DANGER_COLOR },
+  analyticsEmpty: { marginTop: 12, fontSize: 13, color: TEXT_SECONDARY },
   analyticsChip: {
     backgroundColor: '#f8fafc',
     borderRadius: borderRadius.md,
@@ -1062,18 +1200,8 @@ const styles = StyleSheet.create({
   analyticsBar: { height: '100%', borderRadius: 4 },
   analyticsStopCount: { width: 28, textAlign: 'right', fontSize: 12, fontWeight: '600', color: TEXT_PRIMARY },
 
-  // CSV Export
-  exportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderRadius: borderRadius.lg,
-    paddingVertical: 13,
-    marginBottom: 14,
-  },
-  exportBtnText: { color: WHITE, fontWeight: '700', fontSize: 15 },
-  exportHint: { fontSize: 12, color: GRAY_400, textAlign: 'center', marginTop: 6, marginBottom: 4 },
+  analyticsLink: { alignItems: 'center', paddingVertical: 12, marginBottom: 4 },
+  analyticsLinkText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
 
   // 7-day bar chart
   trendRow: {

@@ -174,3 +174,19 @@ describe('plan limits on stops and routes', () => {
     await assertSucceeds(updateDoc(ref, { name: 'Renamed Org' }));
   });
 });
+
+describe('org type', () => {
+  it('lets an admin set a known org type', async () => {
+    await assertSucceeds(updateDoc(doc(as('admin'), 'orgs/emailOrg'), { orgType: 'university' }));
+    await assertSucceeds(updateDoc(doc(as('admin'), 'orgs/emailOrg'), { orgType: 'k12' }));
+  });
+
+  it('rejects an unknown org type', async () => {
+    await assertFails(updateDoc(doc(as('admin'), 'orgs/emailOrg'), { orgType: 'casino' }));
+  });
+
+  it('does not let non-admins change the org type', async () => {
+    await assertFails(updateDoc(doc(as('driver'), 'orgs/emailOrg'), { orgType: 'k12' }));
+    await assertFails(updateDoc(doc(as('student'), 'orgs/emailOrg'), { orgType: 'k12' }));
+  });
+});

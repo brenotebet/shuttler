@@ -1,8 +1,9 @@
 // src/screens/MapScreen.tsx
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Image, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking } from 'react-native'
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, Image, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking } from 'react-native'
 import { Text } from '../components/Text';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 import MapView, {
@@ -69,7 +70,11 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
-import { isRouteActive, getNextOpenText, getTodayScheduleText } from '../src/utils/scheduleUtils';
+import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText } from '../src/utils/scheduleUtils';
+import { getBusRouteProgress, AT_STOP_METERS } from '../src/utils/busRoute';
+import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
+import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
+import { decodePath, snapToPath } from '../src/utils/routePath';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
@@ -83,19 +88,6 @@ import { borderRadius } from '../src/styles/common';
 // Keeps requests honest — students must physically be on/near campus.
 const STOP_REQUEST_RADIUS_M = 400;
 
-function computeBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const toDeg = (r: number) => (r * 180) / Math.PI;
-  const φ1 = toRad(lat1),
-    φ2 = toRad(lat2),
-    Δλ = toRad(lon2 - lon1);
-  const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-  return (toDeg(Math.atan2(y, x)) + 360) % 360;
-}
-function quantizeBearing(bearing: number) {
-  return (Math.round(bearing / 90) * 90) % 360;
-}
 
 type Bounds = { latMin: number; latMax: number; lonMin: number; lonMax: number };
 
@@ -241,7 +233,6 @@ type CameraMode = 'free' | 'followUser' | 'overview';
 
 type BusPopup = {
   etaToYou: string | null;
-  nextStop: string | null;
   lastSeenText: string | null;
   driverName: string | null;
 };
@@ -257,6 +248,18 @@ export default function MapScreen() {
   useFirstLoginOnboarding();
   const stops = org?.stops ?? [];
   const orgRoutes = org?.routes ?? [];
+  // Decoded road paths per route (stored by Org Setup). Kept in a ref too so
+  // the long-lived bus snapshot listener can snap to the latest paths.
+  const routePaths = useMemo(() => {
+    const map: Record<string, { latitude: number; longitude: number }[]> = {};
+    (org?.routes ?? []).forEach((r) => {
+      const coords = decodePath(r.path);
+      if (coords.length >= 2) map[r.id] = coords;
+    });
+    return map;
+  }, [org?.routes]);
+  const routePathsRef = useRef(routePaths);
+  routePathsRef.current = routePaths;
   // Returns a Firestore CollectionReference scoped to the current org.
   // Throws if orgId is not loaded — callers must only run after org is available.
   const orgCol = (name: string) => {
@@ -278,6 +281,27 @@ export default function MapScreen() {
     return scheduled.some((r) => isRouteActive(r, new Date(), org?.timezone));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgRoutes, clockTick]);
+
+  // Next opening time for the compact "Closed" pill (first scheduled route that has one).
+  const closedNextOpenText = useMemo(() => {
+    for (const r of orgRoutes) {
+      const t = r.schedule ? getNextOpenText(r, new Date(), org?.timezone) : '';
+      if (t && t !== 'No upcoming hours found') return t;
+    }
+    return '';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgRoutes, clockTick, org?.timezone]);
+
+  // The "Quick pointers" tip shows until the rider closes it once.
+  const MAP_TIP_KEY = `map_tip_dismissed_${role ?? 'rider'}`;
+  const [showMapTip, setShowMapTip] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem(MAP_TIP_KEY).then((v) => setShowMapTip(v !== '1')).catch(() => setShowMapTip(true));
+  }, [MAP_TIP_KEY]);
+  const dismissMapTip = useCallback(() => {
+    setShowMapTip(false);
+    AsyncStorage.setItem(MAP_TIP_KEY, '1').catch(() => {});
+  }, [MAP_TIP_KEY]);
 
   const insets = useSafeAreaInsets();
 
@@ -416,6 +440,8 @@ export default function MapScreen() {
       );
       const match = requestableStops.find((e) => e.stop.id === focusStopId);
       if (match) setSelectedStopKey(match.key);
+      // Arriving from the Routes tab: show the stop's card with its Request button.
+      setSelectedStopCardId(focusStopId);
     }, 800);
     return () => clearTimeout(timer);
   }, [focusStopId, stops, requestableStops]);
@@ -430,6 +456,7 @@ export default function MapScreen() {
       secondsAgo: number;
       onBreak: boolean;
       occupancy: 'open' | 'filling' | 'full' | null;
+      breakEndsAtMs: number | null;
     };
   }>({});
 
@@ -486,6 +513,8 @@ export default function MapScreen() {
   const busRegions = useRef<{ [id: string]: AnimatedRegion }>({});
   const lastCoords = useRef<{ [id: string]: { latitude: number; longitude: number } }>({});
   const headings = useRef<{ [id: string]: number }>({});
+  // Server timestamp of each bus's last position, to time the glide to the next one.
+  const lastUpdateMs = useRef<{ [id: string]: number }>({});
   const fullRouteRef = useRef<{ latitude: number; longitude: number }[]>([]);
   const didInitialFitRef = useRef(false);
 
@@ -509,6 +538,51 @@ export default function MapScreen() {
     if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);
     forceTracksTimerRef.current = setTimeout(() => setForceBusTracks(false), 900);
   };
+
+  // Stop name labels: only those that don't overlap at the current zoom.
+  // Stop markers are snapshots (tracksViewChanges off), so a label change
+  // needs a brief tracksViewChanges window to redraw — same trick as buses.
+  const [visibleLabelIds, setVisibleLabelIds] = useState<Set<string>>(new Set());
+  const [forceStopTracks, setForceStopTracks] = useState(true);
+  const stopTracksTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const bumpStopTracks = () => {
+    setForceStopTracks(true);
+    if (stopTracksTimerRef.current) clearTimeout(stopTracksTimerRef.current);
+    stopTracksTimerRef.current = setTimeout(() => setForceStopTracks(false), 600);
+  };
+  const updateStopLabels = (r: { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number }) => {
+    const { width, height } = Dimensions.get('window');
+    const priority = selectedStopCardId ? [selectedStopCardId] : [];
+    const next = pickVisibleStopLabels(stops, r, { width, height }, priority);
+    setVisibleLabelIds((prev) => {
+      if (sameIdSet(prev, next)) return prev;
+      bumpStopTracks();
+      return next;
+    });
+  };
+
+  // Tapped stop: a small info card with routes, next bus, and Request.
+  const [selectedStopCardId, setSelectedStopCardId] = useState<string | null>(null);
+  // Same pop-in as the bus card (fade + slight rise + scale), replayed for
+  // each new stop so switching stops reads as a new card.
+  const stopCardAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!selectedStopCardId) return;
+    stopCardAnim.stopAnimation();
+    stopCardAnim.setValue(0);
+    Animated.spring(stopCardAnim, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 6 }).start();
+  }, [selectedStopCardId, stopCardAnim]);
+  const closeStopCard = () => {
+    stopCardAnim.stopAnimation();
+    Animated.timing(stopCardAnim, { toValue: 0, duration: 140, useNativeDriver: true })
+      .start(() => setSelectedStopCardId(null));
+  };
+  useEffect(() => {
+    const r = regionRef.current ?? region ?? INITIAL_REGION;
+    if (r) updateStopLabels(r as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stops, selectedStopCardId]);
+  useEffect(() => { bumpStopTracks(); }, [selectedStopCardId]);
 
   const cloudAnim = useRef(new Animated.Value(0)).current;
 
@@ -912,6 +986,7 @@ export default function MapScreen() {
               online,
               routeId: typeof data.routeId === 'string' ? data.routeId : null,
               onBreak: data?.onBreak === true,
+              breakEndsAtMs: data?.onBreak === true ? (toDateSafe(data?.breakEndsAt)?.getTime() ?? null) : null,
               occupancy: data?.occupancy === 'open' || data?.occupancy === 'filling' || data?.occupancy === 'full'
                 ? data.occupancy
                 : null,
@@ -935,6 +1010,7 @@ export default function MapScreen() {
             secondsAgo: number;
             onBreak: boolean;
             occupancy: 'open' | 'filling' | 'full' | null;
+            breakEndsAtMs: number | null;
           };
         } = {};
 
@@ -945,18 +1021,29 @@ export default function MapScreen() {
         let anyBusMoved = visibleBuses.length !== Object.keys(lastCoords.current).length;
 
         visibleBuses.forEach((bus: any) => {
-          const { id, latitude, longitude, secondsAgo, timestamp } = bus;
+          const { id, secondsAgo, timestamp } = bus;
+          // Pull the fix onto the route's road when it's close (GPS drift
+          // onto lawns/buildings); a bus far off the path is left alone.
+          const path = bus.routeId ? routePathsRef.current[bus.routeId] : undefined;
+          const { latitude, longitude } = path
+            ? snapToPath({ latitude: bus.latitude, longitude: bus.longitude }, path)
+            : bus;
 
           const prev = lastCoords.current[id];
-          if (prev) {
-            if (!anyBusMoved && (prev.latitude !== latitude || prev.longitude !== longitude)) {
-              anyBusMoved = true;
-            }
-            headings.current[id] = computeBearing(prev.latitude, prev.longitude, latitude, longitude);
-          } else {
-            anyBusMoved = true;
-            headings.current[id] = 0;
-          }
+          const positionChanged = !prev || prev.latitude !== latitude || prev.longitude !== longitude;
+          if (!prev) anyBusMoved = true;
+          // Parked buses keep their heading (they used to snap to north), and
+          // turns are eased over a couple of updates instead of snapping.
+          const prevHeading = headings.current[id] ?? null;
+          const heading = nextHeading(prevHeading, prev ?? null, { latitude, longitude }) ?? 0;
+          if (!anyBusMoved && prev && (positionChanged || heading !== prevHeading)) anyBusMoved = true;
+          headings.current[id] = heading;
+
+          // Glide over the real time since this bus's last update so it
+          // arrives as the next one lands, instead of moving then pausing.
+          const updateMs = timestamp.getTime();
+          const glideMs = glideDurationMs(lastUpdateMs.current[id] ?? null, updateMs);
+          if (positionChanged) lastUpdateMs.current[id] = updateMs;
 
           lastCoords.current[id] = { latitude, longitude };
           newLocations[id] = {
@@ -968,6 +1055,7 @@ export default function MapScreen() {
             secondsAgo,
             onBreak: (bus as any).onBreak === true,
             occupancy: (bus as any).occupancy ?? null,
+            breakEndsAtMs: (bus as any).breakEndsAtMs ?? null,
           };
 
           if (!busRegions.current[id]) {
@@ -977,12 +1065,16 @@ export default function MapScreen() {
               latitudeDelta: 0,
               longitudeDelta: 0,
             });
-          } else {
+          } else if (positionChanged) {
+            // Only re-aim when this bus moved — other buses' updates also
+            // fire this snapshot and must not restart its glide.
+            busRegions.current[id].stopAnimation(() => {});
             busRegions.current[id]
               .timing({
                 latitude,
                 longitude,
-                duration: 1800,
+                duration: glideMs,
+                easing: Easing.linear,
                 useNativeDriver: false,
               } as any)
               .start();
@@ -1000,7 +1092,7 @@ export default function MapScreen() {
             const n = newLocations[id];
             if (!p || p.latitude !== n.latitude || p.longitude !== n.longitude ||
                 p.isFresh !== n.isFresh || p.onBreak !== n.onBreak ||
-                p.occupancy !== n.occupancy) return newLocations;
+                p.occupancy !== n.occupancy || p.breakEndsAtMs !== n.breakEndsAtMs) return newLocations;
           }
           return prev; // nothing changed — keep same reference
         });
@@ -1034,6 +1126,9 @@ export default function MapScreen() {
         });
         Object.keys(headings.current).forEach((key) => {
           if (!recentIds.includes(key)) delete headings.current[key];
+        });
+        Object.keys(lastUpdateMs.current).forEach((key) => {
+          if (!recentIds.includes(key)) delete lastUpdateMs.current[key];
         });
       },
       (err) => {
@@ -1346,6 +1441,30 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.status, driverId, bottomCardHeight]);
 
+  // Zoom in once when the bus gets close — the same moment the driver's app
+  // marks the request approachingAt and sends the "Bus On The Way!" push.
+  // Keyed off the request doc (not the push) so it also works with push
+  // notifications off, or when the app is opened from that push. Otherwise
+  // the camera stays where the rider left it for the whole ride.
+  const zoomedForRequestRef = useRef<string | null>(null);
+  const rideBusLoc = resolvedDriverId ? busLocations[resolvedDriverId] : undefined;
+  const approachingMs: number | null = (request as any)?.approachingAt?.toMillis?.() ?? null;
+  useEffect(() => {
+    if (!rideActive || !approachingMs || !requestId || !request?.stop || !rideBusLoc) return;
+    if (zoomedForRequestRef.current === requestId) return;
+    if (recentlyInteracted(2000)) return; // retried on the next bus update
+    zoomedForRequestRef.current = requestId;
+    fitToPoints(
+      [
+        { latitude: request.stop.latitude, longitude: request.stop.longitude },
+        { latitude: rideBusLoc.latitude, longitude: rideBusLoc.longitude },
+      ],
+      'overview',
+      0.004,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rideActive, approachingMs, requestId, rideBusLoc?.latitude, rideBusLoc?.longitude]);
+
   useEffect(() => {
     if (request?.status === 'completed') {
       Notifications.scheduleNotificationAsync({
@@ -1391,12 +1510,76 @@ export default function MapScreen() {
     if (!loc) return;
     setSelectedBusPopup((prev) => ({
       etaToYou: prev?.etaToYou ?? null,
-      nextStop: prev?.nextStop ?? null,
       lastSeenText: formatLastSeen(loc.secondsAgo),
       driverName: prev?.driverName ?? null,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusId, busLocations[selectedBusId ?? '']]);
+
+  // Route details for the tapped bus. Recomputed only when the selected bus
+  // moves (not on every other bus's update) — a few stops of cheap math.
+  const selectedLoc = selectedBusId ? busLocations[selectedBusId] : undefined;
+  const selectedBusRoute = useMemo(() => {
+    if (!selectedBusId || !selectedLoc) return null;
+    const routeId = busRouteIds[selectedBusId] ?? null;
+    const route = routeId ? (org?.routes ?? []).find((r) => r.id === routeId) ?? null : null;
+    const routeStops = route
+      ? route.stopIds
+          .map((id) => stops.find((st) => st.id === id))
+          .filter((st): st is NonNullable<typeof st> => !!st)
+      : [];
+    const progress = route ? getBusRouteProgress(routeStops, selectedLoc) : null;
+
+    // No route (or a 1-stop route): don't guess an order, just say where it is.
+    let nearStop: string | null = null;
+    if (!progress) {
+      let best = Infinity;
+      for (const st of stops) {
+        const d = getDistanceInMeters(selectedLoc.latitude, selectedLoc.longitude, st.latitude, st.longitude);
+        if (d < best) { best = d; nearStop = st.name; }
+      }
+      if (best > 400) nearStop = null;
+      else if (best <= AT_STOP_METERS && nearStop) nearStop = `At ${nearStop}`;
+      else if (nearStop) nearStop = `Near ${nearStop}`;
+    }
+
+    return {
+      routeName: route?.name ?? null,
+      progress,
+      nearStop,
+      runsUntil: getRunsUntilText(route, new Date(), org?.timezone),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBusId, selectedLoc?.latitude, selectedLoc?.longitude, busRouteIds, org?.routes, org?.stops, org?.timezone]);
+
+  // "Next bus is 2 stops away" for the stop card: the closest live bus, on
+  // any route serving the stop, counted in stops along that route's loop.
+  const stopNextBusText = (stopId: string): string | null => {
+    let best: { stopsAway: number; atStop: boolean } | null = null;
+    for (const busId of visibleBusIds) {
+      const loc = busLocations[busId];
+      const routeId = busRouteIds[busId];
+      if (!loc || loc.onBreak || !routeId) continue;
+      const route = orgRoutes.find((r) => r.id === routeId);
+      if (!route) continue;
+      const routeStops = route.stopIds
+        .map((id) => stops.find((st) => st.id === id))
+        .filter((st): st is NonNullable<typeof st> => !!st);
+      const targetIdx = routeStops.findIndex((st) => st.id === stopId);
+      if (targetIdx < 0) continue;
+      const progress = getBusRouteProgress(routeStops, loc, 1);
+      if (!progress) continue;
+      const n = routeStops.length;
+      const atIdx = progress.atStop ? routeStops.findIndex((st) => st.name === progress.atStop) : -1;
+      if (atIdx === targetIdx) return 'A bus is at this stop now';
+      const fromIdx = atIdx >= 0 ? (atIdx + 1) % n : progress.nextPosition - 1;
+      const stopsAway = (targetIdx - fromIdx + n) % n;
+      if (!best || stopsAway < best.stopsAway) best = { stopsAway, atStop: false };
+    }
+    if (!best) return null;
+    if (best.stopsAway === 0) return 'Next bus is heading here now';
+    return `Next bus is ${best.stopsAway} stop${best.stopsAway === 1 ? '' : 's'} away`;
+  };
 
   const selectedEtaTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastEtaFetchCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
@@ -1427,7 +1610,6 @@ export default function MapScreen() {
 
         setSelectedBusPopup((prev) => ({
           etaToYou: e ?? prev?.etaToYou ?? null,
-          nextStop: prev?.nextStop ?? null,
           lastSeenText: prev?.lastSeenText ?? null,
           driverName: prev?.driverName ?? null,
         }));
@@ -1553,36 +1735,17 @@ export default function MapScreen() {
     if (!loc) return;
 
     setSelectedBusId(id);
+    setSelectedStopCardId(null);
     setShowLocationList(false);
 
     const driverName = await getDriverFirstName(id);
 
     setSelectedBusPopup({
       etaToYou: null,
-      nextStop: null,
       lastSeenText: formatLastSeen(loc.secondsAgo),
       driverName,
     });
     showCloud();
-
-    let nearestIdx = 0;
-    let minDist = Number.MAX_VALUE;
-    stops.forEach((stop, idx) => {
-      const d = getDistanceInMeters(loc.latitude, loc.longitude, stop.latitude, stop.longitude);
-      if (d < minDist) {
-        minDist = d;
-        nearestIdx = idx;
-      }
-    });
-    const nextIdx = (nearestIdx + 1) % stops.length;
-    const nextStopName = stops[nextIdx]?.name ?? '';
-
-    setSelectedBusPopup((prev) => ({
-      etaToYou: prev?.etaToYou ?? null,
-      nextStop: nextStopName,
-      lastSeenText: prev?.lastSeenText ?? formatLastSeen(loc.secondsAgo),
-      driverName: prev?.driverName ?? null,
-    }));
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -1805,7 +1968,7 @@ const handleConfirmSheetConfirm = async () => {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
-      {(role !== 'parent' || childProfiles.length > 0) && !rideActive && !selectedBusId && (
+      {(role !== 'parent' || childProfiles.length > 0) && !rideActive && !selectedBusId && !selectedStopCardId && (
         <TouchableOpacity
           style={[styles.searchContainer, { top: role === 'parent' ? topOverlay + 46 : topOverlay, borderColor: primaryColor + '30', shadowColor: primaryColor }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
           onPress={() => {
@@ -1862,7 +2025,7 @@ const handleConfirmSheetConfirm = async () => {
         </TouchableOpacity>
       )}
 
-      {!rideActive && !showLocationList && !selectedBusId && (
+      {!rideActive && !showLocationList && !selectedBusId && !selectedStopCardId && (
         <View style={[styles.tipContainer, {
           top: role === 'parent' && childProfiles.length === 0
             ? topOverlay + 96    // CTA card (~82px) + 14 gap
@@ -1871,54 +2034,51 @@ const handleConfirmSheetConfirm = async () => {
               : topOverlay + 60,  // search bar (50) + gap (10)
         }]}>
           <AnnouncementBanner orgId={org?.orgId} style={{ marginBottom: 10 }} />
+          {/* One compact status pill instead of large cards covering the map. */}
           {!serviceIsOpen ? (
-            // Outside operating hours — show schedule
-            <View style={styles.hoursCard}>
-              <View style={styles.hoursCardHeader}>
-                <Icon name="schedule" size={16} color={GRAY_700} />
-                <Text style={styles.hoursCardTitle}>Service Closed</Text>
-              </View>
-              {orgRoutes.filter((r) => r.schedule).map((r) => {
-                const nextOpen = getNextOpenText(r, new Date(), org?.timezone);
-                const todayText = getTodayScheduleText(r, new Date(), org?.timezone);
-                return (
-                  <View key={r.id} style={styles.hoursRouteBlock}>
-                    <Text style={[styles.hoursRouteName, { color: primaryColor }]}>{r.name}</Text>
-                    {todayText ? <Text style={styles.hoursEntry}>{todayText}</Text> : null}
-                    {nextOpen ? <Text style={[styles.hoursEntry, { color: primaryColor }]}>{nextOpen}</Text> : null}
-                  </View>
-                );
-              })}
-            </View>
+            <TouchableOpacity
+              style={styles.statusPill}
+              onPress={() => (navigation as any).navigate('Routes')}
+              accessibilityRole="button"
+              accessibilityHint="Opens route hours"
+            >
+              <Icon name="schedule" size={15} color={GRAY_700} />
+              <Text style={styles.statusPillText} numberOfLines={1}>
+                Closed{closedNextOpenText ? ` · ${closedNextOpenText}` : ''}
+              </Text>
+              <Icon name="chevron-right" size={16} color={GRAY_400} />
+            </TouchableOpacity>
           ) : !busOnline ? (
-            // Service hours are open but no driver is sharing location
-            <View style={styles.noBusCard}>
-              <View style={styles.noBusIconWrap}>
-                <Icon name="directions-bus" size={28} color={GRAY_500} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.noBusTitle}>No buses online right now</Text>
-                <Text style={styles.noBusBody}>
-                  Service is active today but no driver has started their shift yet. Check back shortly.
-                </Text>
-              </View>
+            <View style={styles.statusPill}>
+              <Icon name="directions-bus" size={15} color={GRAY_500} />
+              <Text style={styles.statusPillText} numberOfLines={1}>No buses online yet · check back shortly</Text>
             </View>
           ) : (
-            // Buses are online — show tips
-            <InfoBanner
-              icon="lightbulb-outline"
-              title={role === 'parent' ? 'Live tracking' : 'Quick pointers'}
-              description={role === 'parent'
-                ? 'Tap a bus to see its ETA and next stop. Your child\'s pickup status will appear below.'
-                : 'Tap "Request a stop" to pick your pickup, or tap a bus to see its ETA and next stop.'}
-            />
-          )}
-          {visibleBusIds.length > 0 && (
-            <View style={styles.busCountChip}>
+            <View style={styles.statusPill}>
               <View style={styles.busCountDot} />
-              <Text style={styles.busCountText}>
+              <Text style={styles.statusPillText}>
                 {visibleBusIds.length} bus{visibleBusIds.length !== 1 ? 'es' : ''} online
               </Text>
+            </View>
+          )}
+          {serviceIsOpen && busOnline && showMapTip && (
+            <View style={{ marginTop: 8 }}>
+              <InfoBanner
+                icon="lightbulb-outline"
+                title={role === 'parent' ? 'Live tracking' : 'Quick pointers'}
+                description={role === 'parent'
+                  ? 'Tap a bus to see its ETA and next stop. Your child\'s pickup status will appear below.'
+                  : 'Tap "Request a stop" to pick your pickup, or tap a bus to see its ETA and next stop.'}
+              />
+              <TouchableOpacity
+                style={styles.tipClose}
+                onPress={dismissMapTip}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss tip"
+              >
+                <Icon name="close" size={16} color={GRAY_400} />
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -1974,6 +2134,7 @@ const handleConfirmSheetConfirm = async () => {
         }}
         onRegionChangeComplete={(newRegion) => {
           regionRef.current = newRegion;
+          updateStopLabels(newRegion);
           if (!isProgrammaticMove() && userInteractingRef.current) {
             setCameraMode('free');
           }
@@ -1983,12 +2144,34 @@ const handleConfirmSheetConfirm = async () => {
         {campusHull.length >= 3 && (
           <Polygon
             coordinates={campusHull}
-            strokeColor={primaryColor + '99'}
-            fillColor={primaryColor + '12'}
-            strokeWidth={2}
-            lineDashPattern={[8, 6]}
+            strokeColor={primaryColor + '40'}
+            fillColor={primaryColor + '08'}
+            strokeWidth={1}
+            lineDashPattern={[6, 6]}
           />
         )}
+
+        {/* Polylines pass strokeColors as well as strokeColor: with the Google
+            provider on iOS (react-native-maps 1.20) strokeColor alone is
+            overridden by a default style span and renders blue. */}
+        {/* Route lines along the roads (only routes with a saved path). Drawn
+            first so stops and buses sit on top. Key includes the path so a
+            changed route replaces its line rather than mutating it. */}
+        {orgRoutes.map((r) => {
+          const coords = routePaths[r.id];
+          if (!coords) return null;
+          const lineColor = (r.color ?? primaryColor) + '73';
+          return (
+            <Polyline
+              key={`route-path-${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}`}
+              coordinates={coords}
+              strokeColor={lineColor}
+              strokeColors={[lineColor]}
+              strokeWidth={4}
+              zIndex={1}
+            />
+          );
+        })}
 
         {/* Campus stops — hidden destination stop while ride is active */}
         {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
@@ -1997,19 +2180,16 @@ const handleConfirmSheetConfirm = async () => {
             coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
             anchor={{ x: 0.5, y: 1 }}
             zIndex={2}
-            tracksViewChanges={false}
+            tracksViewChanges={forceStopTracks}
             onPress={() => {
-              const matches = requestableStops.filter((e) => e.stop.id === stop.id);
-              if (matches.length === 1) {
-                confirmAndRequest(matches[0]);
-              } else if (matches.length > 1) {
-                // Stop is served by more than one route — let the rider pick which.
-                setSelectedStopKey(null);
-                setShowLocationList(true);
-              }
+              // Show the stop's info card first instead of jumping straight
+              // into a request — avoids accidental requests from a mistap.
+              if (selectedBusId) closeSelectedBus();
+              setShowLocationList(false);
+              setSelectedStopCardId(stop.id);
             }}
           >
-            <MapMarker label={stop.name} />
+            <MapMarker label={stop.name} labelHidden={!visibleLabelIds.has(stop.id) && stop.id !== selectedStopCardId} />
           </Marker>
         ))}
 
@@ -2029,6 +2209,12 @@ const handleConfirmSheetConfirm = async () => {
           const animatedCoord = busRegions.current[id];
           const updateAgeSeconds = (Date.now() - loc.lastUpdated.getTime()) / 1000;
           const showLateLabel = !loc.onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
+          // The rider's own bus during a ride shows its ETA above it.
+          const rideEtaText = rideActive && id === resolvedDriverId && !loc.onBreak && eta ? eta : null;
+          // With more than one route, ring each bus in its route's color so
+          // riders can tell which bus is which at a glance.
+          const busRoute = orgRoutes.length > 1 ? orgRoutes.find((r) => r.id === busRouteIds[id]) : undefined;
+          const ringColor = busRoute ? busRoute.color ?? primaryColor : null;
 
           return (
             <MarkerAnimated
@@ -2036,21 +2222,31 @@ const handleConfirmSheetConfirm = async () => {
               coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
               anchor={{ x: 0.5, y: 0.5 }}
               onPress={() => handleBusPress(id)}
-              tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel}
+              tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel || !!rideEtaText}
               zIndex={50}
             >
               {/* Equal-height badge slots above and below keep the bus centered on the anchor. */}
               <View style={styles.busMarkerWrap}>
-                <View style={[styles.busBadgeSlot, { opacity: loc.onBreak ? 1 : 0 }]}>
-                  <View style={styles.onBreakBadge}>
-                    <Text style={styles.onBreakBadgeText}>On Break</Text>
-                  </View>
+                <View style={[styles.busBadgeSlot, { opacity: loc.onBreak || rideEtaText ? 1 : 0 }]}>
+                  {rideEtaText ? (
+                    <View style={[styles.etaBadge, { backgroundColor: primaryColor }]}>
+                      <Text style={styles.etaBadgeText}>{rideEtaText}</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.onBreakBadge}>
+                      <Text style={styles.onBreakBadgeText}>On Break</Text>
+                    </View>
+                  )}
                 </View>
-                <Image
-                  source={busIcon}
-                  style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
-                  resizeMode="contain"
-                />
+                <View style={styles.busIconWrap}>
+                  {/* Always mounted; shown via opacity (see the marker note above). */}
+                  <View style={[styles.busRouteRing, { borderColor: ringColor ?? 'transparent', opacity: ringColor ? 1 : 0 }]} />
+                  <Image
+                    source={busIcon}
+                    style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
+                    resizeMode="contain"
+                  />
+                </View>
                 <View style={[styles.busBadgeSlot, { opacity: showLateLabel ? 1 : 0 }]}>
                   <View style={styles.lateUpdateBadge}>
                     <Text style={styles.lateUpdateBadgeText}>Updated {formatLastSeen(updateAgeSeconds)}</Text>
@@ -2082,6 +2278,7 @@ const handleConfirmSheetConfirm = async () => {
               coordinates={routeCoords}
               strokeWidth={2}
               strokeColor={primaryColor + '40'}
+              strokeColors={[primaryColor + '40']}
               lineCap="round"
               lineJoin="round"
               zIndex={1}
@@ -2090,6 +2287,7 @@ const handleConfirmSheetConfirm = async () => {
               coordinates={routeCoords}
               strokeWidth={5}
               strokeColor={primaryColor}
+              strokeColors={[primaryColor]}
               lineCap="round"
               lineJoin="round"
               zIndex={2}
@@ -2151,6 +2349,24 @@ const handleConfirmSheetConfirm = async () => {
           <Icon name="map" size={22} color={GRAY_900} />
         </TouchableOpacity>
 
+        {!rideActive && visibleBusIds.length > 0 && (
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => {
+              const points = visibleBusIds
+                .map((id) => busLocations[id])
+                .filter(Boolean)
+                .map((b) => ({ latitude: b.latitude, longitude: b.longitude }));
+              fitToPoints(points, 'overview', 0.008);
+            }}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Show all buses"
+          >
+            <Icon name="directions-bus" size={22} color={GRAY_900} />
+          </TouchableOpacity>
+        )}
+
         {rideActive && (
           <TouchableOpacity
             style={[styles.fabPrimary, { backgroundColor: primaryColor }]}
@@ -2164,6 +2380,97 @@ const handleConfirmSheetConfirm = async () => {
           </TouchableOpacity>
         )}
       </Animated.View>
+
+      {selectedStopCardId && !selectedBusId && (() => {
+        const stop = stops.find((st) => st.id === selectedStopCardId);
+        if (!stop) return null;
+        const entries = requestableStops.filter((e) => e.stop.id === stop.id);
+        const nextBusText = stopNextBusText(stop.id);
+        const canRequestNow = serviceIsOpen && busOnline && !rideActive && entries.length > 0
+          && (role !== 'parent' || !!selectedChild);
+        const blockedReason = rideActive
+          ? 'You already have a ride requested.'
+          : !serviceIsOpen
+          ? `Service is closed${closedNextOpenText ? ` · ${closedNextOpenText}` : ''}.`
+          : !busOnline
+          ? 'No buses are online right now.'
+          : role === 'parent' && !selectedChild
+          ? 'Link a child to request a pickup.'
+          : null;
+        return (
+          <>
+            <TouchableWithoutFeedback onPress={closeStopCard}>
+              <View style={styles.transparentOverlay} />
+            </TouchableWithoutFeedback>
+            <Animated.View
+              style={[
+                styles.busInfoCardWrap,
+                {
+                  top: topOverlay,
+                  opacity: stopCardAnim,
+                  transform: [
+                    { translateY: stopCardAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) },
+                    { scale: stopCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
+                  ],
+                },
+              ]}
+              pointerEvents="box-none"
+            >
+              <View style={[styles.busCloudInner, { backgroundColor: WHITE }]}>
+                <View style={styles.busCloudHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.busCloudTitle} numberOfLines={2}>{stop.name}</Text>
+                    {entries.some((e) => e.routeName) && (
+                      <Text style={styles.busCloudSubtitle} numberOfLines={2}>
+                        {entries
+                          .filter((e) => e.routeName)
+                          .map((e) => `${e.routeName}${e.position !== null ? ` · stop ${e.position} of ${e.totalStops}` : ''}`)
+                          .join('\n')}
+                      </Text>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    onPress={closeStopCard}
+                    hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close stop info"
+                  >
+                    <Icon name="close" size={18} color={GRAY_400} />
+                  </TouchableOpacity>
+                </View>
+
+                {nextBusText ? <Text style={styles.busCloudStop}>{nextBusText}</Text> : null}
+
+                {blockedReason ? (
+                  <Text style={styles.busCloudMuted}>{blockedReason}</Text>
+                ) : null}
+
+                {canRequestNow && (
+                  <TouchableOpacity
+                    style={[styles.stopCardBtn, { backgroundColor: primaryColor }]}
+                    onPress={() => {
+                      setSelectedStopCardId(null);
+                      if (entries.length === 1) {
+                        confirmAndRequest(entries[0]);
+                      } else {
+                        // Served by more than one route — let the rider pick which.
+                        setSelectedStopKey(null);
+                        setShowLocationList(true);
+                      }
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Icon name="place" size={18} color={WHITE} />
+                    <Text style={styles.stopCardBtnText}>
+                      {entries.length === 1 ? 'Request pickup here' : 'Choose a route to request'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </Animated.View>
+          </>
+        );
+      })()}
 
       {selectedBusId && (
         <TouchableWithoutFeedback onPress={closeSelectedBus}>
@@ -2187,7 +2494,14 @@ const handleConfirmSheetConfirm = async () => {
           >
             <View style={styles.busCloudInner}>
               <View style={styles.busCloudHeader}>
-                <Text style={styles.busCloudTitle}>{selectedBusPopup?.driverName ?? 'Driver'}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.busCloudTitle} numberOfLines={1}>
+                    {selectedBusRoute?.routeName ?? 'Shuttle'}
+                  </Text>
+                  {selectedBusPopup?.driverName ? (
+                    <Text style={styles.busCloudSubtitle}>Driver: {selectedBusPopup.driverName}</Text>
+                  ) : null}
+                </View>
                 <TouchableOpacity
                   onPress={closeSelectedBus}
                   hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
@@ -2198,30 +2512,66 @@ const handleConfirmSheetConfirm = async () => {
                 </TouchableOpacity>
               </View>
 
-              {selectedBusPopup?.etaToYou ? (
+              {loc.onBreak ? (
+                <Text style={[styles.busCloudText, styles.busCloudBreak]}>
+                  {loc.breakEndsAtMs && loc.breakEndsAtMs > Date.now()
+                    ? `On break · back in about ${Math.max(1, Math.round((loc.breakEndsAtMs - Date.now()) / 60_000))} min`
+                    : 'On break · back shortly'}
+                </Text>
+              ) : selectedBusPopup?.etaToYou ? (
                 <Text style={styles.busCloudText}>ETA to you: {selectedBusPopup.etaToYou}</Text>
               ) : null}
 
-              <Text style={styles.busCloudMuted}>
-                Last seen: {selectedBusPopup?.lastSeenText ?? formatLastSeen(loc.secondsAgo)}
-              </Text>
-
-              {selectedBusPopup?.nextStop ? (
-                <Text style={styles.busCloudMuted}>Next stop: {selectedBusPopup.nextStop}</Text>
+              {selectedBusRoute?.progress ? (
+                <>
+                  <Text style={styles.busCloudStop}>
+                    {selectedBusRoute.progress.atStop
+                      ? `At ${selectedBusRoute.progress.atStop} now`
+                      : `Next stop: ${selectedBusRoute.progress.upcoming[0]}`}
+                  </Text>
+                  {(() => {
+                    const then = selectedBusRoute.progress.atStop
+                      ? selectedBusRoute.progress.upcoming
+                      : selectedBusRoute.progress.upcoming.slice(1);
+                    return then.length > 0 ? (
+                      <Text style={styles.busCloudMuted} numberOfLines={2}>
+                        {selectedBusRoute.progress.atStop ? 'Next: ' : 'Then: '}{then.join(' → ')}
+                      </Text>
+                    ) : null;
+                  })()}
+                </>
+              ) : selectedBusRoute?.nearStop ? (
+                <Text style={styles.busCloudStop}>{selectedBusRoute.nearStop}</Text>
               ) : null}
 
-              {loc.occupancy ? (
-                <Text style={[
-                  styles.busCloudOccupancy,
-                  loc.occupancy === 'open' && styles.busCloudOccupancyOpen,
-                  loc.occupancy === 'filling' && styles.busCloudOccupancyFilling,
-                  loc.occupancy === 'full' && styles.busCloudOccupancyFull,
-                ]}>
-                  {loc.occupancy === 'open' ? 'Seats available'
-                    : loc.occupancy === 'filling' ? 'Filling up'
-                    : 'Bus full'}
+              {(selectedBusRoute?.progress || selectedBusRoute?.runsUntil) ? (
+                <Text style={styles.busCloudMuted}>
+                  {[
+                    selectedBusRoute?.progress
+                      ? `Stop ${selectedBusRoute.progress.nextPosition} of ${selectedBusRoute.progress.totalStops} next`
+                      : null,
+                    selectedBusRoute?.runsUntil || null,
+                  ].filter(Boolean).join(' · ')}
                 </Text>
               ) : null}
+
+              <View style={styles.busCloudFooter}>
+                {loc.occupancy ? (
+                  <Text style={[
+                    styles.busCloudOccupancy,
+                    loc.occupancy === 'open' && styles.busCloudOccupancyOpen,
+                    loc.occupancy === 'filling' && styles.busCloudOccupancyFilling,
+                    loc.occupancy === 'full' && styles.busCloudOccupancyFull,
+                  ]}>
+                    {loc.occupancy === 'open' ? 'Seats available'
+                      : loc.occupancy === 'filling' ? 'Filling up'
+                      : 'Bus full'}
+                  </Text>
+                ) : <View />}
+                <Text style={styles.busCloudUpdated}>
+                  Updated {selectedBusPopup?.lastSeenText ?? formatLastSeen(loc.secondsAgo)}
+                </Text>
+              </View>
             </View>
           </Animated.View>
         );
@@ -2470,21 +2820,24 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   tipContainer: { position: 'absolute', left: 20, right: 20, zIndex: 90 },
-  busCountChip: {
+  statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    maxWidth: '100%',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.95)',
     borderRadius: borderRadius.xl,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     shadowColor: BLACK,
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
   },
+  statusPillText: { fontSize: 13, fontWeight: '600', color: GRAY_700, flexShrink: 1 },
+  tipClose: { position: 'absolute', top: 10, right: 10, padding: 4 },
   busCountDot: {
     width: 7,
     height: 7,
@@ -2492,45 +2845,6 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY_COLOR,
     marginRight: 5,
   },
-  busCountText: { fontSize: 12, fontWeight: '600', color: GRAY_700 },
-  hoursCard: {
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 14,
-    padding: 14,
-    shadowColor: BLACK,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  noBusCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 14,
-    padding: 14,
-    shadowColor: BLACK,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  noBusIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: GRAY_100,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  noBusTitle: { fontSize: 14, fontWeight: '700', color: GRAY_900, marginBottom: 4 },
-  noBusBody: { fontSize: 13, color: GRAY_500, lineHeight: 18 },
-  hoursCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  hoursCardTitle: { fontSize: 14, fontWeight: '700', color: GRAY_900 },
-  hoursRouteBlock: { marginBottom: 8 },
-  hoursRouteName: { fontSize: 13, fontWeight: '600', marginBottom: 2 },
-  hoursEntry: { fontSize: 13, color: GRAY_700 },
   searchText: { flex: 1, fontSize: 15, fontWeight: '500', color: GRAY_700 },
   searchContainerOffline: { backgroundColor: GRAY_100 },
   searchTextOffline: { color: GRAY_400 },
@@ -2804,6 +3118,21 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   busCloudOccupancyOpen: { color: PRIMARY_COLOR },
+  stopCardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 11,
+    borderRadius: borderRadius.md,
+  },
+  stopCardBtnText: { color: WHITE, fontWeight: '700', fontSize: 15 },
+  busCloudSubtitle: { fontSize: 13, color: GRAY_500, fontWeight: '600', marginTop: 1 },
+  busCloudBreak: { color: '#b45309' },
+  busCloudStop: { fontSize: 15, color: GRAY_900, fontWeight: '700', marginBottom: 3 },
+  busCloudFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+  busCloudUpdated: { fontSize: 12, color: GRAY_400, fontWeight: '500' },
   busCloudOccupancyFilling: { color: '#d97706' },
   busCloudOccupancyFull: { color: DANGER_COLOR },
   parentCtaCard: {
@@ -2861,6 +3190,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  busIconWrap: { width: 70, height: 70, alignItems: 'center', justifyContent: 'center' },
+  busRouteRing: {
+    position: 'absolute',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 3,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+  },
+  etaBadge: {
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1.5,
+    borderColor: WHITE,
+  },
+  etaBadgeText: { fontSize: 11, fontWeight: '800', color: WHITE },
   onBreakBadge: {
     backgroundColor: '#fef3c7',
     borderWidth: 1,

@@ -3,7 +3,7 @@
 // today's-hours text — including timezone handling, since a route's schedule
 // is evaluated in the org's IANA timezone, not the device's.
 
-import { isRouteActive, getNextOpenText, getTodayScheduleText, formatTime12h, getTodayKey } from '../src/utils/scheduleUtils';
+import { isRouteActive, getNextOpenText, getTodayScheduleText, formatTime12h, getTodayKey, getRunsUntilText } from '../src/utils/scheduleUtils';
 import type { Route, WeekSchedule } from '../src/org/OrgContext';
 
 const ALWAYS_OPEN: WeekSchedule = {
@@ -159,5 +159,31 @@ describe('getTodayKey', () => {
   it('falls back to device-local weekday when timezone is omitted', () => {
     const monday = new Date('2026-07-27T12:00:00Z');
     expect(getTodayKey(monday)).toBe(getTodayKey(monday));
+  });
+});
+
+describe('getRunsUntilText', () => {
+  it('is blank when there is no schedule', () => {
+    expect(getRunsUntilText(routeWith(undefined))).toBe('');
+  });
+
+  it('shows the closing time while the route is running', () => {
+    const mondayNoon = new Date('2026-07-27T12:00:00Z');
+    expect(getRunsUntilText(routeWith(WEEKDAYS_9_TO_5), mondayNoon, 'UTC')).toBe('Runs until 5:00 PM');
+  });
+
+  it('is blank outside running hours', () => {
+    const mondayEvening = new Date('2026-07-27T19:00:00Z');
+    expect(getRunsUntilText(routeWith(WEEKDAYS_9_TO_5), mondayEvening, 'UTC')).toBe('');
+  });
+
+  it("uses yesterday's close during an overnight window's after-midnight tail", () => {
+    const overnight: WeekSchedule = {
+      ...WEEKDAYS_9_TO_5,
+      monday: { isOpen: true, open: '22:00', close: '02:00' },
+      tuesday: { isOpen: false, open: '09:00', close: '17:00' },
+    };
+    const tuesday1am = new Date('2026-07-28T01:00:00Z');
+    expect(getRunsUntilText(routeWith(overnight), tuesday1am, 'UTC')).toBe('Runs until 2:00 AM');
   });
 });

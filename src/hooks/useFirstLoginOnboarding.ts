@@ -24,6 +24,10 @@ function toOnboardingRole(role: string | null | undefined): OnboardingRole | nul
 // This module-level lock makes the check-and-navigate atomic across every
 // instance for a given user+org, regardless of how many are mounted.
 const inFlightKeys = new Set<string>();
+// Keys already shown in this app session. The AsyncStorage write is async, so
+// a second mounted instance could read "not seen" before it lands and push a
+// second copy of the guide on top of the first (making Back look broken).
+const shownThisSession = new Set<string>();
 
 export function useFirstLoginOnboarding() {
   const { user, role, initializing } = useAuth();
@@ -55,11 +59,12 @@ export function useFirstLoginOnboarding() {
       if (toOnboardingRole(role) !== onboardingRole || didNavigate.current) return;
       // Another mounted instance is already mid-check for this same key — bail
       // rather than race it.
-      if (inFlightKeys.has(key)) return;
+      if (inFlightKeys.has(key) || shownThisSession.has(key)) return;
       inFlightKeys.add(key);
       AsyncStorage.getItem(key).then((seen) => {
-        if (!seen && !didNavigate.current && toOnboardingRole(role) === onboardingRole) {
+        if (!seen && !didNavigate.current && !shownThisSession.has(key) && toOnboardingRole(role) === onboardingRole) {
           didNavigate.current = true;
+          shownThisSession.add(key);
           AsyncStorage.setItem(key, '1').catch(() => {});
           // Only the founding admin (org has no stops yet) is walked through org
           // setup — an admin invited into an already-configured org would otherwise

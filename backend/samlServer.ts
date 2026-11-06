@@ -1007,6 +1007,9 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
       approved: false,
       reviewStatus: 'pending',
       founderEmail: (contactEmail as string).toLowerCase().trim(),
+      // Drives role options in the app (e.g. parent accounts only for K-12).
+      // Unknown values are dropped so they can't fail the rules' allow-list later.
+      ...(KNOWN_ORG_TYPES.has(orgType as string) && { orgType }),
       agreedToTermsAt: agreedToTerms ? admin.firestore.FieldValue.serverTimestamp() : null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -3422,6 +3425,10 @@ function csvRow(values: unknown[]): string {
   return values.map(csvCell).join(',');
 }
 
+// Mirror of src/constants/orgTypes.ts and the orgType allow-list in
+// firestore.rules (the backend can't import from ../src) — keep in sync.
+const KNOWN_ORG_TYPES = new Set(['university', 'k12', 'corporate', 'healthcare', 'government', 'nonprofit', 'other']);
+
 // Basic export (last 90 days) — included on every plan.
 // Extended export (>90 days) — requires dataApi entitlement.
 app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
@@ -3460,26 +3467,39 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
 
     let rows: string[] = [];
 
+    // Driver names instead of raw uids — drivers and admins are staff, and a
+    // uid column is unreadable for whoever opens the file. Small set per org.
+    const staffSnap = await db.collection('orgs').doc(orgId).collection('users')
+      .where('role', 'in', ['driver', 'admin'])
+      .get();
+    const driverNames = new Map<string, string>();
+    staffSnap.docs.forEach((d) => {
+      const u = d.data();
+      driverNames.set(d.id, u.displayName || u.email || 'Unknown driver');
+    });
+    // Removed users fall back to a short id so rows from the same person still group.
+    const driverName = (driverUid: string | undefined | null): string =>
+      driverUid ? (driverNames.get(driverUid) ?? `Former driver (${driverUid.slice(0, 6)})`) : '';
+
     if (type === 'boardings') {
       const snap = await db.collection('orgs').doc(orgId).collection('boardingCounts')
         .where('createdAt', '>=', sinceTs)
         .orderBy('createdAt', 'desc')
         .get();
-      rows = ['date,stop_name,count,driver_uid'];
+      rows = ['date,stop_name,count,driver_name'];
       snap.docs.forEach((d) => {
         const data = d.data();
         const date = data.createdAt?.toDate?.()?.toISOString().slice(0, 10) ?? '';
         const stop = data.stopName ?? data.stop?.name ?? '';
         const count = data.count ?? 0;
-        const driver = data.driverUid ?? '';
-        rows.push(csvRow([date, stop, count, driver]));
+        rows.push(csvRow([date, stop, count, driverName(data.driverUid)]));
       });
     } else if (type === 'requests') {
       const snap = await db.collection('orgs').doc(orgId).collection('stopRequests')
         .where('createdAt', '>=', sinceTs)
         .orderBy('createdAt', 'desc')
         .get();
-      rows = ['date,time,status,stop_name,wait_minutes,cancelled_reason,student_uid'];
+      rows = ['date,time,status,stop_name,wait_minutes,cancelled_reason,driver_name,student_uid'];
       snap.docs.forEach((d) => {
         const data = d.data();
         const created = data.createdAt?.toDate?.();
@@ -3494,7 +3514,8 @@ app.get('/export/csv', requireAuth, async (req: Request, res: Response) => {
         const reason = data.cancelledReason ?? '';
         // Use uid only — no student names in export
         const uid = data.studentUid ?? '';
-        rows.push(csvRow([date, time, status, stop, wait, reason, uid]));
+        const driver = driverName(data.driverUid ?? data.driverId);
+        rows.push(csvRow([date, time, status, stop, wait, reason, driver, uid]));
       });
     } else {
       return res.status(400).json({ error: 'type must be boardings or requests' });

@@ -809,6 +809,9 @@ export default function DriverScreen() {
           collection(db, 'orgs', orgId, 'boardingCounts'),
           where('driverUid', '==', driverId),
           where('createdAt', '>=', Timestamp.fromDate(midnight)),
+          // Matches the (driverUid ASC, createdAt DESC) index; without it the
+          // implicit ASC order needs an index that isn't deployed.
+          orderBy('createdAt', 'desc'),
         ),
       );
       let total = 0;

@@ -10,6 +10,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import ScreenContainer from '../components/ScreenContainer';
 import MenuItem from '../components/MenuItem';
+import MenuSectionLabel, { MenuSectionSpacer } from '../components/MenuSectionLabel';
 import { auth, db } from '../firebase/firebaseconfig';
 import { doc, setDoc } from 'firebase/firestore';
 import { clearSamlSession } from '../src/auth/samlAuth';
@@ -92,6 +93,7 @@ export default function StudentMenuScreen() {
       </View>
 
       <View style={styles.menuSection}>
+        <MenuSectionLabel label="Rides" first />
         {isParent && (
           <MenuItem
             icon="people"
@@ -107,6 +109,29 @@ export default function StudentMenuScreen() {
         )}
 
         <MenuItem
+          icon="history"
+          title={isParent ? "Ride History" : "My Rides"}
+          description={isParent ? "See your children's completed rides" : 'See your completed rides'}
+          onPress={() => navigation.navigate('StudentHistory')}
+        />
+
+        <MenuItem
+          icon="campaign"
+          title="Service Alerts"
+          description="Check for active delays, detours, and notices"
+          onPress={() => navigation.navigate('Announcements')}
+        />
+
+        <MenuItem
+          icon="auto-awesome"
+          title="AI Assistant"
+          description="Ask questions about routes, stops, or how to use the app"
+          onPress={() => navigation.navigate('AdminChat')}
+        />
+
+
+        <MenuSectionLabel label="My account" />
+        <MenuItem
           icon="person"
           title="My Profile"
           description={
@@ -119,24 +144,10 @@ export default function StudentMenuScreen() {
         />
 
         <MenuItem
-          icon="auto-awesome"
-          title="AI Assistant"
-          description="Ask questions about routes, stops, or how to use the app"
-          onPress={() => navigation.navigate('AdminChat')}
-        />
-
-        <MenuItem
-          icon="history"
-          title={isParent ? "Ride History" : "My Rides"}
-          description={isParent ? "See your children's completed rides" : 'See your completed rides'}
-          onPress={() => navigation.navigate('StudentHistory')}
-        />
-
-<MenuItem
-          icon="help-outline"
-          title="How to Use"
-          description={isParent ? 'Guide for parents tracking the shuttle' : 'Step-by-step guide to requesting a ride'}
-          onPress={() => navigation.navigate('HowToUse', { role: isParent ? 'parent' : 'student' })}
+          icon="notifications"
+          title="Notifications"
+          description="Choose which push notifications you receive"
+          onPress={() => navigation.navigate('NotificationPrefs')}
         />
 
         <View style={styles.toggleRow}>
@@ -153,28 +164,23 @@ export default function StudentMenuScreen() {
         </View>
 
         <MenuItem
-          icon="notifications"
-          title="Notifications"
-          description="Choose which push notifications you receive"
-          onPress={() => navigation.navigate('NotificationPrefs')}
-        />
-
-        <MenuItem
-          icon="campaign"
-          title="Service Alerts"
-          description="Check for active delays, detours, and notices"
-          onPress={() => navigation.navigate('Announcements')}
-        />
-
-        <MenuItem
           icon="accessibility"
           title="Accessibility"
           description="Adjust text size and motion preferences"
           onPress={() => navigation.navigate('Accessibility')}
         />
 
+
+        <MenuSectionLabel label="Help" />
         <MenuItem
           icon="help-outline"
+          title="How to Use"
+          description={isParent ? 'Guide for parents tracking the shuttle' : 'Step-by-step guide to requesting a ride'}
+          onPress={() => navigation.navigate('HowToUse', { role: isParent ? 'parent' : 'student' })}
+        />
+
+        <MenuItem
+          icon="mail-outline"
           title="Get Help"
           description="Contact support or report an issue"
           onPress={() => Linking.openURL('mailto:support@shuttler.net').catch(() => {})}
@@ -187,6 +193,8 @@ export default function StudentMenuScreen() {
           onPress={() => navigation.navigate('Legal')}
         />
 
+
+        <MenuSectionSpacer />
         <MenuItem
           icon="swap-horiz"
           title="Switch Organization"

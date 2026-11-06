@@ -114,7 +114,12 @@ service cloud.firestore {
         && isAdmin(orgId)
         && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['stops', 'routes', 'mapCenter', 'mapBoundingBox', 'logoUrl',
-                      'primaryColor', 'name', 'timezone', 'updatedAt'])
+                      'primaryColor', 'name', 'timezone', 'orgType', 'updatedAt'])
+        // orgType drives role options (parents only for K-12) — known values only.
+        // Keep in sync with src/constants/orgTypes.ts.
+        && (!('orgType' in request.resource.data)
+            || request.resource.data.orgType in ['university', 'k12', 'corporate', 'healthcare',
+                                                  'government', 'nonprofit', 'other'])
         && listWithinPlanLimit('stops', 'maxStops')
         && listWithinPlanLimit('routes', 'maxRoutes');
 

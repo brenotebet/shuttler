@@ -346,7 +346,13 @@ export default function HowToUseScreen() {
           <Icon name={isOnboarding && activeIndex === 0 ? 'close' : 'arrow-back'} size={24} color={primaryColor} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{title}</Text>
-        <View style={{ width: 32 }} />
+        {activeIndex < steps.length - 1 ? (
+          <TouchableOpacity onPress={dismiss} style={styles.skipBtn} accessibilityRole="button" accessibilityLabel="Skip guide">
+            <Text style={[styles.skipText, { color: primaryColor }]}>Skip</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 32 }} />
+        )}
       </View>
 
       {/* Slides */}
@@ -411,6 +417,8 @@ export default function HowToUseScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  skipBtn: { minWidth: 32, paddingVertical: 4, alignItems: 'flex-end' },
+  skipText: { fontSize: 15, fontWeight: '600' },
   screen: {
     paddingHorizontal: 0,
   },

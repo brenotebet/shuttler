@@ -56,6 +56,12 @@ export type Route = {
   stopIds: string[];
   hoursOfOperation?: RouteHours[]; // legacy
   schedule?: WeekSchedule;         // per-weekday schedule
+  // Road-following path for the full loop, encoded polyline. Computed in Org
+  // Setup when the route is saved; see src/utils/routePath.ts.
+  // Line/ring color for this route on rider maps; falls back to the org color.
+  color?: string;
+  path?: string;
+  pathKey?: string;                // stop sequence the path was computed for
 };
 
 export type AuthMethod = 'saml' | 'email' | 'phone' | 'google' | 'email+google';
@@ -91,6 +97,7 @@ export type OrgConfig = {
   };
   ownerUid?: string; // UID of the org creator — role and membership are permanent
   timezone?: string; // IANA timezone name, e.g. "America/Chicago"
+  orgType?: string; // see src/constants/orgTypes.ts — drives role options (parents only for K-12)
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
   // Negotiated per-org limits (Enterprise deals) — written by the Stripe webhook

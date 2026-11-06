@@ -330,17 +330,6 @@ async function avgRiderRating(orgId: string, daysBack: number): Promise<{ avg: n
   return n > 0 ? { avg: Math.round((sum / n) * 10) / 10, n } : null;
 }
 
-async function generateDigestNarrative(statsText: string): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 300,
-    system: 'You write concise weekly summaries for shuttle administrators. Write 3-4 sentences highlighting key trends and ending with one actionable tip. Friendly but professional. Prose only — no bullet points.',
-    messages: [{ role: 'user', content: `Write a weekly summary for this shuttle operation:\n\n${statsText}` }],
-  });
-  const block = response.content[0];
-  return block.type === 'text' ? block.text : '';
-}
-
 async function buildPeriodStats(orgId: string, daysBack: number): Promise<{
   orgName: string;
   adminEmail: string | null;
@@ -348,26 +337,38 @@ async function buildPeriodStats(orgId: string, daysBack: number): Promise<{
   totalBoardings: number;
   activeDrivers: number;
   topStop: string | null;
+  requestsTotal: number;
+  requestsCompleted: number;
+  requestsCancelled: number;
+  driverHoursOnline: number;
   statsText: string;
 }> {
   const db = admin.firestore();
-  const orgDoc = await db.collection('orgs').doc(orgId).get();
+  const orgRef = db.collection('orgs').doc(orgId);
+  const orgDoc = await orgRef.get();
   const org = orgDoc.data() ?? {};
 
   const since = new Date();
   since.setDate(since.getDate() - daysBack);
+  const sinceTs = admin.firestore.Timestamp.fromDate(since);
+  const prevSinceTs = admin.firestore.Timestamp.fromMillis(since.getTime() - daysBack * 86_400_000);
 
-  const adminSnap = await db.collection('orgs').doc(orgId).collection('users')
-    .where('role', '==', 'admin').limit(1).get();
+  const [adminSnap, boardingsSnap, prevBoardingsSnap, sessionsSnap, requestsSnap] = await Promise.all([
+    orgRef.collection('users').where('role', '==', 'admin').limit(1).get(),
+    orgRef.collection('boardingCounts').where('createdAt', '>=', sinceTs).get(),
+    // Previous period, for the week-over-week (or month-over-month) change.
+    orgRef.collection('boardingCounts')
+      .where('createdAt', '>=', prevSinceTs)
+      .where('createdAt', '<', sinceTs)
+      .select('count').get(),
+    orgRef.collection('driverSessions').where('startedAt', '>=', sinceTs).get(),
+    orgRef.collection('stopRequests').where('createdAt', '>=', sinceTs).select('status', 'createdAt').get(),
+  ]);
   const adminData = adminSnap.docs[0]?.data();
-
-  const boardingsSnap = await db
-    .collection('orgs').doc(orgId).collection('boardingCounts')
-    .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(since))
-    .get();
 
   const stopCounts: Record<string, { name: string; count: number }> = {};
   const driverSet = new Set<string>();
+  const hourCounts = new Array(24).fill(0);
   let totalBoardings = 0;
 
   boardingsSnap.docs.forEach((d) => {
@@ -379,18 +380,55 @@ async function buildPeriodStats(orgId: string, daysBack: number): Promise<{
     stopCounts[stopId].count += count;
     totalBoardings += count;
     if (data.driverUid) driverSet.add(data.driverUid);
+    const ms = data.createdAt?.toMillis?.();
+    if (ms) hourCounts[hourInTimezone(ms, org.timezone)] += count;
   });
 
-  const topStopEntry = Object.values(stopCounts).sort((a, b) => b.count - a.count)[0];
+  let prevBoardings = 0;
+  prevBoardingsSnap.docs.forEach((d) => { prevBoardings += d.data().count ?? 0; });
+
+  // A driver who went online counts as active even if they logged no boardings.
+  let onlineMs = 0;
+  sessionsSnap.docs.forEach((d) => {
+    const data = d.data();
+    if (data.driverUid) driverSet.add(data.driverUid);
+    onlineMs += typeof data.durationMs === 'number' ? data.durationMs : 0;
+  });
+  const driverHoursOnline = Math.round(onlineMs / 360_000) / 10;
+
+  let requestsCompleted = 0;
+  let requestsCancelled = 0;
+  requestsSnap.docs.forEach((d) => {
+    const status = d.data().status;
+    if (status === 'completed' || status === 'awaiting_confirmation') requestsCompleted += 1;
+    else if (status === 'cancelled') requestsCancelled += 1;
+  });
+  const requestsTotal = requestsSnap.size;
+
+  const topStops = Object.values(stopCounts).sort((a, b) => b.count - a.count);
+  const topStopEntry = topStops[0];
   const topStop = topStopEntry ? `${topStopEntry.name} (${topStopEntry.count} pickups)` : null;
+
+  const peakHour = hourCounts.some((c) => c > 0) ? hourCounts.indexOf(Math.max(...hourCounts)) : null;
+  const changePct = prevBoardings > 0
+    ? Math.round(((totalBoardings - prevBoardings) / prevBoardings) * 100)
+    : null;
 
   const rating = await avgRiderRating(orgId, daysBack);
 
   const statsText = [
     `Organization: ${org.name ?? 'Unknown'}`,
     `Total boardings last ${daysBack} days: ${totalBoardings}`,
+    changePct !== null
+      ? `Change vs previous ${daysBack} days: ${changePct >= 0 ? '+' : ''}${changePct}% (previous: ${prevBoardings})`
+      : `Previous ${daysBack} days: no boardings logged`,
     `Active drivers last ${daysBack} days: ${driverSet.size}`,
-    topStop ? `Top stop: ${topStop}` : null,
+    `Total driver hours online: ${driverHoursOnline}`,
+    `Stop requests: ${requestsTotal} (${requestsCompleted} completed, ${requestsCancelled} cancelled)`,
+    topStops.length > 0
+      ? `Top stops: ${topStops.slice(0, 3).map((s) => `${s.name} (${s.count})`).join(', ')}`
+      : null,
+    peakHour !== null ? `Busiest hour of day: ${formatHour(peakHour)}` : null,
     rating ? `Average rider rating last ${daysBack} days: ${rating.avg}/5 (${rating.n} ratings)` : null,
     `Stops configured: ${(org.stops ?? []).length}`,
     `Routes configured: ${(org.routes ?? []).length}`,
@@ -403,104 +441,194 @@ async function buildPeriodStats(orgId: string, daysBack: number): Promise<{
     totalBoardings,
     activeDrivers: driverSet.size,
     topStop,
+    requestsTotal,
+    requestsCompleted,
+    requestsCancelled,
+    driverHoursOnline,
     statsText,
   };
 }
 
-// Returns true if an insight was generated, false if there was no data.
-export async function generateOrgInsight(orgId: string, period: 'weekly' | 'monthly'): Promise<boolean> {
-  const daysBack = period === 'monthly' ? 30 : 7;
+function hourInTimezone(ms: number, timezone?: string): number {
+  try {
+    const h = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: timezone || 'America/Chicago' })
+      .format(new Date(ms));
+    return Number(h) % 24;
+  } catch {
+    return new Date(ms).getHours();
+  }
+}
+
+function formatHour(h: number): string {
+  const suffix = h < 12 ? 'am' : 'pm';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:00 ${suffix} hour`;
+}
+
+type InsightPeriod = 'weekly' | 'monthly';
+const PERIOD_DAYS: Record<InsightPeriod, number> = { weekly: 7, monthly: 30 };
+
+// Writes orgs/{orgId}/insights/{period}. A period with no activity still gets
+// a doc (noActivity: true) so the app never keeps showing an old summary with
+// an old date, and the catch-up job doesn't retry it every hour.
+// Returns the stats and narrative, or null if there was no activity.
+async function writeOrgInsight(orgId: string, period: InsightPeriod) {
+  const daysBack = PERIOD_DAYS[period];
   const stats = await buildPeriodStats(orgId, daysBack);
-  if (stats.totalBoardings === 0 && stats.activeDrivers === 0) return false;
+  const ref = admin.firestore().collection('orgs').doc(orgId).collection('insights').doc(period);
 
-  const periodLabel = period === 'monthly' ? 'monthly' : 'weekly';
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 400,
-    system: `You write concise ${periodLabel} summaries for shuttle administrators. Write 3-5 sentences highlighting key trends, notable patterns, and one actionable tip. Friendly but professional. Prose only.`,
-    messages: [{ role: 'user', content: `Write a ${periodLabel} summary for this shuttle operation:\n\n${stats.statsText}` }],
-  });
-  const block = response.content[0];
-  const narrative = block.type === 'text' ? block.text : '';
-
-  await admin.firestore()
-    .collection('orgs').doc(orgId)
-    .collection('insights').doc(period)
-    .set({
-      narrative,
-      totalBoardings: stats.totalBoardings,
-      activeDrivers: stats.activeDrivers,
-      topStop: stats.topStop,
+  if (stats.totalBoardings === 0 && stats.activeDrivers === 0 && stats.requestsTotal === 0) {
+    await ref.set({
+      narrative: `No rides, requests, or driver shifts were logged in the last ${daysBack} days.`,
+      noActivity: true,
+      totalBoardings: 0,
+      activeDrivers: 0,
+      topStop: null,
       periodDays: daysBack,
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    return null;
+  }
 
-  return true;
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 400,
+    system: `You write concise ${period} summaries for shuttle administrators. Write 3-5 sentences highlighting key trends (use the change vs the previous period, peak hour, and request completion when given), notable patterns, and one actionable tip. Friendly but professional. Prose only — no bullet points.`,
+    messages: [{ role: 'user', content: `Write a ${period} summary for this shuttle operation:\n\n${stats.statsText}` }],
+  });
+  const block = response.content[0];
+  const narrative = block?.type === 'text' ? block.text : '';
+
+  await ref.set({
+    narrative,
+    noActivity: false,
+    totalBoardings: stats.totalBoardings,
+    activeDrivers: stats.activeDrivers,
+    topStop: stats.topStop,
+    requestsTotal: stats.requestsTotal,
+    requestsCompleted: stats.requestsCompleted,
+    requestsCancelled: stats.requestsCancelled,
+    driverHoursOnline: stats.driverHoursOnline,
+    periodDays: daysBack,
+    generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { stats, narrative };
+}
+
+// Returns true if an insight was generated, false if there was no data.
+export async function generateOrgInsight(orgId: string, period: InsightPeriod): Promise<boolean> {
+  return (await writeOrgInsight(orgId, period)) !== null;
+}
+
+async function runWeeklyDigestForOrg(orgId: string): Promise<void> {
+  const result = await writeOrgInsight(orgId, 'weekly');
+  if (!result) {
+    console.log(`[weekly-digest] No activity for ${orgId} — wrote empty insight, no email`);
+    return;
+  }
+  const { stats, narrative } = result;
+  if (!stats.adminEmail) return;
+
+  await sendEmail({
+    to: stats.adminEmail,
+    subject: `Your Shuttler weekly summary — ${stats.orgName}`,
+    html: weeklyDigestTemplate({
+      adminName: stats.adminName ?? 'Admin',
+      orgName: stats.orgName,
+      totalBoardings: stats.totalBoardings,
+      activeDrivers: stats.activeDrivers,
+      topStop: stats.topStop,
+      narrative,
+    }),
+  });
+  console.log(`[weekly-digest] Sent to ${stats.adminEmail} (org: ${orgId})`);
+}
+
+// Orgs approved before the review flow existed may have approved: true but no
+// reviewStatus, so filter in code rather than on reviewStatus alone.
+async function listActiveOrgIds(): Promise<string[]> {
+  const snap = await admin.firestore().collection('orgs').get();
+  return snap.docs
+    .filter((d) => {
+      const data = d.data();
+      if (data.reviewStatus === 'suspended' || data.reviewStatus === 'rejected') return false;
+      return data.approved === true || data.reviewStatus === 'approved';
+    })
+    .map((d) => d.id);
+}
+
+// Prevents the Monday cron and the hourly catch-up from running at once
+// (which would double-send digest emails).
+let insightJobRunning = false;
+
+async function withInsightLock(name: string, fn: () => Promise<void>): Promise<void> {
+  if (insightJobRunning) {
+    console.log(`[${name}] Skipped — another insight job is running`);
+    return;
+  }
+  insightJobRunning = true;
+  try {
+    await fn();
+  } finally {
+    insightJobRunning = false;
+  }
 }
 
 export async function runWeeklyDigest(): Promise<void> {
-  const db = admin.firestore();
-  const orgsSnap = await db.collection('orgs').where('reviewStatus', '==', 'approved').get();
-  console.log(`[weekly-digest] Processing ${orgsSnap.size} org(s)`);
-
-  for (const orgDoc of orgsSnap.docs) {
-    const orgId = orgDoc.id;
-    try {
-      const stats = await buildPeriodStats(orgId, 7);
-
-      if (stats.totalBoardings === 0 && stats.activeDrivers === 0) {
-        console.log(`[weekly-digest] No activity for ${orgId} — skipping`);
-        continue;
+  await withInsightLock('weekly-digest', async () => {
+    const orgIds = await listActiveOrgIds();
+    console.log(`[weekly-digest] Processing ${orgIds.length} org(s)`);
+    for (const orgId of orgIds) {
+      try {
+        await runWeeklyDigestForOrg(orgId);
+      } catch (err: any) {
+        console.error(`[weekly-digest] Error for org ${orgId}:`, err?.message ?? err);
       }
-
-      const narrative = await generateDigestNarrative(stats.statsText);
-
-      await admin.firestore()
-        .collection('orgs').doc(orgId)
-        .collection('insights').doc('weekly')
-        .set({
-          narrative,
-          totalBoardings: stats.totalBoardings,
-          activeDrivers: stats.activeDrivers,
-          topStop: stats.topStop,
-          periodDays: 7,
-          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-
-      if (stats.adminEmail) {
-        await sendEmail({
-          to: stats.adminEmail,
-          subject: `Your Shuttler weekly summary — ${stats.orgName}`,
-          html: weeklyDigestTemplate({
-            adminName: stats.adminName ?? 'Admin',
-            orgName: stats.orgName,
-            totalBoardings: stats.totalBoardings,
-            activeDrivers: stats.activeDrivers,
-            topStop: stats.topStop,
-            narrative,
-          }),
-        });
-        console.log(`[weekly-digest] Sent to ${stats.adminEmail} (org: ${orgId})`);
-      }
-    } catch (err: any) {
-      console.error(`[weekly-digest] Error for org ${orgId}:`, err?.message ?? err);
     }
-  }
+  });
 }
 
 export async function runMonthlyDigest(): Promise<void> {
-  const db = admin.firestore();
-  const orgsSnap = await db.collection('orgs').where('reviewStatus', '==', 'approved').get();
-  console.log(`[monthly-digest] Processing ${orgsSnap.size} org(s)`);
-
-  for (const orgDoc of orgsSnap.docs) {
-    try {
-      await generateOrgInsight(orgDoc.id, 'monthly');
-      console.log(`[monthly-digest] Generated for org ${orgDoc.id}`);
-    } catch (err: any) {
-      console.error(`[monthly-digest] Error for org ${orgDoc.id}:`, err?.message ?? err);
+  await withInsightLock('monthly-digest', async () => {
+    const orgIds = await listActiveOrgIds();
+    console.log(`[monthly-digest] Processing ${orgIds.length} org(s)`);
+    for (const orgId of orgIds) {
+      try {
+        await writeOrgInsight(orgId, 'monthly');
+        console.log(`[monthly-digest] Generated for org ${orgId}`);
+      } catch (err: any) {
+        console.error(`[monthly-digest] Error for org ${orgId}:`, err?.message ?? err);
+      }
     }
-  }
+  });
+}
+
+// The cron lives inside the web server, so a restart or sleep at the scheduled
+// minute used to lose that week's insight for good. This runs on startup and
+// hourly, and regenerates any insight older than its period (plus slack so it
+// doesn't race the scheduled run).
+const CATCH_UP_SLACK_MS = 6 * 60 * 60 * 1000;
+
+export async function runInsightCatchUp(): Promise<void> {
+  await withInsightLock('insight-catch-up', async () => {
+    const orgIds = await listActiveOrgIds();
+    const now = Date.now();
+    for (const orgId of orgIds) {
+      for (const period of ['weekly', 'monthly'] as InsightPeriod[]) {
+        try {
+          const snap = await admin.firestore()
+            .collection('orgs').doc(orgId).collection('insights').doc(period).get();
+          const lastMs: number = snap.data()?.generatedAt?.toMillis?.() ?? 0;
+          if (now - lastMs < PERIOD_DAYS[period] * 86_400_000 + CATCH_UP_SLACK_MS) continue;
+          console.log(`[insight-catch-up] ${period} insight stale for ${orgId} — regenerating`);
+          if (period === 'weekly') await runWeeklyDigestForOrg(orgId);
+          else await writeOrgInsight(orgId, 'monthly');
+        } catch (err: any) {
+          console.error(`[insight-catch-up] ${period} failed for ${orgId}:`, err?.message ?? err);
+        }
+      }
+    }
+  });
 }
 
 export function startWeeklyDigestCron(): void {
@@ -509,6 +637,15 @@ export function startWeeklyDigestCron(): void {
     runWeeklyDigest().catch((err) => console.error('[weekly-digest] Cron error:', err));
   });
   console.log('[weekly-digest] Cron scheduled — every Monday 08:00 UTC');
+
+  cron.schedule('30 * * * *', () => {
+    runInsightCatchUp().catch((err) => console.error('[insight-catch-up] Cron error:', err));
+  });
+  // Delay the startup check so it doesn't compete with boot.
+  setTimeout(() => {
+    runInsightCatchUp().catch((err) => console.error('[insight-catch-up] Startup error:', err));
+  }, 2 * 60_000);
+  console.log('[insight-catch-up] Scheduled — hourly at :30 and 2 min after startup');
 }
 
 export function startMonthlyDigestCron(): void {
