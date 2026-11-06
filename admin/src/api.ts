@@ -290,3 +290,67 @@ export async function searchUsersByEmail(email: string): Promise<UserSearchResul
   const data = await res.json();
   return data.results ?? [];
 }
+
+// ---- Platform overview and per-org detail (super-admin) ----
+
+export type PlatformOverview = {
+  orgs: number;
+  liveOrgs: number;
+  busesOnline: number;
+  riders: number;
+  pickupsToday: number;
+  requestsToday: number;
+};
+
+export async function getPlatformOverview(): Promise<PlatformOverview> {
+  const res = await fetch(`${API}/super-admin/overview`, {
+    headers: { Authorization: `Bearer ${await token()}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Status only — the panel never receives bus coordinates. */
+export type LiveBus = {
+  driverName: string;
+  routeName: string | null;
+  secondsAgo: number;
+  onBreak: boolean;
+  occupancy: 'open' | 'filling' | 'full' | string | null;
+  sessionStartedAt: string | null;
+};
+
+export type OrgOverview = {
+  live: {
+    buses: LiveBus[];
+    openRequests: number;
+    boardingsToday: number;
+    requestsToday: number;
+    lastBusSeenAt: string | null;
+  };
+  usage: { date: string; boardings: number; requests: number; completed: number }[];
+  members: { student: number; driver: number; admin: number; parent: number };
+  adminLastActiveAt: string | null;
+  insights: {
+    weekly: { generatedAt: string | null } | null;
+    monthly: { generatedAt: string | null } | null;
+  };
+  flags: { level: 'warn' | 'error'; text: string }[];
+};
+
+export async function getOrgOverview(orgId: string): Promise<OrgOverview> {
+  const res = await fetch(`${API}/super-admin/orgs/${orgId}/overview`, {
+    headers: { Authorization: `Bearer ${await token()}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function regenerateInsights(orgId: string): Promise<{ weekly: boolean; monthly: boolean }> {
+  const res = await fetch(`${API}/super-admin/orgs/${orgId}/insights/regenerate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await token()}` },
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? `HTTP ${res.status}`);
+  return res.json();
+}

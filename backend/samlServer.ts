@@ -2398,7 +2398,9 @@ app.get('/super-admin/orgs', requireSuperAdmin, async (_req: Request, res: Respo
       let requests24h = 0;
       try {
         const [busSnap, reqCount] = await Promise.all([
-          d.ref.collection('buses').where('online', '==', true).get(),
+          // All buses, not just online ones: "last bus seen" must cover
+          // orgs whose buses are all offline (it used to read "never").
+          d.ref.collection('buses').get(),
           d.ref.collection('stopRequests').where('createdAt', '>=', since).count().get(),
         ]);
         const now = Date.now();
@@ -2408,7 +2410,7 @@ app.get('/super-admin/orgs', requireSuperAdmin, async (_req: Request, res: Respo
           const tsMs = b?.updatedAt?.toMillis?.() ?? b?.lastSeen?.toMillis?.() ?? null;
           if (tsMs === null) continue;
           if (tsMs > lastSeenMs) lastSeenMs = tsMs;
-          if ((now - tsMs) / 1000 < BUS_STALE_WINDOW_SECONDS) busesOnline += 1;
+          if (b?.online === true && (now - tsMs) / 1000 < BUS_STALE_WINDOW_SECONDS) busesOnline += 1;
         }
         if (lastSeenMs > 0) lastBusSeenAt = new Date(lastSeenMs).toISOString();
         requests24h = reqCount.data().count;
@@ -2443,6 +2445,240 @@ app.get('/super-admin/orgs', requireSuperAdmin, async (_req: Request, res: Respo
   } catch (e) {
     console.error('[super-admin/orgs] error:', e);
     return res.status(500).json({ error: 'Failed to list orgs' });
+  }
+});
+
+// ---- Super-admin: platform overview and per-org detail ----
+//
+// Read-only views for the super admin panel. Bus data is status only —
+// driver, route, freshness, break/occupancy — and never coordinates: the
+// panel is not a place to watch drivers' live locations.
+
+function startOfUtcDayMs(ms: number): number {
+  const d = new Date(ms);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+async function sumBoardings(orgRef: admin.firestore.DocumentReference, sinceMs: number): Promise<number> {
+  const snap = await orgRef.collection('boardingCounts')
+    .where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(sinceMs))
+    .aggregate({ total: admin.firestore.AggregateField.sum('count') })
+    .get();
+  return Number(snap.data().total ?? 0);
+}
+
+async function countRequests(orgRef: admin.firestore.DocumentReference, sinceMs: number): Promise<number> {
+  const snap = await orgRef.collection('stopRequests')
+    .where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(sinceMs))
+    .count().get();
+  return snap.data().count;
+}
+
+/** GET /super-admin/overview — totals across all orgs for the panel header. */
+app.get('/super-admin/overview', requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const db = admin.firestore();
+    const orgsSnap = await db.collection('orgs').get();
+    // "Today" in UTC — this is a cross-timezone platform view.
+    const todayMs = startOfUtcDayMs(Date.now());
+    const now = Date.now();
+
+    let busesOnline = 0;
+    let riders = 0;
+    let pickupsToday = 0;
+    let requestsToday = 0;
+    let liveOrgs = 0;
+
+    await Promise.all(orgsSnap.docs.map(async (d) => {
+      const data = d.data();
+      if (data.approved === true || data.reviewStatus === 'approved') liveOrgs += 1;
+      try {
+        const [busSnap, studentCount, parentCount, boarded, requested] = await Promise.all([
+          d.ref.collection('buses').where('online', '==', true).get(),
+          d.ref.collection('users').where('role', '==', 'student').count().get(),
+          d.ref.collection('users').where('role', '==', 'parent').count().get(),
+          sumBoardings(d.ref, todayMs),
+          countRequests(d.ref, todayMs),
+        ]);
+        busSnap.docs.forEach((b) => {
+          const ms = b.data().updatedAt?.toMillis?.() ?? b.data().lastSeen?.toMillis?.() ?? 0;
+          if ((now - ms) / 1000 < BUS_STALE_WINDOW_SECONDS) busesOnline += 1;
+        });
+        riders += studentCount.data().count + parentCount.data().count;
+        pickupsToday += boarded;
+        requestsToday += requested;
+      } catch (err) {
+        console.warn(`[super-admin/overview] stats failed for ${d.id}:`, err);
+      }
+    }));
+
+    return res.json({
+      orgs: orgsSnap.size,
+      liveOrgs,
+      busesOnline,
+      riders,
+      pickupsToday,
+      requestsToday,
+    });
+  } catch (e) {
+    console.error('[super-admin/overview] error:', e);
+    return res.status(500).json({ error: 'Failed to load overview' });
+  }
+});
+
+/** GET /super-admin/orgs/:orgId/overview — live status, 30-day usage,
+ *  members, insights, and health flags for one org. */
+app.get('/super-admin/orgs/:orgId/overview', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  try {
+    const db = admin.firestore();
+    const orgRef = db.collection('orgs').doc(orgId);
+    const orgDoc = await orgRef.get();
+    if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
+    const org = orgDoc.data() ?? {};
+
+    const now = Date.now();
+    const todayMs = startOfUtcDayMs(now);
+    const DAYS = 30;
+    const sinceMs = todayMs - (DAYS - 1) * 86_400_000;
+    const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
+    const roles = ['student', 'driver', 'admin', 'parent'] as const;
+
+    const [busSnap, openReqCount, boardingSnap, requestSnap, roleCounts, adminSnap, weekly, monthly] = await Promise.all([
+      orgRef.collection('buses').get(),
+      orgRef.collection('stopRequests').where('status', 'in', ['pending', 'accepted']).count().get(),
+      orgRef.collection('boardingCounts').where('createdAt', '>=', sinceTs).select('count', 'createdAt').get(),
+      orgRef.collection('stopRequests').where('createdAt', '>=', sinceTs).select('createdAt', 'status').get(),
+      Promise.all(roles.map((r) => orgRef.collection('users').where('role', '==', r).count().get())),
+      orgRef.collection('users').where('role', '==', 'admin').get(),
+      orgRef.collection('insights').doc('weekly').get(),
+      orgRef.collection('insights').doc('monthly').get(),
+    ]);
+
+    // ---- Live buses (status only, no coordinates) ----
+    const driverUids = busSnap.docs.map((b) => b.id);
+    const driverDocs = driverUids.length
+      ? await db.getAll(...driverUids.map((uid) => orgRef.collection('users').doc(uid)))
+      : [];
+    const driverName = new Map(driverDocs.map((d) => [d.id, (d.data()?.displayName || d.data()?.email || 'Unknown driver') as string]));
+    const routeName = new Map(((org.routes ?? []) as any[]).map((r) => [r.id, r.name as string]));
+
+    let lastBusSeenMs = 0;
+    const liveBuses: any[] = [];
+    busSnap.docs.forEach((b) => {
+      const data = b.data();
+      const ms = data.updatedAt?.toMillis?.() ?? data.lastSeen?.toMillis?.() ?? 0;
+      if (ms > lastBusSeenMs) lastBusSeenMs = ms;
+      const secondsAgo = ms ? Math.round((now - ms) / 1000) : null;
+      if (data.online !== true || secondsAgo === null || secondsAgo >= BUS_STALE_WINDOW_SECONDS) return;
+      liveBuses.push({
+        driverName: driverName.get(b.id) ?? 'Unknown driver',
+        routeName: data.routeId ? routeName.get(data.routeId) ?? null : null,
+        secondsAgo,
+        onBreak: data.onBreak === true,
+        occupancy: typeof data.occupancy === 'string' ? data.occupancy : null,
+        sessionStartedAt: data.sessionStartAt?.toDate?.()?.toISOString() ?? null,
+      });
+    });
+
+    // ---- 30-day usage, bucketed by UTC day ----
+    const days = Array.from({ length: DAYS }, (_, i) => ({
+      date: new Date(sinceMs + i * 86_400_000).toISOString().slice(0, 10),
+      boardings: 0,
+      requests: 0,
+      completed: 0,
+    }));
+    const dayIdx = (ms: number) => Math.floor((ms - sinceMs) / 86_400_000);
+    boardingSnap.docs.forEach((d) => {
+      const i = dayIdx(d.data().createdAt?.toMillis?.() ?? 0);
+      if (i >= 0 && i < DAYS) days[i].boardings += d.data().count ?? 0;
+    });
+    requestSnap.docs.forEach((d) => {
+      const i = dayIdx(d.data().createdAt?.toMillis?.() ?? 0);
+      if (i < 0 || i >= DAYS) return;
+      days[i].requests += 1;
+      const st = d.data().status;
+      if (st === 'completed' || st === 'awaiting_confirmation') days[i].completed += 1;
+    });
+    const today = days[DAYS - 1];
+
+    // ---- Members ----
+    const members: Record<string, number> = {};
+    roles.forEach((r, i) => { members[r] = roleCounts[i].data().count; });
+
+    // Admin activity comes from Firebase Auth (last token refresh), since
+    // member docs don't track it.
+    let adminLastActiveAt: string | null = null;
+    const adminUids = adminSnap.docs.map((d) => d.id).slice(0, 100);
+    if (adminUids.length) {
+      const authUsers = await admin.auth().getUsers(adminUids.map((uid) => ({ uid })));
+      authUsers.users.forEach((u) => {
+        const t = u.metadata.lastRefreshTime ?? u.metadata.lastSignInTime;
+        const iso = t ? new Date(t).toISOString() : null;
+        if (iso && (!adminLastActiveAt || iso > adminLastActiveAt)) adminLastActiveAt = iso;
+      });
+    }
+
+    // ---- Insights ----
+    const insightInfo = (snap: admin.firestore.DocumentSnapshot) =>
+      snap.exists ? { generatedAt: snap.data()?.generatedAt?.toDate?.()?.toISOString() ?? null } : null;
+
+    // ---- Health flags ----
+    const flags: { level: 'warn' | 'error'; text: string }[] = [];
+    const isLive = org.approved === true || org.reviewStatus === 'approved';
+    if (org.subscriptionStatus === 'past_due' || org.subscriptionStatus === 'unpaid') {
+      flags.push({ level: 'error', text: 'Payment past due' });
+    }
+    const trialEndsMs = org.trialEndsAt?.toMillis?.() ?? null;
+    if (org.subscriptionStatus === 'trialing' && trialEndsMs) {
+      const daysLeft = Math.ceil((trialEndsMs - now) / 86_400_000);
+      if (daysLeft < 0) flags.push({ level: 'error', text: 'Trial has ended' });
+      else if (daysLeft <= 7) flags.push({ level: 'warn', text: `Trial ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}` });
+    }
+    if (isLive && (org.stops ?? []).length === 0) flags.push({ level: 'warn', text: 'No stops set up' });
+    if (isLive && (!lastBusSeenMs || now - lastBusSeenMs > 7 * 86_400_000)) {
+      flags.push({ level: 'warn', text: lastBusSeenMs ? 'No bus online in 7+ days' : 'No bus has ever gone online' });
+    }
+    if (isLive && members.driver === 0) flags.push({ level: 'warn', text: 'No drivers' });
+    const weeklyMs = weekly.exists ? weekly.data()?.generatedAt?.toMillis?.() ?? 0 : 0;
+    if (isLive && (!weeklyMs || now - weeklyMs > 8 * 86_400_000)) {
+      flags.push({ level: 'warn', text: weeklyMs ? 'Weekly insight is out of date' : 'No AI insight generated yet' });
+    }
+
+    return res.json({
+      live: {
+        buses: liveBuses,
+        openRequests: openReqCount.data().count,
+        boardingsToday: today.boardings,
+        requestsToday: today.requests,
+        lastBusSeenAt: lastBusSeenMs ? new Date(lastBusSeenMs).toISOString() : null,
+      },
+      usage: days,
+      members,
+      adminLastActiveAt,
+      insights: { weekly: insightInfo(weekly), monthly: insightInfo(monthly) },
+      flags,
+    });
+  } catch (e) {
+    console.error('[super-admin/org-overview] error:', e);
+    return res.status(500).json({ error: 'Failed to load org overview' });
+  }
+});
+
+/** POST /super-admin/orgs/:orgId/insights/regenerate — rebuild the weekly
+ *  and monthly AI insights now. Writes the insight docs only; no email. */
+app.post('/super-admin/orgs/:orgId/insights/regenerate', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  try {
+    const [weekly, monthly] = await Promise.all([
+      generateOrgInsight(orgId, 'weekly'),
+      generateOrgInsight(orgId, 'monthly'),
+    ]);
+    return res.json({ weekly, monthly });
+  } catch (e: any) {
+    console.error('[super-admin/insights/regenerate]', e?.message ?? e);
+    return res.status(500).json({ error: 'Failed to generate insights' });
   }
 });
 

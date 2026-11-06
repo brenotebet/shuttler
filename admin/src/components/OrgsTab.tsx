@@ -11,9 +11,12 @@ import {
   deleteOrg,
   resetAuthMethod,
   updateAllowedDomains,
+  getPlatformOverview,
   type OrgSummary,
+  type PlatformOverview,
 } from '../api';
 import RefreshButton from './RefreshButton';
+import OrgDetail from './OrgDetail';
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
@@ -316,10 +319,13 @@ export default function OrgsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [overview, setOverview] = useState<PlatformOverview | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    // Totals are best-effort — the org table still loads if they fail.
+    getPlatformOverview().then(setOverview).catch(() => setOverview(null));
     try {
       setOrgs(await listOrgs());
     } catch (e: any) {
@@ -345,6 +351,24 @@ export default function OrgsTab() {
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-sm text-red-700">{error}</div>
+      )}
+
+      {overview && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+          {[
+            { label: 'Live orgs', value: overview.liveOrgs, sub: `${overview.orgs} total` },
+            { label: 'Buses online now', value: overview.busesOnline },
+            { label: 'Riders', value: overview.riders, sub: 'students + parents' },
+            { label: 'Pickups today', value: overview.pickupsToday, sub: 'UTC day' },
+            { label: 'Requests today', value: overview.requestsToday, sub: 'UTC day' },
+          ].map((t) => (
+            <div key={t.label} className="bg-white border border-gray-200 rounded-xl px-4 py-3">
+              <p className="text-xs font-medium text-gray-500">{t.label}</p>
+              <p className="text-2xl font-bold text-gray-900 mt-0.5 tabular-nums">{t.value.toLocaleString()}</p>
+              {t.sub && <p className="text-xs text-gray-400 mt-0.5">{t.sub}</p>}
+            </div>
+          ))}
+        </div>
       )}
 
       {!loading && orgs.length === 0 && !error && (
@@ -431,7 +455,7 @@ function OrgRow({ org, expanded, onToggle, onChanged }: {
       {expanded && (
         <tr>
           <td colSpan={7} className="p-0">
-            <OrgActions org={org} onChanged={onChanged} />
+            <OrgDetail org={org} settings={<OrgActions org={org} onChanged={onChanged} />} />
           </td>
         </tr>
       )}
