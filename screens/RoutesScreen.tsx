@@ -261,7 +261,7 @@ export default function RoutesScreen() {
               toolbarEnabled={false}
             >
               {roadPath.length >= 2 && (
-                <Polyline coordinates={roadPath} strokeColor={primaryColor} strokeWidth={4} />
+                <Polyline coordinates={roadPath} strokeColor={selectedRoute.color ?? primaryColor} strokeWidth={4} />
               )}
               {routeStops.map((s, i) => (
                 <Marker
@@ -271,7 +271,7 @@ export default function RoutesScreen() {
                   anchor={{ x: 0.5, y: 0.5 }}
                   tracksViewChanges={false}
                 >
-                  <View style={[styles.mapPin, { backgroundColor: primaryColor }]}>
+                  <View style={[styles.mapPin, { backgroundColor: selectedRoute.color ?? primaryColor }]}>
                     <Text style={styles.mapPinText}>{i + 1}</Text>
                   </View>
                 </Marker>

@@ -1441,6 +1441,20 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.status, driverId, bottomCardHeight]);
 
+  // Keep the ride's bus and the rider's stop in view as the bus moves.
+  // Throttled so the camera isn't constantly moving; panning the map sets
+  // cameraMode to 'free' and stops this until the rider taps Fit.
+  const lastRideFitRef = useRef(0);
+  const rideBusLoc = resolvedDriverId ? busLocations[resolvedDriverId] : undefined;
+  useEffect(() => {
+    if (!rideActive || !rideBusLoc) return;
+    if (cameraMode !== 'overview' || recentlyInteracted(4000)) return;
+    if (Date.now() - lastRideFitRef.current < 8000) return;
+    lastRideFitRef.current = Date.now();
+    fitActiveRide();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rideActive, rideBusLoc?.latitude, rideBusLoc?.longitude, cameraMode]);
+
   useEffect(() => {
     if (request?.status === 'completed') {
       Notifications.scheduleNotificationAsync({
@@ -2136,12 +2150,13 @@ const handleConfirmSheetConfirm = async () => {
         {orgRoutes.map((r) => {
           const coords = routePaths[r.id];
           if (!coords) return null;
+          const lineColor = (r.color ?? primaryColor) + '73';
           return (
             <Polyline
-              key={`route-path-${r.id}-${r.pathKey ?? ''}`}
+              key={`route-path-${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}`}
               coordinates={coords}
-              strokeColor={primaryColor + '73'}
-              strokeColors={[primaryColor + '73']}
+              strokeColor={lineColor}
+              strokeColors={[lineColor]}
               strokeWidth={4}
               zIndex={1}
             />
@@ -2184,6 +2199,12 @@ const handleConfirmSheetConfirm = async () => {
           const animatedCoord = busRegions.current[id];
           const updateAgeSeconds = (Date.now() - loc.lastUpdated.getTime()) / 1000;
           const showLateLabel = !loc.onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
+          // The rider's own bus during a ride shows its ETA above it.
+          const rideEtaText = rideActive && id === resolvedDriverId && !loc.onBreak && eta ? eta : null;
+          // With more than one route, ring each bus in its route's color so
+          // riders can tell which bus is which at a glance.
+          const busRoute = orgRoutes.length > 1 ? orgRoutes.find((r) => r.id === busRouteIds[id]) : undefined;
+          const ringColor = busRoute ? busRoute.color ?? primaryColor : null;
 
           return (
             <MarkerAnimated
@@ -2191,21 +2212,31 @@ const handleConfirmSheetConfirm = async () => {
               coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
               anchor={{ x: 0.5, y: 0.5 }}
               onPress={() => handleBusPress(id)}
-              tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel}
+              tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel || !!rideEtaText}
               zIndex={50}
             >
               {/* Equal-height badge slots above and below keep the bus centered on the anchor. */}
               <View style={styles.busMarkerWrap}>
-                <View style={[styles.busBadgeSlot, { opacity: loc.onBreak ? 1 : 0 }]}>
-                  <View style={styles.onBreakBadge}>
-                    <Text style={styles.onBreakBadgeText}>On Break</Text>
-                  </View>
+                <View style={[styles.busBadgeSlot, { opacity: loc.onBreak || rideEtaText ? 1 : 0 }]}>
+                  {rideEtaText ? (
+                    <View style={[styles.etaBadge, { backgroundColor: primaryColor }]}>
+                      <Text style={styles.etaBadgeText}>{rideEtaText}</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.onBreakBadge}>
+                      <Text style={styles.onBreakBadgeText}>On Break</Text>
+                    </View>
+                  )}
                 </View>
-                <Image
-                  source={busIcon}
-                  style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
-                  resizeMode="contain"
-                />
+                <View style={styles.busIconWrap}>
+                  {/* Always mounted; shown via opacity (see the marker note above). */}
+                  <View style={[styles.busRouteRing, { borderColor: ringColor ?? 'transparent', opacity: ringColor ? 1 : 0 }]} />
+                  <Image
+                    source={busIcon}
+                    style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
+                    resizeMode="contain"
+                  />
+                </View>
                 <View style={[styles.busBadgeSlot, { opacity: showLateLabel ? 1 : 0 }]}>
                   <View style={styles.lateUpdateBadge}>
                     <Text style={styles.lateUpdateBadgeText}>Updated {formatLastSeen(updateAgeSeconds)}</Text>
@@ -2307,6 +2338,24 @@ const handleConfirmSheetConfirm = async () => {
         >
           <Icon name="map" size={22} color={GRAY_900} />
         </TouchableOpacity>
+
+        {!rideActive && visibleBusIds.length > 0 && (
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => {
+              const points = visibleBusIds
+                .map((id) => busLocations[id])
+                .filter(Boolean)
+                .map((b) => ({ latitude: b.latitude, longitude: b.longitude }));
+              fitToPoints(points, 'overview', 0.008);
+            }}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Show all buses"
+          >
+            <Icon name="directions-bus" size={22} color={GRAY_900} />
+          </TouchableOpacity>
+        )}
 
         {rideActive && (
           <TouchableOpacity
@@ -3131,6 +3180,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  busIconWrap: { width: 70, height: 70, alignItems: 'center', justifyContent: 'center' },
+  busRouteRing: {
+    position: 'absolute',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 3,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+  },
+  etaBadge: {
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1.5,
+    borderColor: WHITE,
+  },
+  etaBadgeText: { fontSize: 11, fontWeight: '800', color: WHITE },
   onBreakBadge: {
     backgroundColor: '#fef3c7',
     borderWidth: 1,

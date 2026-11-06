@@ -1598,7 +1598,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                 accessibilityRole="button"
                 accessibilityHint="Edit this route"
               >
-                <Icon name="directions-bus" size={20} color={primaryColor} />
+                <Icon name="directions-bus" size={20} color={route.color ?? primaryColor} />
                 <View style={{ flex: 1 }}>
                   <Text style={stopsUi.rowTitle} numberOfLines={1}>{route.name}</Text>
                   <Text style={[stopsUi.rowSub, route.stopIds.length === 0 && { color: '#b45309' }]} numberOfLines={1}>
@@ -1770,6 +1770,29 @@ function RouteEditorModal({
             autoFocus={isNew}
           />
 
+          <Text style={[stopsUi.fieldLabel, { marginTop: 14 }]}>Color on the map</Text>
+          <View style={routeUi.colorRow}>
+            {[null, ...COLOR_SWATCHES].map((c) => {
+              const swatch = c ?? primaryColor;
+              const active = (draft.color ?? null) === c;
+              return (
+                <TouchableOpacity
+                  key={c ?? 'org'}
+                  onPress={() => setDraft((d) => {
+                    const { color: _old, ...rest } = d;
+                    return c ? { ...rest, color: c } : rest;
+                  })}
+                  style={[routeUi.colorSwatch, { backgroundColor: swatch }, active && routeUi.colorSwatchActive]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={c ? `Route color ${c}` : 'Use organization color'}
+                >
+                  {!c && <Text style={routeUi.colorSwatchText}>Org</Text>}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
           {stops.length > 0 && (
             <MapView
               ref={mapRef}
@@ -1780,7 +1803,7 @@ function RouteEditorModal({
               rotateEnabled={false}
             >
               {loopCoords.length >= 2 && (
-                <Polyline coordinates={[...loopCoords, loopCoords[0]]} strokeColor={primaryColor} strokeWidth={4} />
+                <Polyline coordinates={[...loopCoords, loopCoords[0]]} strokeColor={draft.color ?? primaryColor} strokeColors={[draft.color ?? primaryColor]} strokeWidth={4} />
               )}
               {routeStops.map((s, i) => (
                 <Marker
@@ -1790,7 +1813,7 @@ function RouteEditorModal({
                   onPress={() => toggleStop(s.id)}
                   anchor={{ x: 0.5, y: 0.5 }}
                 >
-                  <View style={[routeUi.numberPin, { backgroundColor: primaryColor }]}>
+                  <View style={[routeUi.numberPin, { backgroundColor: draft.color ?? primaryColor }]}>
                     <Text style={routeUi.numberPinText}>{i + 1}</Text>
                   </View>
                 </Marker>
@@ -1982,6 +2005,10 @@ const routeUi = StyleSheet.create({
   orderName: { flex: 1, fontSize: 15, color: GRAY_900 },
   iconBtn: { padding: 6 },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
+  colorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  colorSwatch: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  colorSwatchActive: { borderWidth: 3, borderColor: GRAY_900 },
+  colorSwatchText: { color: WHITE, fontSize: 10, fontWeight: '800' },
 });
 
 // ---- Users Tab ----

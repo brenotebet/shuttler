@@ -58,6 +58,8 @@ export type Route = {
   schedule?: WeekSchedule;         // per-weekday schedule
   // Road-following path for the full loop, encoded polyline. Computed in Org
   // Setup when the route is saved; see src/utils/routePath.ts.
+  // Line/ring color for this route on rider maps; falls back to the org color.
+  color?: string;
   path?: string;
   pathKey?: string;                // stop sequence the path was computed for
 };
