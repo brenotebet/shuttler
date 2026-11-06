@@ -71,7 +71,7 @@ import { useOrg, Route } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText } from '../src/utils/scheduleUtils';
-import { getBusRouteProgress, AT_STOP_METERS } from '../src/utils/busRoute';
+import { getBusProgress, AT_STOP_METERS } from '../src/utils/busRoute';
 import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
 import { decodePath, snapToPath } from '../src/utils/routePath';
@@ -515,6 +515,9 @@ export default function MapScreen() {
   const headings = useRef<{ [id: string]: number }>({});
   // Server timestamp of each bus's last position, to time the glide to the next one.
   const lastUpdateMs = useRef<{ [id: string]: number }>({});
+  // Buses whose heading came from real movement (not the 0° placeholder) —
+  // only those headings are trusted to tell direction on shared roads.
+  const headingKnown = useRef<Set<string>>(new Set());
   const fullRouteRef = useRef<{ latitude: number; longitude: number }[]>([]);
   const didInitialFitRef = useRef(false);
 
@@ -1035,7 +1038,9 @@ export default function MapScreen() {
           // Parked buses keep their heading (they used to snap to north), and
           // turns are eased over a couple of updates instead of snapping.
           const prevHeading = headings.current[id] ?? null;
-          const heading = nextHeading(prevHeading, prev ?? null, { latitude, longitude }) ?? 0;
+          const computed = nextHeading(prevHeading, prev ?? null, { latitude, longitude });
+          if (computed !== null) headingKnown.current.add(id);
+          const heading = computed ?? 0;
           if (!anyBusMoved && prev && (positionChanged || heading !== prevHeading)) anyBusMoved = true;
           headings.current[id] = heading;
 
@@ -1126,6 +1131,9 @@ export default function MapScreen() {
         });
         Object.keys(headings.current).forEach((key) => {
           if (!recentIds.includes(key)) delete headings.current[key];
+        });
+        headingKnown.current.forEach((key) => {
+          if (!recentIds.includes(key)) headingKnown.current.delete(key);
         });
         Object.keys(lastUpdateMs.current).forEach((key) => {
           if (!recentIds.includes(key)) delete lastUpdateMs.current[key];
@@ -1528,7 +1536,14 @@ export default function MapScreen() {
           .map((id) => stops.find((st) => st.id === id))
           .filter((st): st is NonNullable<typeof st> => !!st)
       : [];
-    const progress = route ? getBusRouteProgress(routeStops, selectedLoc) : null;
+    const progress = route
+      ? getBusProgress(
+          routeStops,
+          routePaths[route.id],
+          selectedLoc,
+          headingKnown.current.has(selectedBusId) ? selectedLoc.heading : null,
+        )
+      : null;
 
     // No route (or a 1-stop route): don't guess an order, just say where it is.
     let nearStop: string | null = null;
@@ -1550,7 +1565,7 @@ export default function MapScreen() {
       runsUntil: getRunsUntilText(route, new Date(), org?.timezone),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBusId, selectedLoc?.latitude, selectedLoc?.longitude, busRouteIds, org?.routes, org?.stops, org?.timezone]);
+  }, [selectedBusId, selectedLoc?.latitude, selectedLoc?.longitude, selectedLoc?.heading, busRouteIds, routePaths, org?.routes, org?.stops, org?.timezone]);
 
   // "Next bus is 2 stops away" for the stop card: the closest live bus, on
   // any route serving the stop, counted in stops along that route's loop.
@@ -1567,7 +1582,13 @@ export default function MapScreen() {
         .filter((st): st is NonNullable<typeof st> => !!st);
       const targetIdx = routeStops.findIndex((st) => st.id === stopId);
       if (targetIdx < 0) continue;
-      const progress = getBusRouteProgress(routeStops, loc, 1);
+      const progress = getBusProgress(
+        routeStops,
+        routePaths[route.id],
+        loc,
+        headingKnown.current.has(busId) ? loc.heading : null,
+        1,
+      );
       if (!progress) continue;
       const n = routeStops.length;
       const atIdx = progress.atStop ? routeStops.findIndex((st) => st.name === progress.atStop) : -1;

@@ -24,7 +24,8 @@ import {
   getNextOpenText,
   getTodayScheduleText,
 } from '../src/utils/scheduleUtils';
-import { getBusRouteProgress } from '../src/utils/busRoute';
+import { getBusProgress } from '../src/utils/busRoute';
+import { nextHeading } from '../src/utils/busMotion';
 import { decodePath } from '../src/utils/routePath';
 import { STALE_WINDOW_SECONDS } from '../src/constants/stops';
 import type { Route, Stop, WeekSchedule } from '../src/org/OrgContext';
@@ -55,12 +56,15 @@ function fmt12h(hhmm: string): string {
   return m === 0 ? `${hour} ${ampm}` : `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-type LiveBus = { id: string; latitude: number; longitude: number; routeId: string | null; onBreak: boolean };
+type LiveBus = { id: string; latitude: number; longitude: number; routeId: string | null; onBreak: boolean; heading: number | null };
 
 // Live buses for the org, only while this tab is on screen. Same freshness
 // rule as the rider map: online and updated within STALE_WINDOW_SECONDS.
 function useLiveBuses(orgId: string | null | undefined, enabled: boolean): LiveBus[] {
   const [buses, setBuses] = useState<LiveBus[]>([]);
+  // Direction of travel per bus, from successive positions — tells which way
+  // a bus is going where the route uses the same road twice.
+  const track = useRef<Record<string, { lat: number; lng: number; heading: number | null }>>({});
   useEffect(() => {
     if (!orgId || !enabled) return;
     return onSnapshot(
@@ -73,12 +77,20 @@ function useLiveBuses(orgId: string | null | undefined, enabled: boolean): LiveB
           const ms = data?.updatedAt?.toMillis?.() ?? data?.lastSeen?.toMillis?.() ?? 0;
           if (data?.online !== true || (now - ms) / 1000 > STALE_WINDOW_SECONDS) return;
           if (typeof data.latitude !== 'number' || typeof data.longitude !== 'number') return;
+          const prev = track.current[d.id];
+          const pos = { latitude: data.latitude, longitude: data.longitude };
+          const heading = nextHeading(
+            prev?.heading ?? null,
+            prev ? { latitude: prev.lat, longitude: prev.lng } : null,
+            pos,
+          );
+          track.current[d.id] = { lat: pos.latitude, lng: pos.longitude, heading };
           live.push({
             id: d.id,
-            latitude: data.latitude,
-            longitude: data.longitude,
+            ...pos,
             routeId: typeof data.routeId === 'string' ? data.routeId : null,
             onBreak: data.onBreak === true,
+            heading,
           });
         });
         setBuses(live);
@@ -125,6 +137,8 @@ export default function RoutesScreen() {
     [selectedRoute?.stopIds, allStops],
   );
 
+  const roadPath = useMemo(() => decodePath(selectedRoute?.path), [selectedRoute?.path]);
+
   // Where each bus on this route is: at a stop, or heading to one.
   const busMarks = useMemo(() => {
     const at: Record<number, number> = {};
@@ -133,7 +147,7 @@ export default function RoutesScreen() {
     const onRoute = liveBuses.filter((b) => selectedRoute && b.routeId === selectedRoute.id);
     onRoute.forEach((b) => {
       if (b.onBreak) { onBreak += 1; return; }
-      const p = getBusRouteProgress(routeStops, b, 1);
+      const p = getBusProgress(routeStops, roadPath, b, b.heading, 1);
       if (!p) return;
       if (p.atStop) {
         const idx = routeStops.findIndex((s) => s.name === p.atStop);
@@ -144,9 +158,8 @@ export default function RoutesScreen() {
       }
     });
     return { at, toward, total: onRoute.length, onBreak };
-  }, [liveBuses, selectedRoute, routeStops]);
+  }, [liveBuses, selectedRoute, routeStops, roadPath]);
 
-  const roadPath = useMemo(() => decodePath(selectedRoute?.path), [selectedRoute?.path]);
 
   const mapRef = useRef<MapView>(null);
   const fitMap = useCallback(() => {
