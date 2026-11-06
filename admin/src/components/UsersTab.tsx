@@ -86,7 +86,7 @@ function EmailSearch({ onJumpToOrg }: { onJumpToOrg: (orgId: string) => void }) 
   );
 }
 
-function MemberRow({ orgId, member, onChanged }: { orgId: string; member: OrgMember; onChanged: () => void }) {
+export function MemberRow({ orgId, member, onChanged }: { orgId: string; member: OrgMember; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
