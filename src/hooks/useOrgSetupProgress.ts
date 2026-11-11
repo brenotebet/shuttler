@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebaseconfig';
 import { useOrg } from '../org/OrgContext';
+import { isTrialExpired } from '../constants/planLimits';
 import { SHUTTLER_API_URL } from '../../config';
 
 export type OrgSetupTabKey = 'profile' | 'auth' | 'stops' | 'users' | 'ops' | 'billing';
@@ -64,8 +65,9 @@ export function useOrgSetupProgress() {
   const hasStops = (org?.stops?.length ?? 0) > 0;
   const hasRoutes = (org?.routes?.length ?? 0) > 0;
   const billingStatus = org?.subscriptionStatus;
-  const billingDone = billingStatus === 'trialing' || billingStatus === 'active';
-  const billingNeedsAttention = billingStatus === 'past_due' || billingStatus === 'unpaid' || billingStatus === 'canceled';
+  const trialExpired = isTrialExpired(billingStatus, org?.trialEndsAtMs);
+  const billingDone = (billingStatus === 'trialing' && !trialExpired) || billingStatus === 'active';
+  const billingNeedsAttention = billingStatus === 'past_due' || billingStatus === 'unpaid' || billingStatus === 'canceled' || trialExpired;
 
   // The three things every org actually has to do at least once. Stops and
   // routes are merged into one step — both live on the same "Stops" tab, so

@@ -100,6 +100,9 @@ export type OrgConfig = {
   orgType?: string; // see src/constants/orgTypes.ts — drives role options (parents only for K-12)
   subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid';
   subscriptionPlan?: string;
+  // End of the free trial (epoch ms) — stored as millis so it survives the
+  // JSON org cache. Undefined/null = no trial end set (never expires).
+  trialEndsAtMs?: number | null;
   // Negotiated per-org limits (Enterprise deals) — written by the Stripe webhook
   // from subscription metadata; takes precedence over the plan-tier defaults.
   limitOverrides?: { maxVehicles?: number; maxRoutes?: number; maxStops?: number };
@@ -274,6 +277,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               // Subscription
               subscriptionStatus: data.subscriptionStatus ?? prev.subscriptionStatus,
               subscriptionPlan: data.subscriptionPlan ?? prev.subscriptionPlan,
+              trialEndsAtMs: data.trialEndsAt?.toMillis?.() ?? null,
               limitOverrides: data.limitOverrides ?? undefined,
               dataAddonActive: data.dataAddonActive ?? prev.dataAddonActive,
               approved: data.approved ?? prev.approved,

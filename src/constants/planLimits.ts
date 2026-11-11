@@ -33,6 +33,22 @@ function applyOverride(base: number, override: unknown): number {
     : base;
 }
 
+/**
+ * Whether the org's free trial has run out. Only 'trialing' can expire, and an
+ * org with no trialEndsAt never does. Mirrors isTrialExpired in
+ * backend/billingPolicy.ts and trialExpired in firestore.rules — keep in sync.
+ */
+export function isTrialExpired(
+  status?: string | null,
+  trialEndsAtMs?: number | null,
+  nowMs: number = Date.now(),
+): boolean {
+  return status === 'trialing'
+    && typeof trialEndsAtMs === 'number'
+    && Number.isFinite(trialEndsAtMs)
+    && trialEndsAtMs <= nowMs;
+}
+
 /** Returns limits for the current org, falling back to trial when not yet subscribed. */
 export function getPlanLimits(
   plan?: string | null,
