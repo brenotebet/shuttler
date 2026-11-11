@@ -4,9 +4,12 @@
 
 import {
   BUS_STALE_MS,
+  addonsToEndWithPlan,
+  addonsToResumeWithPlan,
   dataAddonAction,
   holdsVehicleSlot,
   isLiveSubscription,
+  isTrialExpired,
   mainSubscriptionAction,
   planForSubscription,
   VEHICLE_CLAIM_MS,
@@ -88,6 +91,42 @@ describe('dataAddonAction', () => {
   });
 });
 
+describe('add-on lifecycle with the main plan', () => {
+  const addon = (id: string, status: string, cancel_at_period_end = false, extra: Record<string, string> = {}) =>
+    ({ id, status, cancel_at_period_end, metadata: { orgId: 'o1', type: 'data_addon', ...extra } });
+  const plan = (id: string, status: string) =>
+    ({ id, status, cancel_at_period_end: false, metadata: { orgId: 'o1', plan: 'campus' } });
+
+  it('ends every live add-on when the plan is canceled', () => {
+    expect(addonsToEndWithPlan([
+      plan('sub_plan', 'canceled'),
+      addon('sub_a', 'active'),
+      addon('sub_b', 'past_due'),
+    ])).toEqual(['sub_a', 'sub_b']);
+  });
+
+  it('leaves add-ons that already ended or are already ending', () => {
+    expect(addonsToEndWithPlan([
+      addon('sub_done', 'canceled'),
+      addon('sub_never', 'incomplete_expired'),
+      addon('sub_ending', 'active', true),
+    ])).toEqual([]);
+  });
+
+  it('never touches the main plan subscription', () => {
+    expect(addonsToEndWithPlan([plan('sub_plan', 'active')])).toEqual([]);
+  });
+
+  it('resumes only add-ons that ended because the plan did', () => {
+    expect(addonsToResumeWithPlan([
+      addon('sub_ours', 'active', true, { endedWithPlan: 'true' }),
+      addon('sub_customer', 'active', true),
+      addon('sub_running', 'active', false, { endedWithPlan: 'true' }),
+      addon('sub_gone', 'canceled', true, { endedWithPlan: 'true' }),
+    ])).toEqual(['sub_ours']);
+  });
+});
+
 describe('isLiveSubscription', () => {
   it('treats active, trialing and past-due subscriptions as live', () => {
     expect(isLiveSubscription('active')).toBe(true);
@@ -161,5 +200,30 @@ describe('holdsVehicleSlot', () => {
   it('holds a fresh claim until it expires', () => {
     expect(holdsVehicleSlot({ capClaimAtMs: NOW - 1_000 }, NOW)).toBe(true);
     expect(holdsVehicleSlot({ capClaimAtMs: NOW - VEHICLE_CLAIM_MS }, NOW)).toBe(false);
+  });
+});
+
+describe('isTrialExpired', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('expires a trial at or after its end', () => {
+    expect(isTrialExpired('trialing', NOW - 1, NOW)).toBe(true);
+    expect(isTrialExpired('trialing', NOW, NOW)).toBe(true);
+  });
+
+  it('keeps a trial running before its end', () => {
+    expect(isTrialExpired('trialing', NOW + 1, NOW)).toBe(false);
+  });
+
+  it('never expires a trial with no end date', () => {
+    expect(isTrialExpired('trialing', null, NOW)).toBe(false);
+    expect(isTrialExpired('trialing', undefined, NOW)).toBe(false);
+    expect(isTrialExpired('trialing', NaN, NOW)).toBe(false);
+  });
+
+  it('only applies to trialing orgs', () => {
+    for (const status of ['active', 'past_due', 'canceled', 'unpaid', null]) {
+      expect(isTrialExpired(status, NOW - 1, NOW)).toBe(false);
+    }
   });
 });

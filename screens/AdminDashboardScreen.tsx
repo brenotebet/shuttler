@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
+import { isTrialExpired } from '../src/constants/planLimits';
 import { useAuth } from '../src/auth/AuthProvider';
 import {
   CARD_BACKGROUND,
@@ -851,6 +852,17 @@ export default function AdminDashboardScreen() {
           <Icon name="warning" size={16} color="#7c2d12" />
           <Text style={styles.pastDueBannerText}>Payment failed — subscription past due.</Text>
           <Text style={styles.pastDueBannerLink}>Fix billing →</Text>
+        </TouchableOpacity>
+      )}
+      {isTrialExpired(org?.subscriptionStatus, org?.trialEndsAtMs) && (
+        <TouchableOpacity
+          style={styles.pastDueBanner}
+          onPress={() => navigation.navigate('AdminOrgSetup')}
+          activeOpacity={0.8}
+        >
+          <Icon name="warning" size={16} color="#7c2d12" />
+          <Text style={styles.pastDueBannerText}>Free trial ended — buses and riders are paused.</Text>
+          <Text style={styles.pastDueBannerLink}>Choose a plan →</Text>
         </TouchableOpacity>
       )}
       <ScrollView

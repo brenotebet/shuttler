@@ -32,11 +32,16 @@ import {
 } from './ai';
 import { containsProfanity } from './profanity';
 import {
+  ADDON_ENDED_WITH_PLAN,
+  addonsToEndWithPlan,
+  addonsToResumeWithPlan,
   dataAddonAction,
   holdsVehicleSlot,
   isLiveSubscription,
+  isTrialExpired,
   mainSubscriptionAction,
   planForSubscription,
+  TRIAL_DAYS,
   vehicleCap,
 } from './billingPolicy';
 import { buildOrgReport, parseReportRange, type ReportBoarding, type ReportFeedback, type ReportRequest } from './orgReport';
@@ -302,6 +307,9 @@ async function loadOrgSamlConfig(orgSlug: string): Promise<OrgSamlConfig> {
 
   if (!['trialing', 'active'].includes(org.subscriptionStatus)) {
     throw Object.assign(new Error('Org subscription is not active'), { status: 403 });
+  }
+  if (isTrialExpired(org.subscriptionStatus, org.trialEndsAt?.toMillis?.())) {
+    throw Object.assign(new Error("This organization's free trial has ended"), { status: 403 });
   }
 
   if (!org.samlConfig) {
@@ -1111,7 +1119,7 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
       mapCenter: { latitude: 0, longitude: 0 },
       subscriptionStatus: 'trialing',
       subscriptionPlan: 'starter',
-      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000),
       adminUids: [],
       approved: false,
       reviewStatus: 'pending',
@@ -1215,6 +1223,9 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     if (!['trialing', 'active'].includes(org.subscriptionStatus)) {
       return res.status(403).json({ error: 'Org subscription is not active' });
+    }
+    if (isTrialExpired(org.subscriptionStatus, org.trialEndsAt?.toMillis?.())) {
+      return res.status(403).json({ error: "This organization's free trial has ended." });
     }
 
     // Phone-auth orgs (K-12) use SMS OTP for parents — email registration is
@@ -2386,8 +2397,11 @@ async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, del
 
   const dataAddonActive = org.dataAddonActive ?? false;
   if (action === 'cancel') {
-    // Preserve data access for an org that still pays for the add-on —
-    // the add-on is a separate subscription and isn't canceled here.
+    // The add-on is a separate subscription: end it with the plan, at the end
+    // of the period already paid for. Until then the org keeps data access
+    // (entitlements below); its deletion event turns the add-on off. Done
+    // first so a Stripe failure throws and the webhook is retried.
+    await endAddonsWithPlan(sub);
     await orgRef.update({
       subscriptionStatus: 'canceled',
       entitlements: computeEntitlements('starter', dataAddonActive),
@@ -2396,6 +2410,9 @@ async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, del
     });
     return;
   }
+
+  // Resubscribed before an add-on ended with the old plan ran out → keep it.
+  if (['active', 'trialing'].includes(sub.status)) await resumeAddonsWithPlan(sub);
 
   // From the price — a plan switched in the customer portal keeps its old metadata.plan.
   const updatedPlan = planForSubscription(sub.items.data.map((i) => i.price.id), PLAN_PRICE_IDS, sub.metadata?.plan);
@@ -2417,6 +2434,37 @@ async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, del
       : null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+}
+
+// The customer's subscriptions, for finding its data add-on(s). Listed from
+// Stripe rather than taken from org.dataAddonSubscriptionId so an add-on
+// bought before ids were recorded is found too.
+async function customerSubscriptions(sub: Stripe.Subscription): Promise<Stripe.Subscription[]> {
+  const customer = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+  const list = await stripe.subscriptions.list({ customer, status: 'all', limit: 100 });
+  return list.data;
+}
+
+async function endAddonsWithPlan(planSub: Stripe.Subscription): Promise<void> {
+  for (const id of addonsToEndWithPlan(await customerSubscriptions(planSub))) {
+    // Stripe merges metadata, so orgId/type stay on the subscription.
+    await stripe.subscriptions.update(id, {
+      cancel_at_period_end: true,
+      metadata: { [ADDON_ENDED_WITH_PLAN]: 'true' },
+    });
+    console.log(`[webhook] data add-on ${id} set to end with canceled plan ${planSub.id}`);
+  }
+}
+
+async function resumeAddonsWithPlan(planSub: Stripe.Subscription): Promise<void> {
+  for (const id of addonsToResumeWithPlan(await customerSubscriptions(planSub))) {
+    // An empty string removes the metadata key.
+    await stripe.subscriptions.update(id, {
+      cancel_at_period_end: false,
+      metadata: { [ADDON_ENDED_WITH_PLAN]: '' },
+    });
+    console.log(`[webhook] data add-on ${id} resumed with plan ${planSub.id}`);
+  }
 }
 
 // Turns the data add-on on or off from its subscription's current state —
@@ -2447,15 +2495,26 @@ async function syncDataAddon(orgId: string, sub: Stripe.Subscription, deleted: b
   console.log(`[webhook] data_addon ${active ? 'activated' : 'deactivated'} for org ${orgId} (sub ${sub.id})`);
 }
 
+// The free trial starts when the org is approved, not when it applied — so a
+// slow review doesn't eat into it. Only a still-trialing org is touched; one
+// that already subscribed (or was comped) keeps its billing fields.
+function trialStartOnApproval(org: admin.firestore.DocumentData | undefined): { trialEndsAt?: Date } {
+  // Already approved → re-approving must not hand out a fresh trial.
+  if (org?.subscriptionStatus !== 'trialing' || org?.approved === true) return {};
+  return { trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000) };
+}
+
 // ---- Internal: approve org application ----
 
 app.post('/internal/orgs/:orgId/approve', requireInternal, async (req: Request, res: Response) => {
   const { orgId } = req.params as { orgId: string };
   try {
+    const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
     const batch = admin.firestore().batch();
     batch.update(admin.firestore().collection('orgs').doc(orgId), {
       approved: true,
       reviewStatus: 'approved',
+      ...trialStartOnApproval(orgSnap.data()),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
@@ -2624,6 +2683,7 @@ app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, asyn
       adminUids: admin.firestore.FieldValue.arrayUnion(authUser.uid),
       ownerUid: authUser.uid,
       founderEmail: admin.firestore.FieldValue.delete(),
+      ...trialStartOnApproval(orgSnap.data()),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
@@ -3388,7 +3448,7 @@ app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) 
       mapCenter: { latitude: 0, longitude: 0 },
       subscriptionStatus: 'trialing',
       subscriptionPlan: 'starter',
-      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000),
       adminUids: [],
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
