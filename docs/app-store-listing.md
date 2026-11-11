@@ -90,7 +90,7 @@ FOR ADMINISTRATORS
 PRIVACY
 Rider location is only used while the app is open, to show nearby stops and help you request a pickup. Drivers' location is shared only during an active shift. We never sell your data.
 
-Shuttler requires an account with a participating organization. Riders never pay: your school or organization covers the service, and there are no in-app purchases. If your school or organization doesn't use Shuttler yet, ask your transportation office to get in touch at shuttler.net.
+Shuttler requires an account with a participating organization. Check whether yours is on Shuttler at shuttler.net. Riders never pay: your school or organization covers the service, and there are no in-app purchases. If yours isn't on Shuttler yet, you can let us know there too.
 
 Privacy Policy: https://shuttler.net/privacy
 Terms of Use: https://shuttler.net/terms
