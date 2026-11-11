@@ -31,7 +31,15 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
-import { dataAddonAction, isLiveSubscription, mainSubscriptionAction, planForSubscription } from './billingPolicy';
+import {
+  ADDON_ENDED_WITH_PLAN,
+  addonsToEndWithPlan,
+  addonsToResumeWithPlan,
+  dataAddonAction,
+  isLiveSubscription,
+  mainSubscriptionAction,
+  planForSubscription,
+} from './billingPolicy';
 import { buildOrgReport, parseReportRange, type ReportBoarding, type ReportFeedback, type ReportRequest } from './orgReport';
 import {
   carriedOverProfile,
@@ -2379,8 +2387,11 @@ async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, del
 
   const dataAddonActive = org.dataAddonActive ?? false;
   if (action === 'cancel') {
-    // Preserve data access for an org that still pays for the add-on —
-    // the add-on is a separate subscription and isn't canceled here.
+    // The add-on is a separate subscription: end it with the plan, at the end
+    // of the period already paid for. Until then the org keeps data access
+    // (entitlements below); its deletion event turns the add-on off. Done
+    // first so a Stripe failure throws and the webhook is retried.
+    await endAddonsWithPlan(sub);
     await orgRef.update({
       subscriptionStatus: 'canceled',
       entitlements: computeEntitlements('starter', dataAddonActive),
@@ -2389,6 +2400,9 @@ async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, del
     });
     return;
   }
+
+  // Resubscribed before an add-on ended with the old plan ran out → keep it.
+  if (['active', 'trialing'].includes(sub.status)) await resumeAddonsWithPlan(sub);
 
   // From the price — a plan switched in the customer portal keeps its old metadata.plan.
   const updatedPlan = planForSubscription(sub.items.data.map((i) => i.price.id), PLAN_PRICE_IDS, sub.metadata?.plan);
@@ -2410,6 +2424,37 @@ async function syncMainSubscription(orgId: string, sub: Stripe.Subscription, del
       : null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+}
+
+// The customer's subscriptions, for finding its data add-on(s). Listed from
+// Stripe rather than taken from org.dataAddonSubscriptionId so an add-on
+// bought before ids were recorded is found too.
+async function customerSubscriptions(sub: Stripe.Subscription): Promise<Stripe.Subscription[]> {
+  const customer = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+  const list = await stripe.subscriptions.list({ customer, status: 'all', limit: 100 });
+  return list.data;
+}
+
+async function endAddonsWithPlan(planSub: Stripe.Subscription): Promise<void> {
+  for (const id of addonsToEndWithPlan(await customerSubscriptions(planSub))) {
+    // Stripe merges metadata, so orgId/type stay on the subscription.
+    await stripe.subscriptions.update(id, {
+      cancel_at_period_end: true,
+      metadata: { [ADDON_ENDED_WITH_PLAN]: 'true' },
+    });
+    console.log(`[webhook] data add-on ${id} set to end with canceled plan ${planSub.id}`);
+  }
+}
+
+async function resumeAddonsWithPlan(planSub: Stripe.Subscription): Promise<void> {
+  for (const id of addonsToResumeWithPlan(await customerSubscriptions(planSub))) {
+    // An empty string removes the metadata key.
+    await stripe.subscriptions.update(id, {
+      cancel_at_period_end: false,
+      metadata: { [ADDON_ENDED_WITH_PLAN]: '' },
+    });
+    console.log(`[webhook] data add-on ${id} resumed with plan ${planSub.id}`);
+  }
 }
 
 // Turns the data add-on on or off from its subscription's current state —

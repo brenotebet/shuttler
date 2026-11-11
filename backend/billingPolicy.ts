@@ -61,6 +61,42 @@ export function dataAddonAction(
   return 'ignore';
 }
 
+// The data add-on is its own subscription, so canceling the main plan doesn't
+// stop it — the org would be locked out yet still billed for analytics. When
+// the plan ends, each live add-on is set to cancel at the end of the period
+// already paid for (no refund to work out, no surprise cutoff), and tagged so
+// that resubscribing to a plan before then can undo exactly that — never an
+// add-on the customer canceled on their own.
+export const ADDON_ENDED_WITH_PLAN = 'endedWithPlan';
+
+export type AddonSubscriptionState = {
+  id: string;
+  status: string;
+  cancel_at_period_end: boolean;
+  metadata?: Record<string, string> | null;
+};
+
+function isAddon(sub: AddonSubscriptionState): boolean {
+  return sub.metadata?.type === 'data_addon';
+}
+
+/** Add-on subscriptions to end along with a canceled main plan. */
+export function addonsToEndWithPlan(subs: AddonSubscriptionState[]): string[] {
+  return subs
+    .filter((s) => isAddon(s) && isLiveSubscription(s.status) && !s.cancel_at_period_end)
+    .map((s) => s.id);
+}
+
+/** Add-on subscriptions ended with the plan that a new live plan should keep. */
+export function addonsToResumeWithPlan(subs: AddonSubscriptionState[]): string[] {
+  return subs
+    .filter((s) => isAddon(s)
+      && isLiveSubscription(s.status)
+      && s.cancel_at_period_end
+      && s.metadata?.[ADDON_ENDED_WITH_PLAN] === 'true')
+    .map((s) => s.id);
+}
+
 /** Whether an org with a subscription in this state should change plan on it
  *  rather than start a new checkout (which would create a second, separately
  *  billed subscription). */

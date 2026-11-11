@@ -3,6 +3,8 @@
 // (POST /stripe/webhook).
 
 import {
+  addonsToEndWithPlan,
+  addonsToResumeWithPlan,
   dataAddonAction,
   isLiveSubscription,
   mainSubscriptionAction,
@@ -80,6 +82,42 @@ describe('dataAddonAction', () => {
 
   it('ignores an old add-on subscription ending', () => {
     expect(dataAddonAction('sub_Y', { id: 'sub_X', status: 'canceled' }, true)).toBe('ignore');
+  });
+});
+
+describe('add-on lifecycle with the main plan', () => {
+  const addon = (id: string, status: string, cancel_at_period_end = false, extra: Record<string, string> = {}) =>
+    ({ id, status, cancel_at_period_end, metadata: { orgId: 'o1', type: 'data_addon', ...extra } });
+  const plan = (id: string, status: string) =>
+    ({ id, status, cancel_at_period_end: false, metadata: { orgId: 'o1', plan: 'campus' } });
+
+  it('ends every live add-on when the plan is canceled', () => {
+    expect(addonsToEndWithPlan([
+      plan('sub_plan', 'canceled'),
+      addon('sub_a', 'active'),
+      addon('sub_b', 'past_due'),
+    ])).toEqual(['sub_a', 'sub_b']);
+  });
+
+  it('leaves add-ons that already ended or are already ending', () => {
+    expect(addonsToEndWithPlan([
+      addon('sub_done', 'canceled'),
+      addon('sub_never', 'incomplete_expired'),
+      addon('sub_ending', 'active', true),
+    ])).toEqual([]);
+  });
+
+  it('never touches the main plan subscription', () => {
+    expect(addonsToEndWithPlan([plan('sub_plan', 'active')])).toEqual([]);
+  });
+
+  it('resumes only add-ons that ended because the plan did', () => {
+    expect(addonsToResumeWithPlan([
+      addon('sub_ours', 'active', true, { endedWithPlan: 'true' }),
+      addon('sub_customer', 'active', true),
+      addon('sub_running', 'active', false, { endedWithPlan: 'true' }),
+      addon('sub_gone', 'canceled', true, { endedWithPlan: 'true' }),
+    ])).toEqual(['sub_ours']);
   });
 });
 
