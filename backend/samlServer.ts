@@ -32,6 +32,7 @@ import {
 } from './ai';
 import { containsProfanity } from './profanity';
 import { dataAddonAction, isLiveSubscription, mainSubscriptionAction, planForSubscription } from './billingPolicy';
+import { buildOrgReport, parseReportRange, type ReportBoarding, type ReportFeedback, type ReportRequest } from './orgReport';
 import {
   carriedOverProfile,
   emailDomain,
@@ -2703,6 +2704,86 @@ async function writeAdminAudit(req: Request, action: string, orgId: string, deta
     console.error('[super-admin] audit log write failed:', e);
   }
 }
+
+/** GET /super-admin/orgs/:orgId/report?from=YYYY-MM-DD&to=YYYY-MM-DD&tz=America/Chicago
+ *  Date-range activity summary for one org (for check-ins with its admins).
+ *  Aggregates only — no rider identifiers or coordinates leave the server. */
+const REPORT_DOC_CAP = 10_000;
+app.get('/super-admin/orgs/:orgId/report', requireSuperAdmin, async (req: Request, res: Response) => {
+  const { orgId } = req.params as { orgId: string };
+  const range = parseReportRange(req.query.from, req.query.to, req.query.tz);
+  if (!range.ok) return res.status(400).json({ error: range.error });
+  try {
+    const db = admin.firestore();
+    const orgRef = db.collection('orgs').doc(orgId);
+    const orgDoc = await orgRef.get();
+    if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
+
+    const start = admin.firestore.Timestamp.fromMillis(range.startMs);
+    const end = admin.firestore.Timestamp.fromMillis(range.endMs);
+    const inRange = (col: string) =>
+      orgRef.collection(col).where('createdAt', '>=', start).where('createdAt', '<', end).limit(REPORT_DOC_CAP);
+
+    const [reqSnap, boardSnap, fbSnap] = await Promise.all([
+      inRange('stopRequests')
+        .select('createdAt', 'arrivedAt', 'completedAt', 'status', 'cancelledReason', 'stop', 'driverUid', 'driverId', 'studentUid')
+        .get(),
+      inRange('boardingCounts').select('createdAt', 'count', 'stopName', 'driverUid').get(),
+      inRange('feedback').select('createdAt', 'question', 'questionKey', 'rating', 'answer').get(),
+    ]);
+    const ms = (t: any): number | null => t?.toMillis?.() ?? null;
+
+    const requests: ReportRequest[] = reqSnap.docs.map((d) => {
+      const x = d.data();
+      return {
+        createdAtMs: ms(x.createdAt) ?? range.startMs,
+        arrivedAtMs: ms(x.arrivedAt),
+        completedAtMs: ms(x.completedAt),
+        status: String(x.status ?? ''),
+        cancelledReason: x.cancelledReason ?? null,
+        stopName: x.stop?.name ?? 'Unknown stop',
+        driverUid: x.driverUid ?? x.driverId ?? null,
+        riderUid: x.studentUid ?? null,
+      };
+    });
+    const boardings: ReportBoarding[] = boardSnap.docs.map((d) => {
+      const x = d.data();
+      return {
+        createdAtMs: ms(x.createdAt) ?? range.startMs,
+        count: typeof x.count === 'number' ? x.count : 0,
+        stopName: x.stopName ?? 'Unknown stop',
+        driverUid: x.driverUid ?? null,
+      };
+    });
+    const feedback: ReportFeedback[] = fbSnap.docs.map((d) => {
+      const x = d.data();
+      return {
+        createdAtMs: ms(x.createdAt) ?? range.startMs,
+        question: x.question ?? x.questionKey ?? 'Feedback',
+        rating: typeof x.rating === 'number' ? x.rating : null,
+        answer: typeof x.answer === 'string' ? x.answer : null,
+      };
+    });
+
+    const driverUids = [...new Set([...requests.map((r) => r.driverUid), ...boardings.map((b) => b.driverUid)].filter(Boolean))] as string[];
+    const driverDocs = driverUids.length
+      ? await db.getAll(...driverUids.map((uid) => orgRef.collection('users').doc(uid)))
+      : [];
+    const driverNames = new Map(driverDocs.map((d) => [d.id, (d.data()?.displayName || d.data()?.email || 'Former driver') as string]));
+
+    return res.json(buildOrgReport({
+      range,
+      requests,
+      boardings,
+      feedback,
+      driverNames,
+      truncated: [reqSnap, boardSnap, fbSnap].some((s) => s.size >= REPORT_DOC_CAP),
+    }));
+  } catch (e) {
+    console.error('[super-admin/org-report] error:', e);
+    return res.status(500).json({ error: 'Failed to build report' });
+  }
+});
 
 // Set or clear negotiated limit overrides. NOTE: for orgs with an active
 // subscription, Stripe subscription metadata is the durable source — the

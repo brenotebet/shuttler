@@ -8,8 +8,9 @@ import {
   type OrgSummary,
 } from '../api';
 import { MemberRow } from './UsersTab';
+import OrgReport from './OrgReport';
 
-type DetailTab = 'overview' | 'members' | 'settings';
+type DetailTab = 'overview' | 'report' | 'members' | 'settings';
 
 const LIVE_REFRESH_MS = 30_000;
 
@@ -310,7 +311,7 @@ function Members({ org }: { org: OrgSummary }) {
   );
 }
 
-/** Drill-in panel for one org: Overview (live status, usage, health), Members, Settings. */
+/** Drill-in panel for one org: Overview (live status, usage, health), Report (date range), Members, Settings. */
 export default function OrgDetail({ org, settings }: { org: OrgSummary; settings: ReactNode }) {
   const [tab, setTab] = useState<DetailTab>('overview');
   return (
@@ -318,6 +319,7 @@ export default function OrgDetail({ org, settings }: { org: OrgSummary; settings
       <nav className="flex gap-1 border-b border-gray-200 mb-4">
         {([
           ['overview', 'Overview'],
+          ['report', 'Report'],
           ['members', 'Members'],
           ['settings', 'Settings'],
         ] as [DetailTab, string][]).map(([k, label]) => (
@@ -333,6 +335,7 @@ export default function OrgDetail({ org, settings }: { org: OrgSummary; settings
         ))}
       </nav>
       {tab === 'overview' && <Overview org={org} />}
+      {tab === 'report' && <OrgReport org={org} />}
       {tab === 'members' && <Members org={org} />}
       {tab === 'settings' && settings}
     </div>
