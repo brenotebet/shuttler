@@ -44,7 +44,7 @@ import {
 } from '../src/constants/theme';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
-import { getPlanLimits, planFor, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
+import { getPlanLimits, isTrialExpired, planFor, vehicleLimitText, routeLimitText, stopLimitText } from '../src/constants/planLimits';
 import ScreenContainer from '../components/ScreenContainer';
 import AppButton from '../components/AppButton';
 import BottomSheet from '../components/BottomSheet';
@@ -3434,8 +3434,9 @@ function BillingTab() {
   // which has no subscription yet and must still be able to Subscribe.
   const hasSubscription = isActive || org?.subscriptionStatus === 'past_due';
   const isTrialing = org?.subscriptionStatus === 'trialing' || !org?.subscriptionPlan;
+  const trialExpired = isTrialExpired(org?.subscriptionStatus, org?.trialEndsAtMs);
   const dataUnlocked = org?.entitlements?.dataApi ?? org?.dataAddonActive ?? false;
-  const statusColor = isActive || isTrialing ? '#2e7d32' : DANGER_COLOR;
+  const statusColor = isActive || (isTrialing && !trialExpired) ? '#2e7d32' : DANGER_COLOR;
   const isApproved = org?.approved === true;
 
   const PLANS = [
@@ -3466,7 +3467,7 @@ function BillingTab() {
           </View>
           <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
             <Text style={[styles.statusBadgeText, { color: statusColor }]}>
-              {isTrialing ? 'Trial' : org?.subscriptionStatus ?? '—'}
+              {trialExpired ? 'Trial ended' : isTrialing ? 'Trial' : org?.subscriptionStatus ?? '—'}
             </Text>
           </View>
         </View>

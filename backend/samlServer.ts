@@ -31,7 +31,7 @@ import {
   startMonthlyDigestCron,
 } from './ai';
 import { containsProfanity } from './profanity';
-import { dataAddonAction, isLiveSubscription, mainSubscriptionAction, planForSubscription } from './billingPolicy';
+import { dataAddonAction, isLiveSubscription, isTrialExpired, mainSubscriptionAction, planForSubscription, TRIAL_DAYS } from './billingPolicy';
 import { buildOrgReport, parseReportRange, type ReportBoarding, type ReportFeedback, type ReportRequest } from './orgReport';
 import {
   carriedOverProfile,
@@ -295,6 +295,9 @@ async function loadOrgSamlConfig(orgSlug: string): Promise<OrgSamlConfig> {
 
   if (!['trialing', 'active'].includes(org.subscriptionStatus)) {
     throw Object.assign(new Error('Org subscription is not active'), { status: 403 });
+  }
+  if (isTrialExpired(org.subscriptionStatus, org.trialEndsAt?.toMillis?.())) {
+    throw Object.assign(new Error("This organization's free trial has ended"), { status: 403 });
   }
 
   if (!org.samlConfig) {
@@ -1104,7 +1107,7 @@ app.post('/orgs/create', async (req: Request, res: Response) => {
       mapCenter: { latitude: 0, longitude: 0 },
       subscriptionStatus: 'trialing',
       subscriptionPlan: 'starter',
-      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000),
       adminUids: [],
       approved: false,
       reviewStatus: 'pending',
@@ -1208,6 +1211,9 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
 
     if (!['trialing', 'active'].includes(org.subscriptionStatus)) {
       return res.status(403).json({ error: 'Org subscription is not active' });
+    }
+    if (isTrialExpired(org.subscriptionStatus, org.trialEndsAt?.toMillis?.())) {
+      return res.status(403).json({ error: "This organization's free trial has ended." });
     }
 
     // Phone-auth orgs (K-12) use SMS OTP for parents — email registration is
@@ -2440,15 +2446,26 @@ async function syncDataAddon(orgId: string, sub: Stripe.Subscription, deleted: b
   console.log(`[webhook] data_addon ${active ? 'activated' : 'deactivated'} for org ${orgId} (sub ${sub.id})`);
 }
 
+// The free trial starts when the org is approved, not when it applied — so a
+// slow review doesn't eat into it. Only a still-trialing org is touched; one
+// that already subscribed (or was comped) keeps its billing fields.
+function trialStartOnApproval(org: admin.firestore.DocumentData | undefined): { trialEndsAt?: Date } {
+  // Already approved → re-approving must not hand out a fresh trial.
+  if (org?.subscriptionStatus !== 'trialing' || org?.approved === true) return {};
+  return { trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000) };
+}
+
 // ---- Internal: approve org application ----
 
 app.post('/internal/orgs/:orgId/approve', requireInternal, async (req: Request, res: Response) => {
   const { orgId } = req.params as { orgId: string };
   try {
+    const orgSnap = await admin.firestore().collection('orgs').doc(orgId).get();
     const batch = admin.firestore().batch();
     batch.update(admin.firestore().collection('orgs').doc(orgId), {
       approved: true,
       reviewStatus: 'approved',
+      ...trialStartOnApproval(orgSnap.data()),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
@@ -2617,6 +2634,7 @@ app.post('/super-admin/org-applications/:orgId/approve', requireSuperAdmin, asyn
       adminUids: admin.firestore.FieldValue.arrayUnion(authUser.uid),
       ownerUid: authUser.uid,
       founderEmail: admin.firestore.FieldValue.delete(),
+      ...trialStartOnApproval(orgSnap.data()),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     batch.update(admin.firestore().collection('orgApplications').doc(orgId), {
@@ -3381,7 +3399,7 @@ app.post('/internal/orgs', requireInternal, async (req: Request, res: Response) 
       mapCenter: { latitude: 0, longitude: 0 },
       subscriptionStatus: 'trialing',
       subscriptionPlan: 'starter',
-      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000),
       adminUids: [],
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),

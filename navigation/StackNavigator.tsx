@@ -35,6 +35,7 @@ import AnnouncementsScreen from '../screens/AnnouncementsScreen';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useOrg } from '../src/org/OrgContext';
 import { PRIMARY_COLOR } from '../src/constants/theme';
+import { isTrialExpired } from '../src/constants/planLimits';
 import { ToastContainer } from '../src/components/Toast';
 
 export type RootStackParamList = {
@@ -89,16 +90,18 @@ function LoadingOverlay({ visible }: { visible: boolean }) {
 
 function SubscriptionExpiredScreen() {
   const { org } = useOrg();
+  const trialEnded = org?.subscriptionStatus === 'trialing';
   return (
     <View style={styles.expiredContainer}>
       <Icon name="credit-card-off" size={52} color="#ef4444" style={{ marginBottom: 16 }} />
-      <Text style={styles.expiredTitle}>Subscription Inactive</Text>
+      <Text style={styles.expiredTitle}>{trialEnded ? 'Free Trial Ended' : 'Subscription Inactive'}</Text>
       {org?.name ? (
         <Text style={styles.expiredOrgName}>{org.name}</Text>
       ) : null}
       <Text style={styles.expiredBody}>
-        Your organization's Shuttler subscription is no longer active.
-        Please contact your administrator to renew the plan.
+        {trialEnded
+          ? "Your organization's free trial of Shuttler has ended. Please contact your administrator to choose a plan."
+          : "Your organization's Shuttler subscription is no longer active. Please contact your administrator to renew the plan."}
       </Text>
       <TouchableOpacity style={styles.expiredSignOutBtn} onPress={() => signOut(auth).catch(() => {})}>
         <Icon name="logout" size={16} color={PRIMARY_COLOR} />
@@ -166,7 +169,11 @@ export default function StackNavigator() {
 
     if (org?.reviewStatus === 'rejected') return <RejectedOrgScreen />;
 
-    if (role !== 'admin' && ['canceled', 'unpaid'].includes(org?.subscriptionStatus ?? '')) {
+    // Admins stay in so they can subscribe from the Billing tab.
+    if (role !== 'admin' && (
+      ['canceled', 'unpaid'].includes(org?.subscriptionStatus ?? '')
+      || isTrialExpired(org?.subscriptionStatus, org?.trialEndsAtMs)
+    )) {
       return <SubscriptionExpiredScreen />;
     }
 

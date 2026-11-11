@@ -2,7 +2,7 @@
 // Tests for plan limit resolution, including per-org Enterprise overrides
 // stamped on the org doc by the Stripe webhook (limitOverrides).
 
-import { getPlanLimits, PLAN_LIMITS } from '../src/constants/planLimits';
+import { getPlanLimits, isTrialExpired, PLAN_LIMITS } from '../src/constants/planLimits';
 
 describe('getPlanLimits', () => {
   it('returns tier defaults for active plans', () => {
@@ -54,5 +54,20 @@ describe('getPlanLimits', () => {
   it('treats missing overrides object as tier defaults', () => {
     expect(getPlanLimits('enterprise', 'active', null)).toEqual(PLAN_LIMITS.enterprise);
     expect(getPlanLimits('enterprise', 'active', {})).toEqual(PLAN_LIMITS.enterprise);
+  });
+});
+
+// Mirrors backend/billingPolicy.ts isTrialExpired — same cases, kept in sync.
+describe('isTrialExpired', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('expires a trialing org at or after its end date', () => {
+    expect(isTrialExpired('trialing', NOW, NOW)).toBe(true);
+    expect(isTrialExpired('trialing', NOW + 1, NOW)).toBe(false);
+  });
+
+  it('never expires without an end date or off trial', () => {
+    expect(isTrialExpired('trialing', null, NOW)).toBe(false);
+    expect(isTrialExpired('active', NOW - 1, NOW)).toBe(false);
   });
 });
