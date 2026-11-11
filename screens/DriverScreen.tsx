@@ -1,7 +1,7 @@
 // DriverScreen.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Alert, Modal, View, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput } from 'react-native'
+import { Alert, Modal, View, StyleSheet, TouchableOpacity, Animated, ScrollView, ActivityIndicator, Linking, TextInput, Platform } from 'react-native'
 import { Text } from '../components/Text';
 import InfoBanner from '../components/InfoBanner';
 import { useNavigation } from '@react-navigation/native';
@@ -57,6 +57,7 @@ import { useOrg, Stop } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+import { STOP_REQUEST_CHANNEL_ID, STOP_REQUEST_SOUND } from '../src/hooks/usePushToken';
 import { borderRadius } from '../src/styles/common';
 
 const ARRIVE_RADIUS_FT = 75;
@@ -846,8 +847,10 @@ export default function DriverScreen() {
           ? `New request at ${stopName}`
           : `${newOnes.length} new stop requests`;
       Notifications.scheduleNotificationAsync({
-        content: { title: 'Shuttler', body, sound: true },
-        trigger: null,
+        // `kind` makes App.tsx's foreground handler play the sound.
+        content: { title: 'Shuttler', body, sound: STOP_REQUEST_SOUND, data: { kind: 'driver_stop_request_alert' } },
+        // Android takes the sound from the channel; iOS from `sound` above.
+        trigger: Platform.OS === 'android' ? { channelId: STOP_REQUEST_CHANNEL_ID } : null,
       });
     }
     pending.forEach((r) => seenRequestIdsRef.current.add(r.id));

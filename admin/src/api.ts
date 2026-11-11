@@ -354,3 +354,42 @@ export async function regenerateInsights(orgId: string): Promise<{ weekly: boole
   if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? `HTTP ${res.status}`);
   return res.json();
 }
+
+// ---- Date-range org report (super-admin) ----
+
+export type OrgReport = {
+  range: { from: string; to: string; tz: string };
+  totals: {
+    requests: number;
+    completed: number;
+    riderCancelled: number;
+    driverSkipped: number;
+    expired: number;
+    open: number;
+    completionRate: number | null;
+    boardings: number;
+    uniqueRiders: number;
+    activeDrivers: number;
+  };
+  wait: { medianMinutes: number | null; avgMinutes: number | null; sampled: number };
+  daily: { date: string; requests: number; completed: number; boardings: number }[];
+  byHour: { hour: number; requests: number; boardings: number }[];
+  topStops: { stopName: string; requests: number; boardings: number; completed: number }[];
+  drivers: { driverName: string; completed: number; boardings: number }[];
+  feedback: {
+    responses: number;
+    avgRating: number | null;
+    comments: { question: string; answer: string; date: string }[];
+  };
+  truncated: boolean;
+};
+
+/** `from`/`to` are inclusive YYYY-MM-DD dates in `tz`. */
+export async function getOrgReport(orgId: string, from: string, to: string, tz: string): Promise<OrgReport> {
+  const qs = new URLSearchParams({ from, to, tz });
+  const res = await fetch(`${API}/super-admin/orgs/${orgId}/report?${qs}`, {
+    headers: { Authorization: `Bearer ${await token()}` },
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? `HTTP ${res.status}`);
+  return res.json();
+}

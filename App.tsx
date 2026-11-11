@@ -68,9 +68,15 @@ class ErrorBoundary extends React.Component<
   }
 }
 
+// While the app is open, alerts are silent except the driver's own new-stop-
+// request alert (DriverScreen) — drivers keep the app open on the road and
+// need to hear it. The matching server push stays silent in the foreground so
+// a request never dings twice.
+const STOP_REQUEST_ALERT_KIND = 'driver_stop_request_alert';
+
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: false,
+  handleNotification: async (notification) => ({
+    shouldPlaySound: notification.request.content.data?.kind === STOP_REQUEST_ALERT_KIND,
     shouldSetBadge: false,
     shouldShowBanner: true,
     shouldShowList: true,
