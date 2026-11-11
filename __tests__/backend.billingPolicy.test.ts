@@ -3,14 +3,19 @@
 // (POST /stripe/webhook).
 
 import {
+  BUS_STALE_MS,
   addonsToEndWithPlan,
   addonsToResumeWithPlan,
   dataAddonAction,
+  holdsVehicleSlot,
   isLiveSubscription,
   isTrialExpired,
   mainSubscriptionAction,
   planForSubscription,
+  VEHICLE_CLAIM_MS,
+  vehicleCap,
 } from '../backend/billingPolicy';
+import { getPlanLimits } from '../src/constants/planLimits';
 
 describe('mainSubscriptionAction', () => {
   it("mirrors the org's current subscription", () => {
@@ -153,6 +158,48 @@ describe('planForSubscription', () => {
 
   it('never matches an unconfigured (empty) price id', () => {
     expect(planForSubscription([''], PRICES, 'campus')).toBe('campus');
+  });
+});
+
+describe('vehicleCap', () => {
+  it('matches the app\'s getPlanLimits for every plan and status', () => {
+    const plans = [null, 'starter', 'campus', 'enterprise', 'unknown'];
+    const statuses = ['trialing', 'active', 'past_due', 'canceled', 'unpaid'];
+    const overrides = [null, { maxVehicles: 22 }];
+    for (const plan of plans) for (const status of statuses) for (const o of overrides) {
+      expect(vehicleCap(plan, status, o)).toBe(getPlanLimits(plan, status, o).maxVehicles);
+    }
+  });
+
+  it('ignores an invalid override', () => {
+    expect(vehicleCap('enterprise', 'active', { maxVehicles: 0 })).toBe(15);
+    expect(vehicleCap('enterprise', 'active', { maxVehicles: '22' })).toBe(15);
+  });
+});
+
+describe('holdsVehicleSlot', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('counts a bus that is online and recently written', () => {
+    expect(holdsVehicleSlot({ online: true, updatedAtMs: NOW - 10_000 }, NOW)).toBe(true);
+  });
+
+  it('frees the slot of a bus gone quiet or offline', () => {
+    expect(holdsVehicleSlot({ online: true, updatedAtMs: NOW - BUS_STALE_MS }, NOW)).toBe(false);
+    expect(holdsVehicleSlot({ online: false, updatedAtMs: NOW - 10_000 }, NOW)).toBe(false);
+    expect(holdsVehicleSlot({ online: true, updatedAtMs: null }, NOW)).toBe(false);
+  });
+
+  it('keeps the slot of a bus on a break that has not run out', () => {
+    const quiet = NOW - 10 * 60_000;
+    expect(holdsVehicleSlot({ online: true, updatedAtMs: quiet, onBreak: true, breakEndsAtMs: NOW + 60_000 }, NOW)).toBe(true);
+    expect(holdsVehicleSlot({ online: true, updatedAtMs: quiet, onBreak: true, breakEndsAtMs: NOW - 1 }, NOW)).toBe(false);
+    expect(holdsVehicleSlot({ online: false, onBreak: true, breakEndsAtMs: NOW + 60_000 }, NOW)).toBe(false);
+  });
+
+  it('holds a fresh claim until it expires', () => {
+    expect(holdsVehicleSlot({ capClaimAtMs: NOW - 1_000 }, NOW)).toBe(true);
+    expect(holdsVehicleSlot({ capClaimAtMs: NOW - VEHICLE_CLAIM_MS }, NOW)).toBe(false);
   });
 });
 

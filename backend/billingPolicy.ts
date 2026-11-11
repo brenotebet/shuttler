@@ -121,6 +121,56 @@ export function planForSubscription(
   return metadataPlan ?? 'starter';
 }
 
+// ---------- Vehicle cap ----------
+
+// Vehicles each plan may have on the road at once. Mirrors maxVehicles in
+// src/constants/planLimits.ts (PLAN_LIMITS / getPlanLimits) — keep in sync.
+const PLAN_VEHICLES: Record<string, number> = { trial: 3, starter: 3, campus: 8, enterprise: 15 };
+
+/** The org's vehicle cap — same fallbacks as the app's getPlanLimits. */
+export function vehicleCap(
+  plan: string | null | undefined,
+  status: string | null | undefined,
+  overrides: { maxVehicles?: unknown } | null | undefined,
+): number {
+  if (!plan || status === 'trialing' || status === 'canceled' || status === 'unpaid') {
+    return PLAN_VEHICLES.trial; // overrides never apply to the trial fallback
+  }
+  const base = PLAN_VEHICLES[plan] ?? PLAN_VEHICLES.starter;
+  const o = overrides?.maxVehicles;
+  return typeof o === 'number' && Number.isFinite(o) && o > 0 ? o : base;
+}
+
+// A bus that has gone this long without a write no longer holds a slot.
+// Same as STALE_WINDOW_SECONDS in src/constants/stops.ts.
+export const BUS_STALE_MS = 180_000;
+// How long a slot claimed through POST /driver/claim-vehicle-slot is held
+// before the bus's first location write has to take over.
+export const VEHICLE_CLAIM_MS = 60_000;
+
+export type BusSlotState = {
+  online?: unknown;
+  updatedAtMs?: number | null;   // updatedAt ?? lastSeen
+  onBreak?: unknown;
+  breakEndsAtMs?: number | null;
+  capClaimAtMs?: number | null;
+};
+
+/**
+ * Whether a bus doc is taking up one of the org's vehicle slots: on the road
+ * (online, written recently), on a break that hasn't run out (no writes during
+ * a break, but the vehicle is still in service), or freshly claimed and about
+ * to start sharing.
+ */
+export function holdsVehicleSlot(bus: BusSlotState, nowMs: number): boolean {
+  const recent = (ms: number | null | undefined, windowMs: number) =>
+    typeof ms === 'number' && nowMs - ms < windowMs;
+  if (bus.online === true && recent(bus.updatedAtMs, BUS_STALE_MS)) return true;
+  if (bus.online === true && bus.onBreak === true
+    && typeof bus.breakEndsAtMs === 'number' && bus.breakEndsAtMs > nowMs) return true;
+  return recent(bus.capClaimAtMs, VEHICLE_CLAIM_MS);
+}
+
 // Length of the free trial. The clock starts when a super-admin approves the
 // org, not when it applies — review time shouldn't eat into the trial.
 export const TRIAL_DAYS = 14;

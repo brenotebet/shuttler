@@ -36,11 +36,13 @@ import {
   addonsToEndWithPlan,
   addonsToResumeWithPlan,
   dataAddonAction,
+  holdsVehicleSlot,
   isLiveSubscription,
   isTrialExpired,
   mainSubscriptionAction,
   planForSubscription,
   TRIAL_DAYS,
+  vehicleCap,
 } from './billingPolicy';
 import { buildOrgReport, parseReportRange, type ReportBoarding, type ReportFeedback, type ReportRequest } from './orgReport';
 import {
@@ -3555,6 +3557,80 @@ async function hasStopRequestInStatus(orgId: string, studentUid: string, statuse
  *  Called when a student creates a stop request.
  *  Reads all driver/admin users in the org and sends them a push notification.
  */
+// ---- Vehicle cap ----
+
+// A driver calls this right before going online. The plan's vehicle cap was
+// only ever checked in the app, so two drivers starting at the same moment
+// could both get in. Here the count and the claim happen in one transaction:
+// a claim stamps capClaimAt on the driver's bus doc, which holds the slot for
+// VEHICLE_CLAIM_MS until the bus's first location write takes over.
+//
+// Firestore rules don't require a claim yet — app builds from before this
+// endpoint still go online directly. Requiring it in the rules is a later
+// phase, once those builds are gone.
+app.post('/driver/claim-vehicle-slot', requireAuth, async (req: Request, res: Response) => {
+  const uid = (req as any).uid as string;
+  const orgId: string | undefined = (req as any).claims?.orgId;
+  if (!orgId) return res.status(403).json({ error: 'No org associated with this account' });
+
+  const role = await getOrgRole(orgId, uid);
+  if (role !== 'driver' && role !== 'admin') {
+    return res.status(403).json({ error: 'Only drivers can go online' });
+  }
+
+  try {
+    const db = admin.firestore();
+    const orgRef = db.collection('orgs').doc(orgId);
+    // Every claim reads and writes this doc, so concurrent claims for one org
+    // run one after another — the bus query alone can't see a bus doc that a
+    // parallel claim is about to create.
+    const lockRef = orgRef.collection('internal').doc('vehicleClaims');
+
+    const result = await db.runTransaction(async (tx) => {
+      const [orgSnap, , busesSnap] = await Promise.all([
+        tx.get(orgRef),
+        tx.get(lockRef),
+        tx.get(orgRef.collection('buses')),
+      ]);
+      if (!orgSnap.exists) return { status: 404 as const };
+      const org = orgSnap.data()!;
+      if (!['trialing', 'active', 'past_due'].includes(org.subscriptionStatus)) {
+        return { status: 403 as const };
+      }
+
+      const limit = vehicleCap(org.subscriptionPlan, org.subscriptionStatus, org.limitOverrides);
+      const now = Date.now();
+      const online = busesSnap.docs.filter((d) => {
+        if (d.id === uid) return false;
+        const b = d.data();
+        return holdsVehicleSlot({
+          online: b.online,
+          updatedAtMs: b.updatedAt?.toMillis?.() ?? b.lastSeen?.toMillis?.() ?? null,
+          onBreak: b.onBreak,
+          breakEndsAtMs: b.breakEndsAt?.toMillis?.() ?? null,
+          capClaimAtMs: b.capClaimAt?.toMillis?.() ?? null,
+        }, now);
+      }).length;
+      if (online >= limit) return { status: 409 as const, limit, online };
+
+      const claimAt = admin.firestore.Timestamp.fromMillis(now);
+      tx.set(orgRef.collection('buses').doc(uid), { driverUid: uid, capClaimAt: claimAt }, { merge: true });
+      tx.set(lockRef, { lastClaimAt: claimAt, lastClaimUid: uid });
+      return { status: 200 as const, limit, online };
+    });
+
+    if (result.status === 404) return res.status(404).json({ error: 'Org not found' });
+    if (result.status === 403) return res.status(403).json({ error: 'subscription_inactive' });
+    if (result.status === 409) {
+      return res.status(409).json({ error: 'vehicle_limit', limit: result.limit, online: result.online });
+    }
+    return res.json({ ok: true, limit: result.limit, online: result.online });
+  } catch (e) {
+    console.error('[driver/claim-vehicle-slot] error:', e);
+    return res.status(500).json({ error: 'Failed to claim a vehicle slot' });
+  }
+});
+
 app.post('/notifications/stop-request-created', requireAuth, async (req: Request, res: Response) => {
   const uid = (req as any).uid as string;
   const orgId: string | undefined = (req as any).claims?.orgId;
