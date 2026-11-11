@@ -120,3 +120,24 @@ export function planForSubscription(
   }
   return metadataPlan ?? 'starter';
 }
+
+// Length of the free trial. The clock starts when a super-admin approves the
+// org, not when it applies — review time shouldn't eat into the trial.
+export const TRIAL_DAYS = 14;
+
+/**
+ * Whether an org's free trial has run out. Only the app-level trial
+ * (status 'trialing') can expire; an org with no trialEndsAt (e.g. a legacy
+ * or hand-provisioned org) never does. Mirrored in firestore.rules
+ * (trialExpired) and src/constants/planLimits.ts (isTrialExpired).
+ */
+export function isTrialExpired(
+  status: string | null | undefined,
+  trialEndsAtMs: number | null | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  return status === 'trialing'
+    && typeof trialEndsAtMs === 'number'
+    && Number.isFinite(trialEndsAtMs)
+    && trialEndsAtMs <= nowMs;
+}

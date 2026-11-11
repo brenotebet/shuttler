@@ -10,7 +10,7 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { addDoc, collection, doc, getDoc, setDoc, setLogLevel, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, setDoc, setLogLevel, Timestamp, updateDoc } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
 
@@ -237,6 +237,38 @@ describe('plan limits on stops and routes', () => {
     await assertSucceeds(updateDoc(ref, { stops: stops(11) }));
     await assertFails(updateDoc(ref, { stops: stops(12) }));
     await assertSucceeds(updateDoc(ref, { name: 'Renamed Org' }));
+  });
+});
+
+describe('trial expiry', () => {
+  const DAY = 86_400_000;
+  async function setOrg(fields: Record<string, unknown>) {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'orgs/emailOrg'), fields, { merge: true }));
+  }
+  const goOnline = () => setDoc(doc(as('driver'), 'orgs/emailOrg/buses/driver'), { online: true });
+  const requestStop = () => addDoc(collection(as('student'), 'orgs/emailOrg/stopRequests'), stopRequest('student', 'emailOrg'));
+
+  it('keeps an org running while its trial is still on', async () => {
+    await setOrg({ subscriptionStatus: 'trialing', trialEndsAt: Timestamp.fromMillis(Date.now() + 3 * DAY) });
+    await assertSucceeds(goOnline());
+    await assertSucceeds(requestStop());
+  });
+
+  it('stops buses and stop requests once the trial has ended', async () => {
+    await setOrg({ subscriptionStatus: 'trialing', trialEndsAt: Timestamp.fromMillis(Date.now() - DAY) });
+    await assertFails(goOnline());
+    await assertFails(requestStop());
+  });
+
+  it('never expires a trial with no end date', async () => {
+    await setOrg({ subscriptionStatus: 'trialing' });
+    await assertSucceeds(goOnline());
+  });
+
+  it('ignores a stale trial end date once the org subscribes', async () => {
+    await setOrg({ subscriptionStatus: 'active', trialEndsAt: Timestamp.fromMillis(Date.now() - 30 * DAY) });
+    await assertSucceeds(goOnline());
+    await assertSucceeds(requestStop());
   });
 });
 

@@ -58,8 +58,19 @@ service cloud.firestore {
     }
 
     function orgIsActive(orgId) {
-      return get(/databases/$(database)/documents/orgs/$(orgId)).data.subscriptionStatus
-        in ['trialing', 'active', 'past_due'];
+      let org = get(/databases/$(database)/documents/orgs/$(orgId)).data;
+      return org.subscriptionStatus in ['trialing', 'active', 'past_due']
+        && !trialExpired(org);
+    }
+
+    // A free trial past its trialEndsAt counts as inactive. An org with no
+    // trialEndsAt never expires. Mirrors isTrialExpired in
+    // backend/billingPolicy.ts and src/constants/planLimits.ts — keep in sync.
+    function trialExpired(org) {
+      let trialEndsAt = org.get('trialEndsAt', null);
+      return org.subscriptionStatus == 'trialing'
+        && trialEndsAt is timestamp
+        && trialEndsAt <= request.time;
     }
 
     function isOrgOwner(orgId, uid) {

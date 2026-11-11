@@ -7,6 +7,7 @@ import {
   addonsToResumeWithPlan,
   dataAddonAction,
   isLiveSubscription,
+  isTrialExpired,
   mainSubscriptionAction,
   planForSubscription,
 } from '../backend/billingPolicy';
@@ -152,5 +153,30 @@ describe('planForSubscription', () => {
 
   it('never matches an unconfigured (empty) price id', () => {
     expect(planForSubscription([''], PRICES, 'campus')).toBe('campus');
+  });
+});
+
+describe('isTrialExpired', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('expires a trial at or after its end', () => {
+    expect(isTrialExpired('trialing', NOW - 1, NOW)).toBe(true);
+    expect(isTrialExpired('trialing', NOW, NOW)).toBe(true);
+  });
+
+  it('keeps a trial running before its end', () => {
+    expect(isTrialExpired('trialing', NOW + 1, NOW)).toBe(false);
+  });
+
+  it('never expires a trial with no end date', () => {
+    expect(isTrialExpired('trialing', null, NOW)).toBe(false);
+    expect(isTrialExpired('trialing', undefined, NOW)).toBe(false);
+    expect(isTrialExpired('trialing', NaN, NOW)).toBe(false);
+  });
+
+  it('only applies to trialing orgs', () => {
+    for (const status of ['active', 'past_due', 'canceled', 'unpaid', null]) {
+      expect(isTrialExpired(status, NOW - 1, NOW)).toBe(false);
+    }
   });
 });
