@@ -30,6 +30,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/firebaseconfig';
+import { SHUTTLER_API_URL } from '../config';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { showAlert } from '../src/utils/alerts';
 import { showToast } from '../src/components/Toast';
@@ -114,6 +115,36 @@ function formatTimeAgo(inputMs: number) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+type VehicleSlotResult =
+  | { ok: true }
+  | { ok: false; limit: number; online: number }
+  | null; // backend unreachable or errored — caller falls back to its own count
+
+// Asks the backend for one of the plan's vehicle slots (POST
+// /driver/claim-vehicle-slot), which counts the buses on the road and claims
+// a slot in one transaction — so two drivers starting together can't both
+// squeeze past the cap.
+async function claimVehicleSlot(): Promise<VehicleSlotResult> {
+  try {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) return null;
+    const res = await fetch(`${SHUTTLER_API_URL}/driver/claim-vehicle-slot`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) return { ok: true };
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      if (body?.error === 'vehicle_limit' && typeof body.limit === 'number' && typeof body.online === 'number') {
+        return { ok: false, limit: body.limit, online: body.online };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function isDriverRole(role: unknown) {
@@ -1101,43 +1132,8 @@ export default function DriverScreen() {
                 }
                 await stopSharing();
               } else {
-                // Check vehicle limit before going online
-                const limits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
-                if (limits.maxVehicles !== Infinity) {
-                  const busSnap = await getDocs(
-                    query(
-                      collection(db, 'orgs', orgId, 'buses'),
-                      where('online', '==', true),
-                    ),
-                  );
-                  const now = Date.now();
-                  const otherOnline = busSnap.docs.filter((d) => {
-                    if (d.id === driverId) return false;
-                    const data = d.data({ serverTimestamps: 'estimate' });
-                    const tsMs = data?.updatedAt?.toMillis?.() ?? data?.lastSeen?.toMillis?.() ?? null;
-                    if (tsMs === null) return false;
-                    return (now - tsMs) / 1000 < STALE_WINDOW_SECONDS;
-                  }).length;
-                  if (otherOnline >= limits.maxVehicles) {
-                    const next = planFor('maxVehicles', otherOnline + 1); // buses already online + this one
-                    Alert.alert(
-                      'Vehicle limit reached',
-                      `Your ${limits.label} plan allows up to ${limits.maxVehicles} vehicles online at once. ` +
-                        (next
-                          ? `You need the ${next.label} plan (${next.price}) or higher to put more vehicles on the road.`
-                          : 'Contact us about an Enterprise plan sized for your fleet.'),
-                      [
-                        {
-                          text: 'Manage Billing',
-                          onPress: () => navigation.navigate('AdminOrgSetup', { initialTab: 'billing' }),
-                        },
-                        { text: 'OK', style: 'cancel' },
-                      ],
-                    );
-                    return;
-                  }
-                }
-                // Check route operating hours before going online
+                // Check route operating hours before going online — before
+                // claiming a vehicle slot, so backing out here holds none.
                 const routeToCheck = orgRoutes.find((r) => r.id === (selectedRouteId ?? orgRoutes[0]?.id)) ?? orgRoutes[0] ?? null;
                 if (routeToCheck?.schedule && !isRouteActive(routeToCheck, new Date(), org?.timezone)) {
                   const todayText = getTodayScheduleText(routeToCheck, new Date(), org?.timezone);
@@ -1152,6 +1148,51 @@ export default function DriverScreen() {
                       ],
                     );
                   });
+                }
+
+                // Check vehicle limit before going online. The backend's count
+                // is authoritative; if it can't be reached, fall back to
+                // counting here rather than keeping the bus off the road.
+                const limits = getPlanLimits(org?.subscriptionPlan, org?.subscriptionStatus, org?.limitOverrides);
+                const slot = await claimVehicleSlot();
+                let otherOnline: number | null = null;
+                if (slot && !slot.ok) {
+                  otherOnline = slot.online;
+                } else if (!slot && limits.maxVehicles !== Infinity) {
+                  const busSnap = await getDocs(
+                    query(
+                      collection(db, 'orgs', orgId, 'buses'),
+                      where('online', '==', true),
+                    ),
+                  );
+                  const now = Date.now();
+                  const counted = busSnap.docs.filter((d) => {
+                    if (d.id === driverId) return false;
+                    const data = d.data({ serverTimestamps: 'estimate' });
+                    const tsMs = data?.updatedAt?.toMillis?.() ?? data?.lastSeen?.toMillis?.() ?? null;
+                    if (tsMs === null) return false;
+                    return (now - tsMs) / 1000 < STALE_WINDOW_SECONDS;
+                  }).length;
+                  if (counted >= limits.maxVehicles) otherOnline = counted;
+                }
+                if (otherOnline !== null) {
+                  const maxVehicles = slot && !slot.ok ? slot.limit : limits.maxVehicles;
+                  const next = planFor('maxVehicles', otherOnline + 1); // buses already online + this one
+                  Alert.alert(
+                    'Vehicle limit reached',
+                    `Your ${limits.label} plan allows up to ${maxVehicles} vehicles online at once. ` +
+                      (next
+                        ? `You need the ${next.label} plan (${next.price}) or higher to put more vehicles on the road.`
+                        : 'Contact us about an Enterprise plan sized for your fleet.'),
+                    [
+                      {
+                        text: 'Manage Billing',
+                        onPress: () => navigation.navigate('AdminOrgSetup', { initialTab: 'billing' }),
+                      },
+                      { text: 'OK', style: 'cancel' },
+                    ],
+                  );
+                  return;
                 }
                 await startSharing(selectedRouteId ?? undefined);
               }
