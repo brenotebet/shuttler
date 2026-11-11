@@ -56,6 +56,25 @@ beforeEach(async () => {
     await member('ssoOrg', 'legacyAdmin', 'admin');
 
     await setDoc(doc(db, 'orgs/emailOrg/stopRequests/req1'), stopRequest('student', 'emailOrg'));
+
+    // K-12 phone org with two parents, each with a child profile.
+    await setDoc(doc(db, 'orgs/k12Org'), { authMethod: 'phone', orgType: 'k12', subscriptionStatus: 'active' });
+    await member('k12Org', 'parentA', 'parent');
+    await member('k12Org', 'parentB', 'parent');
+    await member('k12Org', 'k12Driver', 'driver');
+    await member('k12Org', 'k12Student', 'student');
+    await setDoc(doc(db, 'orgs/k12Org/users/parentA/children/kidA'), { name: 'Ana', grade: '3' });
+    await setDoc(doc(db, 'orgs/k12Org/stopRequests/reqA'), {
+      ...stopRequest('parentA', 'k12Org'), childName: 'Ana', childGrade: '3',
+    });
+    // New K-12 members wait for an admin; declined ones stay locked out.
+    await setDoc(doc(db, 'orgs/k12Org/users/pendingParent'), {
+      uid: 'pendingParent', orgId: 'k12Org', role: 'parent', approvalStatus: 'pending', phone: '+15555550100',
+    });
+    await setDoc(doc(db, 'orgs/k12Org/users/declinedParent'), {
+      uid: 'declinedParent', orgId: 'k12Org', role: 'parent', approvalStatus: 'declined',
+    });
+    await member('k12Org', 'k12Admin', 'admin');
   });
 });
 
@@ -79,6 +98,52 @@ describe('membership', () => {
     await assertFails(updateDoc(ref, { role: 'admin' }));
     await assertFails(updateDoc(ref, { email: 'admin@school.edu' }));
     await assertFails(updateDoc(ref, { ssoLinkedFrom: ['admin'] }));
+  });
+
+  it('a member cannot move their membership to another org or rewrite their uid', async () => {
+    const ref = doc(as('student'), 'orgs/emailOrg/users/student');
+    await assertFails(updateDoc(ref, { orgId: 'ssoOrg' }));
+    await assertFails(updateDoc(ref, { uid: 'admin' }));
+  });
+
+  it("a member cannot edit someone else's membership; an admin may only set defaultRouteId", async () => {
+    await assertFails(updateDoc(doc(as('student'), 'orgs/emailOrg/users/driver'), { displayName: 'x' }));
+    await assertFails(updateDoc(doc(as('admin'), 'orgs/emailOrg/users/student'), { role: 'admin' }));
+    await assertSucceeds(updateDoc(doc(as('admin'), 'orgs/emailOrg/users/student'), { defaultRouteId: 'r1' }));
+  });
+});
+
+describe('K-12 parents', () => {
+  const parent = (uid: string) => as(uid, 'phone');
+
+  it("a parent manages only their own children's profiles", async () => {
+    await assertSucceeds(getDoc(doc(parent('parentA'), 'orgs/k12Org/users/parentA/children/kidA')));
+    await assertSucceeds(addDoc(collection(parent('parentA'), 'orgs/k12Org/users/parentA/children'), { name: 'Ben' }));
+    await assertFails(getDoc(doc(parent('parentB'), 'orgs/k12Org/users/parentA/children/kidA')));
+    await assertFails(addDoc(collection(parent('parentB'), 'orgs/k12Org/users/parentA/children'), { name: 'Eve' }));
+  });
+
+  it('non-parents cannot read or create children profiles, even staff', async () => {
+    await assertFails(getDoc(doc(as('k12Driver', 'password'), 'orgs/k12Org/users/parentA/children/kidA')));
+    await assertFails(addDoc(collection(as('k12Student', 'phone'), 'orgs/k12Org/users/k12Student/children'), { name: 'X' }));
+  });
+
+  it("a parent sees only their own stop requests; drivers see the child's name to pick them up", async () => {
+    await assertSucceeds(getDoc(doc(parent('parentA'), 'orgs/k12Org/stopRequests/reqA')));
+    await assertFails(getDoc(doc(parent('parentB'), 'orgs/k12Org/stopRequests/reqA')));
+    await assertSucceeds(getDoc(doc(as('k12Driver', 'password'), 'orgs/k12Org/stopRequests/reqA')));
+  });
+
+  it('a parent cannot request a stop as someone else, or cancel another parent\'s request', async () => {
+    await assertFails(addDoc(collection(parent('parentB'), 'orgs/k12Org/stopRequests'), stopRequest('parentA', 'k12Org')));
+    await assertFails(updateDoc(doc(parent('parentB'), 'orgs/k12Org/stopRequests/reqA'), { status: 'cancelled' }));
+    await assertSucceeds(updateDoc(doc(parent('parentA'), 'orgs/k12Org/stopRequests/reqA'), { status: 'cancelled' }));
+  });
+
+  it('a parent cannot promote themselves or read other members', async () => {
+    await assertFails(updateDoc(doc(parent('parentA'), 'orgs/k12Org/users/parentA'), { role: 'admin' }));
+    await assertFails(updateDoc(doc(parent('parentA'), 'orgs/k12Org/users/parentA'), { role: 'driver' }));
+    await assertFails(getDoc(doc(parent('parentA'), 'orgs/k12Org/users/parentB')));
   });
 });
 
@@ -188,5 +253,49 @@ describe('org type', () => {
   it('does not let non-admins change the org type', async () => {
     await assertFails(updateDoc(doc(as('driver'), 'orgs/emailOrg'), { orgType: 'k12' }));
     await assertFails(updateDoc(doc(as('student'), 'orgs/emailOrg'), { orgType: 'k12' }));
+  });
+});
+
+describe('K-12 approval', () => {
+  const parent = (uid: string) => as(uid, 'phone');
+
+  it('a pending or declined member sees no buses, org, names or stop requests', async () => {
+    for (const uid of ['pendingParent', 'declinedParent']) {
+      await assertFails(getDoc(doc(parent(uid), 'orgs/k12Org')));
+      await assertFails(getDoc(doc(parent(uid), 'orgs/k12Org/buses/k12Driver')));
+      await assertFails(getDoc(doc(parent(uid), 'orgs/k12Org/publicUsers/parentA')));
+      await assertFails(addDoc(collection(parent(uid), 'orgs/k12Org/stopRequests'), stopRequest(uid, 'k12Org')));
+      await assertFails(addDoc(collection(parent(uid), `orgs/k12Org/users/${uid}/children`), { name: 'Kid' }));
+    }
+  });
+
+  it('a pending member can read their own doc and save a push token, to hear when approved', async () => {
+    const ref = doc(parent('pendingParent'), 'orgs/k12Org/users/pendingParent');
+    await assertSucceeds(getDoc(ref));
+    await assertSucceeds(updateDoc(ref, { expoPushToken: 'ExponentPushToken[x]' }));
+  });
+
+  it('a pending or declined member cannot approve themselves or rewrite their request', async () => {
+    const ref = doc(parent('pendingParent'), 'orgs/k12Org/users/pendingParent');
+    await assertFails(updateDoc(ref, { approvalStatus: 'approved' }));
+    await assertFails(updateDoc(ref, { approvalRequest: { children: [] } }));
+    await assertFails(updateDoc(ref, { relationship: 'guardian' }));
+    await assertFails(updateDoc(doc(parent('declinedParent'), 'orgs/k12Org/users/declinedParent'), {
+      approvalStatus: 'pending',
+    }));
+  });
+
+  it('an admin cannot approve from the client either — only the backend can', async () => {
+    await assertFails(updateDoc(doc(as('k12Admin'), 'orgs/k12Org/users/pendingParent'), { approvalStatus: 'approved' }));
+  });
+
+  it("an admin can read a parent's children (incl. ones added after approval); other parents cannot", async () => {
+    await assertSucceeds(getDoc(doc(as('k12Admin'), 'orgs/k12Org/users/parentA/children/kidA')));
+    await assertFails(getDoc(doc(as('k12Driver'), 'orgs/k12Org/users/parentA/children/kidA')));
+  });
+
+  it('members without an approvalStatus (joined before approvals) keep working', async () => {
+    await assertSucceeds(getDoc(doc(parent('parentA'), 'orgs/k12Org')));
+    await assertSucceeds(getDoc(doc(parent('parentA'), 'orgs/k12Org/buses/k12Driver')));
   });
 });

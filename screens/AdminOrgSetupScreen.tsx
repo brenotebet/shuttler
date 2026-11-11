@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase/firebaseconfig';
 import MapView, { Marker, Polyline, Region } from 'react-native-maps';
-import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { signOut } from 'firebase/auth';
@@ -2013,14 +2013,33 @@ const routeUi = StyleSheet.create({
 
 // ---- Users Tab ----
 
+// Firestore Timestamp serialized by the backend's JSON response.
+type SerializedTimestamp = { _seconds?: number; seconds?: number } | null;
+
 type OrgMember = {
   uid: string;
-  email: string;
-  displayName?: string;
+  // Phone sign-ins (K-12 parents) have no email.
+  email: string | null;
+  displayName?: string | null;
+  phone?: string | null;
   role: 'student' | 'driver' | 'admin' | 'parent';
   defaultRouteId?: string | null;
-  // Firestore Timestamp serialized by the backend's JSON response.
-  createdAt?: { _seconds?: number; seconds?: number } | null;
+  createdAt?: SerializedTimestamp;
+  // K-12 / phone orgs: new members wait for approval (no field = approved).
+  approvalStatus?: 'pending' | 'approved' | 'declined';
+  approvalRequestedAt?: SerializedTimestamp;
+  approvedAt?: SerializedTimestamp;
+  relationship?: string;
+  approvalRequest?: { children?: { name: string; grade: string | null }[] };
+};
+
+const tsSeconds = (t: SerializedTimestamp | undefined) => t?._seconds ?? t?.seconds ?? 0;
+
+/** What to call a member in lists: name, else email, else phone. */
+const memberLabel = (m: OrgMember) => m.displayName || m.email || m.phone || 'Unnamed member';
+
+const RELATIONSHIP_LABELS: Record<string, string> = {
+  parent: 'Parent', guardian: 'Guardian', grandparent: 'Grandparent', other: 'Other',
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -2055,10 +2074,20 @@ function UsersTab() {
   const [inviteRole, setInviteRole] = useState<'student' | 'driver' | 'parent'>('student');
   // Parent accounts only make sense for K-12 orgs (see src/constants/orgTypes).
   const parentsAllowed = allowsParentRole(org?.orgType);
+  // Mirrors requiresMemberApproval in backend/authPolicy.ts.
+  const membersNeedApproval = org?.authMethod !== 'saml'
+    && (org?.orgType === 'k12' || org?.authMethod === 'phone');
   useEffect(() => {
     if (!parentsAllowed && inviteRole === 'parent') setInviteRole('student');
   }, [parentsAllowed, inviteRole]);
   const [copiedId, setCopiedId] = useState(false);
+  // Approval requests (K-12 / phone orgs)
+  const [decidingUid, setDecidingUid] = useState<string | null>(null);
+  const [declineTarget, setDeclineTarget] = useState<OrgMember | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
+  // Children of the parent open in the person sheet
+  // null = loading, 'error' = couldn't load (e.g. rules not yet allowing it).
+  const [targetChildren, setTargetChildren] = useState<{ id: string; name: string; grade?: string | null; createdSec: number }[] | 'error' | null>(null);
 
   const orgRoutes = org?.routes ?? [];
 
@@ -2131,6 +2160,54 @@ function UsersTab() {
     [org],
   );
 
+  const decideApproval = useCallback(
+    async (member: OrgMember, decision: 'approve' | 'decline', reason?: string) => {
+      if (!org) return;
+      setDecidingUid(member.uid);
+      try {
+        const token = await getBearerToken();
+        const res = await fetch(`${SHUTTLER_API_URL}/admin/orgs/${org.orgId}/users/${member.uid}/approval`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error ?? 'Failed');
+        setMembers((prev) => prev.map((m) => (
+          m.uid === member.uid
+            ? { ...m, approvalStatus: body.approvalStatus, approvedAt: decision === 'approve' ? { seconds: Date.now() / 1000 } : m.approvedAt }
+            : m
+        )));
+        showToast(decision === 'approve' ? `${memberLabel(member)} approved.` : 'Request declined.', 'success');
+      } catch (e: any) {
+        showToast(e?.message ?? 'Could not update the request.', 'error');
+      } finally {
+        setDecidingUid(null);
+      }
+    },
+    [org],
+  );
+
+  // A parent's children, so an admin can see who they pick up — including any
+  // added after approval.
+  const personTargetUid = personTarget?.uid;
+  const personTargetIsParent = personTarget?.role === 'parent';
+  useEffect(() => {
+    setTargetChildren(null);
+    if (!org || !personTargetUid || !personTargetIsParent) return;
+    let cancelled = false;
+    getDocs(collection(db, 'orgs', org.orgId, 'users', personTargetUid, 'children'))
+      .then((snap) => {
+        if (cancelled) return;
+        setTargetChildren(snap.docs.map((d) => {
+          const data = d.data() as any;
+          return { id: d.id, name: data.name ?? '', grade: data.grade ?? null, createdSec: data.createdAt?.seconds ?? 0 };
+        }));
+      })
+      .catch(() => { if (!cancelled) setTargetChildren('error'); });
+    return () => { cancelled = true; };
+  }, [org, personTargetUid, personTargetIsParent]);
+
   const handleRemoveUser = useCallback(
     (member: OrgMember) => {
       if (!org) return;
@@ -2144,7 +2221,7 @@ function UsersTab() {
       }
       Alert.alert(
         'Remove member',
-        `Remove ${member.displayName ?? member.email} from ${org.name}? They will lose access immediately.`,
+        `Remove ${memberLabel(member)} from ${org.name}? They will lose access immediately.`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -2193,11 +2270,19 @@ function UsersTab() {
   const matchesSearch = (m: OrgMember) =>
     !searchQuery ||
     (m.displayName ?? '').toLowerCase().includes(searchQuery) ||
-    m.email.toLowerCase().includes(searchQuery);
+    (m.email ?? '').toLowerCase().includes(searchQuery) ||
+    (m.phone ?? '').includes(searchQuery);
 
-  const staff = members.filter((m) => m.role === 'driver' || m.role === 'admin');
-  const riders = members.filter((m) => m.role === 'student');
-  const parents = members.filter((m) => m.role === 'parent');
+  // Waiting for approval (oldest first) — shown above everything else. Declined
+  // requests aren't members; they can ask again from their app.
+  const pendingMembers = members
+    .filter((m) => m.approvalStatus === 'pending')
+    .sort((a, b) => tsSeconds(a.approvalRequestedAt ?? a.createdAt) - tsSeconds(b.approvalRequestedAt ?? b.createdAt));
+  const approvedMembers = members.filter((m) => !m.approvalStatus || m.approvalStatus === 'approved');
+
+  const staff = approvedMembers.filter((m) => m.role === 'driver' || m.role === 'admin');
+  const riders = approvedMembers.filter((m) => m.role === 'student');
+  const parents = approvedMembers.filter((m) => m.role === 'parent');
   const showParentsFilter = parentsAllowed || parents.length > 0;
   const inFilter =
     memberFilter === 'staff' ? staff : memberFilter === 'parents' ? parents : riders;
@@ -2206,7 +2291,7 @@ function UsersTab() {
   // People who joined in the last 7 days — shown first under Riders so an
   // admin can find a newly signed-up driver and switch their role.
   const weekAgoSec = Date.now() / 1000 - 7 * 86_400;
-  const joinedSec = (m: OrgMember) => m.createdAt?._seconds ?? m.createdAt?.seconds ?? 0;
+  const joinedSec = (m: OrgMember) => tsSeconds(m.createdAt);
   const newRiders = memberFilter === 'riders' && !searchQuery
     ? visibleMembers.filter((m) => joinedSec(m) >= weekAgoSec)
     : [];
@@ -2256,12 +2341,12 @@ function UsersTab() {
       >
         <View style={[styles.memberAvatar, { backgroundColor: `${roleColor(member.role)}20` }]}>
           <Text style={[styles.memberAvatarText, { color: roleColor(member.role) }]}>
-            {(member.displayName ?? member.email).charAt(0).toUpperCase()}
+            {memberLabel(member).charAt(0).toUpperCase()}
           </Text>
         </View>
         <View style={styles.memberInfo}>
           <View style={usersStyles.nameRow}>
-            <Text style={styles.memberName} numberOfLines={1}>{member.displayName ?? member.email}</Text>
+            <Text style={styles.memberName} numberOfLines={1}>{memberLabel(member)}</Text>
             {isOwner && (
               <View style={usersStyles.ownerBadge}><Text style={usersStyles.ownerBadgeText}>Owner</Text></View>
             )}
@@ -2276,6 +2361,65 @@ function UsersTab() {
     );
   };
 
+  const renderPending = (member: OrgMember) => {
+    const requestedSec = tsSeconds(member.approvalRequestedAt ?? member.createdAt);
+    const children = member.approvalRequest?.children ?? [];
+    const busy = decidingUid === member.uid;
+    return (
+      <View key={member.uid} style={usersStyles.pendingCard}>
+        <Text style={usersStyles.pendingName}>{member.displayName || 'No name given'}</Text>
+        {!!member.phone && (
+          <View style={usersStyles.pendingRow}>
+            <Icon name="phone" size={16} color={GRAY_700} />
+            <Text style={usersStyles.pendingPhone}>{member.phone}</Text>
+            <Text style={usersStyles.pendingVerified}>verified by SMS</Text>
+          </View>
+        )}
+        {!!member.email && (
+          <View style={usersStyles.pendingRow}>
+            <Icon name="email" size={16} color={GRAY_700} />
+            <Text style={usersStyles.pendingDetail}>{member.email}</Text>
+          </View>
+        )}
+        {!!member.relationship && (
+          <Text style={usersStyles.pendingDetail}>
+            {RELATIONSHIP_LABELS[member.relationship] ?? member.relationship} of:
+          </Text>
+        )}
+        {children.map((c, i) => (
+          <Text key={i} style={usersStyles.pendingDetail}>
+            • {c.name}{c.grade ? ` — grade ${c.grade}` : ''}
+          </Text>
+        ))}
+        {requestedSec > 0 && (
+          <Text style={usersStyles.pendingMeta}>
+            Requested {new Date(requestedSec * 1000).toLocaleString()}
+          </Text>
+        )}
+        <View style={usersStyles.pendingBtns}>
+          <TouchableOpacity
+            style={[usersStyles.inviteBtn, usersStyles.inviteBtnSecondary]}
+            onPress={() => { setDeclineReason(''); setDeclineTarget(member); }}
+            disabled={busy}
+            accessibilityRole="button"
+          >
+            <Text style={usersStyles.inviteBtnText}>Decline</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[usersStyles.inviteBtn, { backgroundColor: primaryColor }]}
+            onPress={() => decideApproval(member, 'approve')}
+            disabled={busy}
+            accessibilityRole="button"
+          >
+            {busy
+              ? <ActivityIndicator size="small" color={WHITE} />
+              : <Text style={[usersStyles.inviteBtnText, { color: WHITE }]}>Approve</Text>}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   // ---- Person sheet ----
   const target = personTarget ? members.find((m) => m.uid === personTarget.uid) ?? personTarget : null;
   const targetIsSelf = !!target && target.uid === currentUser?.uid;
@@ -2285,6 +2429,8 @@ function UsersTab() {
   const roleOptions = (['student', 'driver', 'admin', 'parent'] as const).filter(
     (role) => role !== 'parent' || parentsAllowed || target?.role === 'parent',
   );
+
+  const approvedSec = target ? tsSeconds(target.approvedAt) : 0;
 
   const filterTabs = [
     { key: 'staff' as const, label: 'Staff', count: staff.length },
@@ -2299,7 +2445,7 @@ function UsersTab() {
       <View style={usersStyles.header}>
         <View style={{ flex: 1 }}>
           <Text style={usersStyles.headerTitle}>People</Text>
-          <Text style={usersStyles.headerSub}>{members.length} member{members.length === 1 ? '' : 's'}</Text>
+          <Text style={usersStyles.headerSub}>{approvedMembers.length} member{approvedMembers.length === 1 ? '' : 's'}</Text>
         </View>
         <TouchableOpacity
           style={[usersStyles.inviteHeaderBtn, { backgroundColor: primaryColor }]}
@@ -2310,6 +2456,17 @@ function UsersTab() {
           <Text style={usersStyles.inviteHeaderBtnText}>Invite</Text>
         </TouchableOpacity>
       </View>
+
+      {pendingMembers.length > 0 && (
+        <View style={{ marginBottom: 16 }}>
+          <Text style={usersStyles.groupLabel}>Waiting for approval ({pendingMembers.length})</Text>
+          <Text style={[styles.hint, { marginBottom: 8 }]}>
+            Check each phone number against the child's emergency contacts in your school records before approving.
+            Approved members can see your buses live.
+          </Text>
+          {pendingMembers.map(renderPending)}
+        </View>
+      )}
 
       {/* Filter */}
       <View style={usersStyles.filterWrap}>
@@ -2408,7 +2565,9 @@ function UsersTab() {
         {inviteRole === 'driver'
           ? 'Drivers sign up like everyone else. Once they have, find them under Students (they\'ll be at the top under "New this week") and change their role to Driver.'
           : inviteRole === 'parent'
-          ? 'Parents sign up with their phone number and add their child\'s profile.'
+          ? 'Parents sign up with their phone number and tell you which children they pick up. You approve each one under People before they can see your buses.'
+          : membersNeedApproval
+          ? 'Students search for your org in the app and sign up. You approve each new account under People before they can see your buses.'
           : 'Students search for your org in the app and sign up — no approval needed.'}
       </Text>
 
@@ -2435,8 +2594,34 @@ function UsersTab() {
       {target && (
         <>
           <View style={pickerSheetStyles.handle} />
-          <Text style={pickerSheetStyles.title} numberOfLines={1}>{target.displayName ?? target.email}</Text>
-          <Text style={pickerSheetStyles.subtitle} numberOfLines={1}>{target.email}</Text>
+          <Text style={pickerSheetStyles.title} numberOfLines={1}>{memberLabel(target)}</Text>
+          <Text style={pickerSheetStyles.subtitle} numberOfLines={1}>{target.email ?? target.phone ?? ''}</Text>
+
+          {target.role === 'parent' && (
+            <>
+              <Text style={usersStyles.sheetLabel}>Children</Text>
+              {targetChildren === null ? (
+                <ActivityIndicator size="small" color={primaryColor} style={{ alignSelf: 'flex-start' }} />
+              ) : targetChildren === 'error' ? (
+                <Text style={styles.hint}>Couldn't load their children. Try again later.</Text>
+              ) : targetChildren.length === 0 ? (
+                <Text style={styles.hint}>No children added.</Text>
+              ) : (
+                targetChildren.map((c) => (
+                  <View key={c.id} style={usersStyles.pendingRow}>
+                    <Text style={usersStyles.pendingDetail}>
+                      {c.name}{c.grade ? ` — grade ${c.grade}` : ''}
+                    </Text>
+                    {approvedSec > 0 && c.createdSec > approvedSec && (
+                      <View style={usersStyles.addedLaterBadge}>
+                        <Text style={usersStyles.addedLaterText}>Added after approval</Text>
+                      </View>
+                    )}
+                  </View>
+                ))
+              )}
+            </>
+          )}
 
           <Text style={usersStyles.sheetLabel}>Role</Text>
           {targetIsOwner || targetIsSelf ? (
@@ -2510,11 +2695,68 @@ function UsersTab() {
         </>
       )}
     </BottomSheet>
+
+    {/* Decline an approval request, with an optional reason they'll see */}
+    <BottomSheet visible={declineTarget !== null} onClose={() => setDeclineTarget(null)}>
+      {declineTarget && (
+        <>
+          <View style={pickerSheetStyles.handle} />
+          <Text style={pickerSheetStyles.title} numberOfLines={1}>Decline {memberLabel(declineTarget)}?</Text>
+          <Text style={pickerSheetStyles.subtitle}>
+            They won't get access. They'll be asked to contact the school office and can send a new request.
+          </Text>
+          <TextInput
+            style={[newStopStyles.searchInput, usersStyles.reasonInput]}
+            placeholder="Reason (optional, shown to them)"
+            placeholderTextColor={GRAY_400}
+            value={declineReason}
+            onChangeText={setDeclineReason}
+            maxLength={200}
+            multiline
+          />
+          <AppButton
+            label="Decline request"
+            onPress={() => { const m = declineTarget; setDeclineTarget(null); decideApproval(m, 'decline', declineReason.trim()); }}
+            color={DANGER_COLOR}
+            style={{ marginTop: 12 }}
+          />
+          <TouchableOpacity style={pickerSheetStyles.cancelBtn} onPress={() => setDeclineTarget(null)}>
+            <Text style={pickerSheetStyles.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </>
+      )}
+    </BottomSheet>
     </>
   );
 }
 
 const usersStyles = StyleSheet.create({
+  pendingCard: {
+    backgroundColor: WHITE,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: GRAY_200,
+    padding: 14,
+    marginBottom: 10,
+  },
+  pendingName: { fontSize: 16, fontWeight: '700', color: GRAY_900, marginBottom: 6 },
+  pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  pendingPhone: { fontSize: 16, fontWeight: '700', color: GRAY_900 },
+  pendingVerified: { fontSize: 11, color: GRAY_500 },
+  pendingDetail: { fontSize: 14, color: GRAY_700, marginBottom: 2 },
+  pendingMeta: { fontSize: 12, color: GRAY_400, marginTop: 6 },
+  pendingBtns: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  addedLaterBadge: { backgroundColor: '#fef3c7', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  addedLaterText: { fontSize: 11, fontWeight: '700', color: '#92400e' },
+  reasonInput: {
+    borderWidth: 1,
+    borderColor: GRAY_200,
+    borderRadius: borderRadius.md,
+    padding: 12,
+    minHeight: 72,
+    marginTop: 12,
+    textAlignVertical: 'top',
+  },
   roleChips: {
     flexDirection: 'row',
     gap: 8,

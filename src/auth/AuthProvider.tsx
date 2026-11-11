@@ -13,6 +13,15 @@ function normalizeRole(value: unknown): Role {
   return 'student';
 }
 
+// K-12 / phone orgs: new members wait for an admin's approval. No field means
+// approved (members from before approvals existed). Mirrors the backend's
+// memberApprovalStatus and firestore.rules' isApproved.
+export type ApprovalStatus = 'pending' | 'approved' | 'declined';
+
+function normalizeApprovalStatus(value: unknown): ApprovalStatus {
+  return value === 'pending' || value === 'declined' ? value : 'approved';
+}
+
 type AuthContextType = {
   user: User | null;
   role: Role | null;
@@ -24,6 +33,8 @@ type AuthContextType = {
   signingOut: boolean;
   emailVerified: boolean;
   isSuperAdmin: boolean;
+  approvalStatus: ApprovalStatus;
+  declineReason: string | null;
   reloadUser: () => Promise<void>;
 };
 
@@ -38,6 +49,8 @@ const AuthContext = createContext<AuthContextType>({
   signingOut: false,
   emailVerified: false,
   isSuperAdmin: false,
+  approvalStatus: 'approved',
+  declineReason: null,
   reloadUser: async () => {},
 });
 
@@ -53,6 +66,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [signingOut, setSigningOut] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>('approved');
+  const [declineReason, setDeclineReason] = useState<string | null>(null);
 
   // Effect 1: track Firebase auth state + token claims only.
   // Does NOT load role — that's the job of Effect 2's live listener.
@@ -64,6 +79,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // from a previous session can never briefly render the wrong stack while
       // Effect 2's snapshot re-validates membership.
       setRole(null);
+      setApprovalStatus('approved');
+      setDeclineReason(null);
       setInitializing(true);
 
       if (!firebaseUser) {
@@ -135,6 +152,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
             setPhone(snap.data()?.phone ?? null);
             setPhoneVerified(snap.data()?.phoneVerified === true);
+            setApprovalStatus(normalizeApprovalStatus(snap.data()?.approvalStatus));
+            setDeclineReason(snap.data()?.declineReason ?? null);
             if (!cacheFallbackTimer) {
               cacheFallbackTimer = setTimeout(() => setInitializing(false), 2000);
             }
@@ -152,6 +171,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setDisplayName(snap.data()?.displayName ?? user?.displayName ?? null);
           setPhone(snap.data()?.phone ?? null);
           setPhoneVerified(snap.data()?.phoneVerified === true);
+          setApprovalStatus(normalizeApprovalStatus(snap.data()?.approvalStatus));
+          setDeclineReason(snap.data()?.declineReason ?? null);
         } else {
           if (isSocialSignInPending()) {
             // A social sign-in is in progress — the user doc is being created
@@ -190,13 +211,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const reloadUser = useCallback(async () => {
     if (!auth.currentUser) return;
     await auth.currentUser.reload();
+    // reload() doesn't refresh the ID token, so without this Firestore keeps
+    // sending email_verified=false for up to an hour — which matters once the
+    // rules require a verified email (see firestore.rules).
+    if (auth.currentUser.emailVerified) await auth.currentUser.getIdToken(true);
     setEmailVerified(auth.currentUser.emailVerified);
   }, []);
 
   const orgId = org?.orgId ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, role, orgId, displayName, phone, phoneVerified, initializing, signingOut, emailVerified, isSuperAdmin, reloadUser }}>
+    <AuthContext.Provider value={{ user, role, orgId, displayName, phone, phoneVerified, initializing, signingOut, emailVerified, isSuperAdmin, approvalStatus, declineReason, reloadUser }}>
       {children}
     </AuthContext.Provider>
   );

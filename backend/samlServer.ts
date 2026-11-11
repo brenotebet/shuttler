@@ -34,11 +34,21 @@ import { containsProfanity } from './profanity';
 import { dataAddonAction, isLiveSubscription, mainSubscriptionAction, planForSubscription } from './billingPolicy';
 import {
   carriedOverProfile,
+  cleanDeclineReason,
+  directAuthMethodRejection,
   emailDomain,
   emailRegistrationRejection,
   inheritedSsoRole,
   legacySsoAccountMatches,
+  memberApprovalStatus,
+  normalizeAllowedEmailDomains,
+  orgSessionRejection,
+  parseParentApplication,
+  preSsoRestoreTarget,
+  requiresMemberApproval,
+  type ParentApplication,
   socialSignInRejection,
+  ssoActivationRejection,
   ssoUid,
 } from './authPolicy';
 
@@ -383,6 +393,11 @@ async function requireOrgAdmin(req: Request, res: Response, next: Function) {
       if (!userDoc.exists || userDoc.data()!.role !== 'admin') {
         return res.status(403).json({ error: 'Not authorized as org admin' });
       }
+      // Same rule as firestore.rules' sessionAllowedInOrg: a SAML org's admin
+      // API is SSO-only, so an admin offboarded at the IdP can't keep using a
+      // leftover password/Google login here.
+      const sessionError = orgSessionRejection(orgDoc.data()!.authMethod, claims?.firebase?.sign_in_provider);
+      if (sessionError) return res.status(403).json({ error: sessionError });
     }
 
     (req as any).orgSlug = orgDoc.data()!.slug;
@@ -892,6 +907,77 @@ async function reassignMemberHistory(orgId: string, fromUids: string[], toUid: s
   console.log(`[saml/exchange] reassigned history in org ${orgId}: ${fromUids.join(', ')} → ${toUid}`);
 }
 
+// The reverse of the takeover in /saml/exchange, run when an org leaves SAML
+// (its admin switches back, or a super admin uses "reset auth method to
+// email"). Each SSO member that took over earlier account(s) (ssoLinkedFrom)
+// is moved back onto the one that can still sign in, keeping its role,
+// profile, org ownership and history. Without this the escape hatch strands
+// everyone who'd signed in with SSO — the founder included: their password
+// login has no membership any more, and the SSO uid can't sign in at all.
+// SSO members with no earlier account are left as they are (they can register).
+// Returns how many members were restored. Idempotent.
+async function restorePreSsoAccounts(orgId: string): Promise<number> {
+  const db = admin.firestore();
+  const orgRef = db.collection('orgs').doc(orgId);
+  const linked = await orgRef.collection('users').where('ssoLinkedFrom', '!=', null).get();
+
+  let restored = 0;
+  for (const ssoDoc of linked.docs) {
+    const data = ssoDoc.data();
+    const linkedFrom: unknown[] = Array.isArray(data.ssoLinkedFrom) ? data.ssoLinkedFrom : [];
+
+    const loginEmails: Record<string, string | null> = {};
+    for (const u of linkedFrom) {
+      if (typeof u !== 'string') continue;
+      try {
+        loginEmails[u] = (await admin.auth().getUser(u)).email ?? null;
+      } catch (e: any) {
+        if (e?.code !== 'auth/user-not-found') throw e;
+      }
+    }
+    const target = preSsoRestoreTarget(linkedFrom, data.email, loginEmails);
+    if (!target) continue;
+
+    const targetRef = orgRef.collection('users').doc(target);
+    const role = await db.runTransaction(async (tx) => {
+      const [orgSnap, targetSnap] = await Promise.all([tx.get(orgRef), tx.get(targetRef)]);
+      const { ssoLinkedFrom: _linked, ...profile } = data;
+      const role = inheritedSsoRole([data.role, targetSnap.data()?.role]) ?? data.role ?? 'student';
+      tx.set(targetRef, {
+        ...profile,
+        uid: target,
+        orgId,
+        email: loginEmails[target]?.toLowerCase() ?? data.email ?? null,
+        role,
+        ssoRestoredFrom: ssoDoc.id,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      tx.delete(ssoDoc.ref);
+      tx.update(orgRef, {
+        adminUids: admin.firestore.FieldValue.arrayRemove(ssoDoc.id),
+        ...(orgSnap.data()?.ownerUid === ssoDoc.id ? { ownerUid: target } : {}),
+      });
+      if (role === 'admin') {
+        tx.update(orgRef, { adminUids: admin.firestore.FieldValue.arrayUnion(target) });
+      }
+      return role;
+    });
+
+    // The app and backend resolve the org from this claim; keep any others.
+    const authUser = await admin.auth().getUser(target);
+    if (!authUser.customClaims?.orgId) {
+      await admin.auth().setCustomUserClaims(target, { ...(authUser.customClaims ?? {}), orgId });
+    }
+
+    reassignMemberHistory(orgId, [ssoDoc.id], target).catch((e) =>
+      console.error(`[auth-config] history restore failed for org ${orgId} ${ssoDoc.id} → ${target}:`, e),
+    );
+    restored++;
+    console.log(`[auth-config] restored SSO member ${ssoDoc.id} → pre-SSO uid ${target} in org ${orgId} (role=${role})`);
+  }
+  return restored;
+}
+
 // Lets an admin prove a draft SAML config actually works — a real SP-initiated
 // round trip through startSamlLogin() — without the two side effects a real
 // login would have: it never mints a Firebase session (so it can't hijack the
@@ -911,6 +997,21 @@ app.post('/saml/:orgSlug/test-verify', async (req: Request, res: Response) => {
   if (!payload) return res.status(401).json({ error: 'Invalid or expired SAML handoff token' });
 
   const { email, displayName } = extractSamlProfile(payload.attributes);
+
+  // Remember who the test signed in as: activation requires it to be the
+  // activating admin (ssoActivationRejection), so nobody activates SSO with an
+  // IdP account that won't carry their admin role over. Stored inside
+  // samlConfig so saving a changed draft (which rewrites samlConfig) clears it.
+  try {
+    const orgRef = admin.firestore().collection('orgs').doc(payload.orgId);
+    if ((await orgRef.get()).data()?.samlConfig) {
+      await orgRef.update({
+        'samlConfig.lastTest': { email: email ? email.toLowerCase() : null, atMs: Date.now() },
+      });
+    }
+  } catch (e) {
+    console.error('[saml/test-verify] failed to record test result:', e);
+  }
 
   // Lets the setup screen warn the admin about attributes their IdP isn't
   // releasing, before real users sign in with blank profiles.
@@ -1179,6 +1280,7 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
         typeof org.founderEmail === 'string' &&
         org.founderEmail.toLowerCase() === (email as string).toLowerCase().trim();
       const role = isFounder ? 'admin' : 'student';
+      const pendingApproval = !isFounder && requiresMemberApproval(org);
 
       await admin.firestore()
         .collection('orgs').doc(orgId)
@@ -1193,7 +1295,15 @@ app.post('/auth/email/register', async (req: Request, res: Response) => {
           agreedToTermsAt: agreedToTerms ? admin.firestore.FieldValue.serverTimestamp() : null,
           lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...(pendingApproval
+            ? { approvalStatus: 'pending', approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp() }
+            : {}),
         });
+
+      if (pendingApproval) {
+        notifyAdminsOfPendingMember(orgId, (displayName as string | undefined) ?? (email as string)).catch((err) =>
+          console.error('[register] pending-member push failed:', err));
+      }
 
       if (isFounder) {
         await admin.firestore().collection('orgs').doc(orgId).update({
@@ -1352,6 +1462,157 @@ app.delete(
     }
   },
 );
+
+// ---- Admin: approve or decline a pending member (K-12 / phone orgs) ----
+// Body: { decision: 'approve' | 'decline', reason?: string }. Declining keeps
+// the doc (status 'declined', no access) so the person sees why and can ask
+// again; removing them outright is still DELETE /admin/orgs/:orgId/users/:uid.
+
+app.post(
+  '/admin/orgs/:orgId/users/:uid/approval',
+  requireAuth,
+  requireOrgAdmin,
+  async (req: Request, res: Response) => {
+    const { orgId, uid } = req.params as { orgId: string; uid: string };
+    const { decision, reason } = req.body as { decision?: string; reason?: unknown };
+    if (decision !== 'approve' && decision !== 'decline') {
+      return res.status(400).json({ error: "decision must be 'approve' or 'decline'" });
+    }
+    const callerUid = (req as any).uid as string;
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const userRef = orgRef.collection('users').doc(uid);
+
+    try {
+      const outcome = await admin.firestore().runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        if (!snap.exists) return { status: 'not_found' as const };
+        if (memberApprovalStatus(snap.data()) !== 'pending') return { status: 'not_pending' as const };
+        if (decision === 'approve') {
+          tx.update(userRef, {
+            approvalStatus: 'approved',
+            approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+            approvedBy: callerUid,
+            declineReason: admin.firestore.FieldValue.delete(),
+          });
+        } else {
+          tx.update(userRef, {
+            approvalStatus: 'declined',
+            declinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            declinedBy: callerUid,
+            declineReason: cleanDeclineReason(reason),
+          });
+        }
+        return { status: 'ok' as const, pushToken: snap.data()?.expoPushToken as string | undefined };
+      });
+
+      if (outcome.status === 'not_found') return res.status(404).json({ error: 'User not found in this org' });
+      if (outcome.status === 'not_pending') {
+        return res.status(409).json({ error: 'This request was already handled.' });
+      }
+
+      if (outcome.pushToken) {
+        const orgName = (await orgRef.get()).data()?.name ?? 'your school';
+        sendExpoPushNotifications(
+          [outcome.pushToken],
+          decision === 'approve' ? "You're approved!" : 'Request not approved',
+          decision === 'approve'
+            ? `${orgName} approved your account. Open Shuttler to see the bus live.`
+            : `${orgName} didn't approve your request. Please contact the school office.`,
+          { type: decision === 'approve' ? 'member_approved' : 'member_declined', orgId },
+        ).catch((e) => console.error('[approval] push failed:', e));
+      }
+      await writeAdminAudit(req, decision === 'approve' ? 'approve-member' : 'decline-member', orgId, { uid })
+        .catch((e) => console.error('[approval] audit failed:', e));
+      return res.json({ uid, approvalStatus: decision === 'approve' ? 'approved' : 'declined' });
+    } catch (e) {
+      console.error('Member approval error:', e);
+      return res.status(500).json({ error: 'Failed to update the request' });
+    }
+  },
+);
+
+// ---- Member: ask again after being declined ----
+// Body: { application? } — required for phone sign-ins (same as first sign-up).
+
+const reapplyLimit = createRateLimiter(60 * 60_000, 3);
+
+app.post('/orgs/:orgId/membership/reapply', requireAuth, async (req: Request, res: Response) => {
+  const orgId = req.params.orgId as string;
+  const uid = (req as any).uid as string;
+  if (reapplyLimit(uid)) {
+    return res.status(429).json({ error: 'Too many requests. Try again later.' });
+  }
+  const provider = (req as any).claims?.firebase?.sign_in_provider as string | undefined;
+  const userRef = admin.firestore().collection('orgs').doc(orgId).collection('users').doc(uid);
+
+  try {
+    const snap = await userRef.get();
+    if (!snap.exists || memberApprovalStatus(snap.data()) !== 'declined') {
+      return res.status(409).json({ error: 'There is no declined request to resend.' });
+    }
+
+    let application: ParentApplication | null = null;
+    if (provider === 'phone') {
+      const parsed = parseParentApplication((req.body as any)?.application);
+      if ('error' in parsed) return res.status(422).json({ error: parsed.error, code: 'application_required' });
+      if ([parsed.fullName, ...parsed.children.map((c) => c.name)].some(containsProfanity)) {
+        return res.status(400).json({ error: 'Names contain inappropriate language.' });
+      }
+      application = parsed;
+    }
+
+    const batch = admin.firestore().batch();
+    batch.update(userRef, {
+      approvalStatus: 'pending',
+      approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+      declineReason: admin.firestore.FieldValue.delete(),
+      ...(application
+        ? {
+            displayName: application.fullName,
+            relationship: application.relationship,
+            approvalRequest: { children: application.children },
+          }
+        : {}),
+    });
+    if (application) {
+      // Replace the children profiles with what they just entered.
+      const existing = await userRef.collection('children').get();
+      existing.docs.forEach((d) => batch.delete(d.ref));
+      for (const child of application.children) {
+        batch.set(userRef.collection('children').doc(), {
+          name: child.name,
+          grade: child.grade,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    }
+    await batch.commit();
+
+    notifyAdminsOfPendingMember(orgId, application?.fullName ?? snap.data()?.displayName ?? 'Someone').catch((e) =>
+      console.error('[reapply] pending-member push failed:', e));
+    return res.json({ approvalStatus: 'pending' });
+  } catch (e) {
+    console.error('[reapply] error:', e);
+    return res.status(500).json({ error: 'Failed to resend your request' });
+  }
+});
+
+// Push every admin of the org that someone is waiting for approval.
+async function notifyAdminsOfPendingMember(orgId: string, name: string): Promise<void> {
+  const admins = await admin.firestore()
+    .collection('orgs').doc(orgId).collection('users')
+    .where('role', '==', 'admin')
+    .get();
+  const tokens = admins.docs
+    .map((d) => d.data()?.expoPushToken)
+    .filter((t): t is string => typeof t === 'string' && !!t);
+  await sendExpoPushNotifications(
+    tokens,
+    'New member waiting for approval',
+    `${name} asked to join. Review the request in Org Setup → People.`,
+    { type: 'member_pending', orgId },
+  );
+}
 
 // ---- Self-service account deletion (Apple App Store 5.1.1(v) requirement) ----
 // A user deletes their own account: removes their Firestore membership, public
@@ -1537,13 +1798,26 @@ app.post(
     // Only overwrite allowedEmailDomains when the admin explicitly sends it.
     // Omitting it preserves whatever was previously configured.
     if (allowedEmailDomains !== undefined) {
-      update.allowedEmailDomains = allowedEmailDomains;
+      const domains = normalizeAllowedEmailDomains(allowedEmailDomains);
+      if (!domains) {
+        return res.status(400).json({ error: 'allowedEmailDomains must be a list of domains like "school.edu".' });
+      }
+      update.allowedEmailDomains = domains;
     }
+
+    const orgRef = admin.firestore().collection('orgs').doc(orgId);
+    const current = (await orgRef.get()).data() ?? {};
+    const wasSaml = current.authMethod === 'saml';
 
     let spEntityId: string | undefined;
     let acsUrl: string | undefined;
 
-    if (authMethod === 'saml' && samlConfig) {
+    if (authMethod === 'saml' && !samlConfig) {
+      // Domains-only save for an SSO org (e.g. the super-admin panel's
+      // "Allowed domains"). This used to fall through to the branch below,
+      // which deleted samlConfig while leaving authMethod 'saml' — locking
+      // the whole org out. Never touch the SAML config or method here.
+    } else if (authMethod === 'saml' && samlConfig) {
       acsUrl = `${API_BASE_URL}/saml/${orgSlug}/acs`;
       spEntityId = `${API_BASE_URL}/orgs/${orgId}`;
 
@@ -1576,24 +1850,61 @@ app.post(
       // endpoints (login/acs/metadata) key off org.samlConfig regardless of
       // authMethod, so a draft is fully testable. Only an explicit
       // activate:true (sent after a successful test) changes authMethod.
-      if (activate === true) {
+      if (activate === true && !wasSaml) {
+        const claims = (req as any).claims as admin.auth.DecodedIdToken | undefined;
+        const callerUid = (req as any).uid as string;
+        const stored = current.samlConfig ?? {};
+        // The tested config must be the one going live.
+        const sameConfig = stored.idpEntityId === samlConfig.idpEntityId
+          && stored.idpSsoUrl === samlConfig.idpSsoUrl
+          && (!samlConfig.idpSigningCert || samlConfig.idpSigningCert === stored.idpSigningCert);
+        const callerDoc = await orgRef.collection('users').doc(callerUid).get();
+        const rejection = !isSuperAdminClaims(claims) && !sameConfig
+          ? 'Save and test this SSO configuration before activating it.'
+          : ssoActivationRejection({
+              lastTest: stored.lastTest,
+              callerEmails: [claims?.email, callerDoc.data()?.email],
+              isSuperAdmin: isSuperAdminClaims(claims),
+              nowMs: Date.now(),
+            });
+        if (rejection) return res.status(409).json({ error: rejection, code: 'sso_activation_blocked' });
+        update.authMethod = 'saml';
+      } else if (activate === true) {
         update.authMethod = 'saml';
       }
     } else {
       // Switching to email/phone is a single step — there's no untested
       // config to gate, and it's always safe to fall back to a known-good method.
+      const methodError = directAuthMethodRejection(authMethod);
+      if (methodError) return res.status(400).json({ error: methodError });
       update.samlConfig = admin.firestore.FieldValue.delete();
       update.authMethod = authMethod;
     }
 
-    await admin.firestore().collection('orgs').doc(orgId).update(update);
+    await orgRef.update(update);
     if (update.authMethod) {
       await admin.firestore()
         .collection('orgSlugs').doc(orgSlug)
         .update({ authMethod: update.authMethod });
     }
 
-    return res.json({ ok: true, spEntityId, acsUrl, activated: update.authMethod === 'saml' });
+    // Leaving SSO: /saml/exchange moved each linked member (the founder's
+    // password admin login included) onto an SSO-only uid that can't sign in
+    // any more. Move them back so they — and their admin role and ownership —
+    // can sign in with their original login again.
+    let restored = 0;
+    if (wasSaml && update.authMethod && update.authMethod !== 'saml') {
+      try {
+        restored = await restorePreSsoAccounts(orgId);
+      } catch (e) {
+        console.error(`[auth-config] restoring pre-SSO accounts failed for org ${orgId}:`, e);
+        return res.status(500).json({
+          error: 'Sign-in method changed, but restoring members\' previous logins failed. Contact support@shuttler.net.',
+        });
+      }
+    }
+
+    return res.json({ ok: true, spEntityId, acsUrl, activated: update.authMethod === 'saml', restoredAccounts: restored });
   },
 );
 
@@ -3061,7 +3372,10 @@ async function sendExpoPushNotifications(
 async function getOrgRole(orgId: string, uid: string): Promise<string | null> {
   const snap = await admin.firestore()
     .collection('orgs').doc(orgId).collection('users').doc(uid).get();
-  return snap.exists ? ((snap.data() as any)?.role ?? null) : null;
+  // A member still waiting for (or refused) approval has no role yet —
+  // same as firestore.rules' isMember().
+  if (!snap.exists || memberApprovalStatus(snap.data()) !== 'approved') return null;
+  return (snap.data() as any)?.role ?? null;
 }
 
 async function requireDriverCaller(orgId: string, uid: string, res: Response): Promise<boolean> {
@@ -3621,17 +3935,68 @@ app.post('/auth/social/complete', requireAuth, async (req: Request, res: Respons
       // 'admin' is never accepted from the client.
       const { role: requestedRole } = req.body as { role?: string };
       const role = requestedRole === 'parent' && provider === 'phone' ? 'parent' : 'student';
+
+      // K-12 / phone orgs: every new member waits for an admin. Phone
+      // sign-ups have no name or email, so they must say who they are and
+      // which children they're picking up — the admin checks that and the
+      // verified phone number against the school's records.
+      const pendingApproval = requiresMemberApproval(orgData);
+      let application: ParentApplication | null = null;
+      if (pendingApproval && provider === 'phone') {
+        const parsed = parseParentApplication((req.body as any)?.application);
+        if ('error' in parsed) {
+          return res.status(422).json({
+            error: (req.body as any)?.application
+              ? parsed.error
+              : 'Please update the Shuttler app to finish signing up for this school.',
+            code: 'application_required',
+          });
+        }
+        if ([parsed.fullName, ...parsed.children.map((c) => c.name)].some(containsProfanity)) {
+          return res.status(400).json({ error: 'Names contain inappropriate language.' });
+        }
+        application = parsed;
+      }
+
       isNew = true;
-      await userRef.set({
+      const batch = admin.firestore().batch();
+      batch.set(userRef, {
         uid,
         orgId,
         email,
-        displayName,
+        displayName: application?.fullName ?? displayName,
         role,
+        ...(provider === 'phone' && authUser.phoneNumber
+          ? { phone: authUser.phoneNumber, phoneVerified: true }
+          : {}),
         agreedToTermsAt: admin.firestore.FieldValue.serverTimestamp(),
         lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(pendingApproval
+          ? {
+              approvalStatus: 'pending',
+              approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+              ...(application
+                ? { relationship: application.relationship, approvalRequest: { children: application.children } }
+                : {}),
+            }
+          : {}),
       });
+      // The children become the parent's "My Children" profiles, so they
+      // don't type them twice (and the rules don't let a pending parent write them).
+      for (const child of application?.children ?? []) {
+        batch.set(userRef.collection('children').doc(), {
+          name: child.name,
+          grade: child.grade,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+
+      if (pendingApproval) {
+        notifyAdminsOfPendingMember(orgId, application?.fullName ?? displayName ?? email ?? 'Someone').catch((err) =>
+          console.error('[auth/social/complete] pending-member push failed:', err));
+      }
     }
 
     // Spread existing claims so we never clobber superAdmin or other flags.
