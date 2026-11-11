@@ -3110,6 +3110,9 @@ async function sendExpoPushNotifications(
   title: string,
   body: string,
   data?: Record<string, string>,
+  // Custom sound file (iOS) and channel (Android, where the channel sets the
+  // sound). App builds without them fall back to the default sound/channel.
+  opts: { sound?: string; channelId?: string } = {},
 ): Promise<void> {
   const valid = tokens.filter((t) => t && t.startsWith('ExponentPushToken['));
   if (valid.length === 0) return;
@@ -3120,7 +3123,8 @@ async function sendExpoPushNotifications(
       to,
       title,
       body,
-      sound: 'default',
+      sound: opts.sound ?? 'default',
+      ...(opts.channelId ? { channelId: opts.channelId } : {}),
       ...(data ? { data } : {}),
     }));
 
@@ -3212,6 +3216,7 @@ app.post('/notifications/stop-request-created', requireAuth, async (req: Request
       'New Stop Request',
       'A student is requesting a pickup.',
       { type: 'new_request', orgId },
+      { sound: 'stop_request.wav', channelId: 'stop-requests' },
     );
     return res.json({ sent: tokens.length });
   } catch (e) {

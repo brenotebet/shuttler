@@ -75,7 +75,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: './assets/favicon.png',
   },
   plugins: [
-    ['expo-notifications', { mode: 'production' }],
+    // Custom sounds are bundled into the native build — changing them needs a
+    // new EAS build, not an OTA update.
+    ['expo-notifications', { mode: 'production', sounds: ['./assets/sounds/stop_request.wav'] }],
     ['expo-location'],
     ['expo-image-picker'],
     ['expo-apple-authentication'],
