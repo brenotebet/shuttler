@@ -29,8 +29,17 @@ service cloud.firestore {
         || request.auth.token.firebase.sign_in_provider == 'custom';
     }
 
+    // K-12 / phone orgs: a new member waits for an org admin's approval
+    // (approvalStatus 'pending', or 'declined'). Until then they're not a
+    // member — anyone with a phone number could otherwise watch the school's
+    // buses. No approvalStatus = approved (members from before approvals).
+    function isApproved(orgId) {
+      return get(userDocPath(orgId, request.auth.uid)).data.get('approvalStatus', 'approved') == 'approved';
+    }
+
     function myRole(orgId) {
       return signedIn() && hasUserDoc(orgId, request.auth.uid) && sessionAllowedInOrg(orgId)
+          && isApproved(orgId)
         ? get(userDocPath(orgId, request.auth.uid)).data.role
         : null;
     }
@@ -44,7 +53,8 @@ service cloud.firestore {
     }
 
     function isMember(orgId) {
-      return signedIn() && hasUserDoc(orgId, request.auth.uid) && sessionAllowedInOrg(orgId);
+      return signedIn() && hasUserDoc(orgId, request.auth.uid) && sessionAllowedInOrg(orgId)
+        && isApproved(orgId);
     }
 
     function orgIsActive(orgId) {
@@ -143,6 +153,8 @@ service cloud.firestore {
 
       // Update own profile but never change role, orgId or identity fields —
       // /saml/exchange links accounts by email, so it must stay server-written.
+      // Approval fields are server-written too (a pending member may still
+      // save their push token, so they hear when they're approved).
       // Admins may also set defaultRouteId on any member's doc.
       allow update: if signedIn() && (
         (
@@ -150,7 +162,9 @@ service cloud.firestore {
           && request.resource.data.role == resource.data.role
           && request.resource.data.orgId == orgId
           && !request.resource.data.diff(resource.data).affectedKeys()
-              .hasAny(['email', 'uid', 'ssoLinkedFrom'])
+              .hasAny(['email', 'uid', 'ssoLinkedFrom', 'approvalStatus', 'approvalRequest',
+                       'approvalRequestedAt', 'approvedAt', 'approvedBy', 'declinedAt',
+                       'declinedBy', 'declineReason', 'relationship'])
           && sessionAllowedInOrg(orgId)
           && orgIsActive(orgId)
         ) || (
@@ -298,6 +312,9 @@ service cloud.firestore {
         && request.auth.uid == parentUid
         && myRole(orgId) == 'parent'
         && orgIsActive(orgId);
+      // Admins see who a parent picks up — including children added after
+      // the parent was approved.
+      allow read: if isAdmin(orgId);
     }
 
     // ---------- AI Insights ----------

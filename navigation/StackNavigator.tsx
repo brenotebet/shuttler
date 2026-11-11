@@ -12,6 +12,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import OrgSelectorScreen from '../screens/OrgSelectorScreen';
 import AuthScreen from '../screens/AuthScreen';
 import EmailVerificationScreen from '../screens/EmailVerificationScreen';
+import PendingApprovalScreen from '../screens/PendingApprovalScreen';
 import StudentTabs from '../tabs/StudentTabs';
 import DriverTabs from '../tabs/DriverTabs';
 import DriverHistoryScreen from '../screens/DriverHistoryScreen';
@@ -41,6 +42,7 @@ export type RootStackParamList = {
   CreateOrg: undefined;
   Auth: { orgId: string; initialEmail?: string };
   EmailVerification: undefined;
+  PendingApproval: undefined;
 
   // Authenticated stacks
   StudentHome: { screen: 'Map'; params: { focusStopId?: string; focusStopName?: string } } | undefined;
@@ -134,7 +136,7 @@ function RejectedOrgScreen() {
 }
 
 export default function StackNavigator() {
-  const { user, role, initializing, signingOut, emailVerified } = useAuth();
+  const { user, role, initializing, signingOut, emailVerified, approvalStatus } = useAuth();
   const { org, isLoadingOrg } = useOrg();
 
   useEffect(() => {
@@ -174,6 +176,17 @@ export default function StackNavigator() {
       return (
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="EmailVerification" component={EmailVerificationScreen} />
+        </Stack.Navigator>
+      );
+    }
+
+    // K-12 / phone orgs: new members wait for an admin to approve them. The
+    // rules give them no org data until then; this keeps the app from
+    // half-loading behind permission errors.
+    if (approvalStatus !== 'approved') {
+      return (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="PendingApproval" component={PendingApprovalScreen} />
         </Stack.Navigator>
       );
     }

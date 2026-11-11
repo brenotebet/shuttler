@@ -48,6 +48,7 @@ import {
 import { borderRadius, cardShadow, spacing } from '../src/styles/common';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import PhoneInput, { isValidE164 } from '../src/components/PhoneInput';
+import ParentApplicationForm, { type ParentApplication } from '../src/components/ParentApplicationForm';
 import { PASSWORD_RULES } from '../src/utils/passwordPolicy';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Auth'>;
@@ -851,10 +852,14 @@ function EmailPanel({ orgSlug, orgId, initialEmail, adminOnly }: { orgSlug: stri
 // ---- Phone Panel ----
 // Used for K-12 parent sign-in. Sends an SMS OTP via Firebase Phone Auth.
 // First-time users are created with role:'parent' in the org's user collection.
+// They first fill in who they are and which children they pick up ("Request
+// access") — the school approves them before they can see the bus.
 
 function PhonePanel({ orgId }: { orgId: string }) {
   const { primaryColor } = useOrgTheme();
   const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+  const [mode, setMode] = useState<'signin' | 'request'>('signin');
+  const [application, setApplication] = useState<ParentApplication | null>(null);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationId, setVerificationId] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -894,10 +899,23 @@ function PhonePanel({ orgId }: { orgId: string }) {
       const res = await fetch(`${SHUTTLER_API_URL}/auth/social/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId, role: 'parent' }),
+        body: JSON.stringify({ orgId, role: 'parent', ...(application ? { application } : {}) }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        if (body?.code === 'application_required') {
+          // New to this school but came in through "Sign in" — they need to
+          // tell the school who they are first.
+          await signOut(auth).catch(() => {});
+          setVerificationId(null);
+          setCode('');
+          setMode('request');
+          showAlert(
+            "This number isn't registered with the school yet. Tell them who you are and which children you pick up, then verify your number again.",
+            'Request access',
+          );
+          return;
+        }
         throw new Error(body?.error ?? 'Failed to complete sign-in. Please try again.');
       }
     } catch (e: any) {
@@ -913,7 +931,13 @@ function PhonePanel({ orgId }: { orgId: string }) {
       clearSocialSignInPending();
       setIsSubmitting(false);
     }
-  }, [verificationId, code, orgId]);
+  }, [verificationId, code, orgId, application]);
+
+  const switchMode = (next: 'signin' | 'request') => {
+    setMode(next);
+    setVerificationId(null);
+    setCode('');
+  };
 
   return (
     <View style={styles.card}>
@@ -923,14 +947,38 @@ function PhonePanel({ orgId }: { orgId: string }) {
         attemptInvisibleVerification
       />
 
+      <View style={styles.tabRow}>
+        {([['signin', 'Sign in'], ['request', 'Request access']] as const).map(([key, label]) => (
+          <TouchableOpacity
+            key={key}
+            style={[styles.tab, mode === key && { borderBottomColor: primaryColor, borderBottomWidth: 2 }]}
+            onPress={() => switchMode(key)}
+            disabled={isSubmitting}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: mode === key }}
+          >
+            <Text style={[styles.tabText, mode === key && { color: primaryColor }]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       <InfoBanner
         icon="sms"
-        title="Parent sign-in"
-        description="Enter your phone number and we'll send a one-time code to verify it."
+        title={mode === 'request' ? 'New to this school?' : 'Parent sign-in'}
+        description={mode === 'request'
+          ? 'Tell the school who you are, then verify your phone number. The school approves you before you can see the bus.'
+          : "Enter your phone number and we'll send a one-time code to verify it."}
         style={{ marginBottom: spacing.item }}
       />
 
-      {!verificationId ? (
+      {mode === 'request' && !application ? (
+        <ParentApplicationForm
+          primaryColor={primaryColor}
+          submitting={false}
+          submitLabel="Continue"
+          onSubmit={setApplication}
+        />
+      ) : !verificationId ? (
         <>
           <PhoneInput
             value={phoneNumber}
@@ -971,6 +1019,11 @@ function PhonePanel({ orgId }: { orgId: string }) {
             <Text style={[styles.forgotText, { color: primaryColor }]}>Wrong number? Start over</Text>
           </TouchableOpacity>
         </>
+      )}
+      {mode === 'request' && application && !verificationId && (
+        <TouchableOpacity onPress={() => setApplication(null)} style={styles.forgotButton}>
+          <Text style={[styles.forgotText, { color: primaryColor }]}>Edit my details</Text>
+        </TouchableOpacity>
       )}
     </View>
   );
