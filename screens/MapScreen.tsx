@@ -74,7 +74,7 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText } from '../src/utils/scheduleUtils';
 import { getBusProgress, AT_STOP_METERS } from '../src/utils/busRoute';
-import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
+import { nextHeading, glideDurationMs, shouldJumpToPosition } from '../src/utils/busMotion';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
 import { groupOverlappingBuses, sameGroups, type BusGroups } from '../src/utils/busClusters';
 import { decodePath, snapToPath } from '../src/utils/routePath';
@@ -309,12 +309,25 @@ export default function MapScreen() {
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org?.stops, org?.routes, primaryColor, watchedKey]);
+  // Route lines to draw: the watched routes (or all), those with a saved
+  // road path. The key changes when a route's path or color changes so the
+  // line is replaced rather than mutated.
+  const shownRouteLines = useMemo(
+    () => orgRoutes
+      .filter((r) => routePaths[r.id] && (watchedRouteIds.length === 0 || watchedRouteIds.includes(r.id)))
+      .map((r) => ({ route: r, coords: routePaths[r.id], key: `${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}` })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.routes, routePaths, watchedKey],
+  );
   const stopStylesRef = useRef(stopStyles);
   stopStylesRef.current = stopStyles;
   // Changes whenever any pin's look changes, to redraw the marker snapshots.
-  const stopStylesKey = Object.entries(stopStyles)
-    .map(([id, st]) => `${id}:${st.color}:${st.dots.join('/')}:${st.visible ? 1 : 0}`)
-    .join('|');
+  const stopStylesKey = useMemo(
+    () => Object.entries(stopStyles)
+      .map(([id, st]) => `${id}:${st.color}:${st.dots.join('/')}:${st.visible ? 1 : 0}`)
+      .join('|'),
+    [stopStyles],
+  );
   // Returns a Firestore CollectionReference scoped to the current org.
   // Throws if orgId is not loaded — callers must only run after org is available.
   const orgCol = (name: string) => {
@@ -550,13 +563,17 @@ export default function MapScreen() {
   // Buses that pass the "Now watching" filter. Filtered-out buses stay
   // mounted (hidden via opacity) — see the marker note in the map below.
   // The rider's own ride is never filtered out: its assigned driver, or
-  // any bus on the route the request was made on.
+  // any bus on the route the request was made on. If the request has no
+  // route, or no bus on it is online, the ride falls back to the closest bus
+  // of any route (see resolvedDriverId) — so nothing is filtered then.
   const rideInProgress = !!request && request.id !== dismissedRequestId
     && ['pending', 'accepted', 'awaiting_confirmation'].includes(request.status);
+  const rideRouteId: string | null = rideInProgress ? request?.routeId ?? null : null;
+  const rideRouteHasBus = !!rideRouteId && visibleBusIds.some((id) => busRouteIds[id] === rideRouteId);
   const shownBusIds = visibleBusIds.filter((id) => isBusShown(
     busRouteIds[id],
     watchedRouteIds,
-    rideInProgress && (id === driverId || (!!request?.routeId && busRouteIds[id] === request.routeId)),
+    rideInProgress && (id === driverId || !rideRouteHasBus || busRouteIds[id] === rideRouteId),
   ));
 
   const [showLocationList, setShowLocationList] = useState(false);
@@ -667,9 +684,13 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busLocations, shownBusIds.join(',')]);
   // A bus changed route, or a route changed color: redraw bus snapshots.
-  const busColorKey = Object.entries(busRouteIds)
-    .map(([id, routeId]) => `${id}:${orgRoutes.find((r) => r.id === routeId)?.color ?? ''}`)
-    .join('|');
+  const busColorKey = useMemo(
+    () => Object.entries(busRouteIds)
+      .map(([id, routeId]) => `${id}:${orgRoutes.find((r) => r.id === routeId)?.color ?? ''}`)
+      .join('|'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [busRouteIds, org?.routes],
+  );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { bumpBusTracks(); }, [busColorKey, primaryColor]);
   // Close the chooser if its group breaks up (a bus drove off or went offline).
@@ -1149,18 +1170,26 @@ export default function MapScreen() {
           const prev = lastCoords.current[id];
           const positionChanged = !prev || prev.latitude !== latitude || prev.longitude !== longitude;
           if (!prev) anyBusMoved = true;
+          const updateMs = timestamp.getTime();
+          // Catching up after a long gap (app was backgrounded): jump instead
+          // of gliding a straight line across campus — see shouldJumpToPosition.
+          const jump = positionChanged
+            && shouldJumpToPosition(lastUpdateMs.current[id] ?? null, updateMs, prev ?? null, { latitude, longitude });
           // Parked buses keep their heading (they used to snap to north), and
           // turns are eased over a couple of updates instead of snapping.
+          // After a jump, the direction between the two far-apart fixes says
+          // nothing about which way the bus faces now: keep the old heading
+          // and stop trusting it until the next real movement.
           const prevHeading = headings.current[id] ?? null;
-          const computed = nextHeading(prevHeading, prev ?? null, { latitude, longitude });
-          if (computed !== null) headingKnown.current.add(id);
+          const computed = jump ? prevHeading : nextHeading(prevHeading, prev ?? null, { latitude, longitude });
+          if (jump) headingKnown.current.delete(id);
+          else if (computed !== null) headingKnown.current.add(id);
           const heading = computed ?? 0;
           if (!anyBusMoved && prev && (positionChanged || heading !== prevHeading)) anyBusMoved = true;
           headings.current[id] = heading;
 
           // Glide over the real time since this bus's last update so it
           // arrives as the next one lands, instead of moving then pausing.
-          const updateMs = timestamp.getTime();
           const glideMs = glideDurationMs(lastUpdateMs.current[id] ?? null, updateMs);
           if (positionChanged) lastUpdateMs.current[id] = updateMs;
 
@@ -1184,6 +1213,9 @@ export default function MapScreen() {
               latitudeDelta: 0,
               longitudeDelta: 0,
             });
+          } else if (jump) {
+            busRegions.current[id].stopAnimation(() => {});
+            busRegions.current[id].setValue({ latitude, longitude, latitudeDelta: 0, longitudeDelta: 0 });
           } else if (positionChanged) {
             // Only re-aim when this bus moved — other buses' updates also
             // fire this snapshot and must not restart its glide.
@@ -2338,39 +2370,37 @@ const handleConfirmSheetConfirm = async () => {
         {/* Route lines along the roads (only routes with a saved path). Drawn
             first so stops and buses sit on top. Key includes the path so a
             changed route replaces its line rather than mutating it. */}
-        {orgRoutes.map((r) => {
-          const coords = routePaths[r.id];
-          if (!coords) return null;
-          if (watchedRouteIds.length > 0 && !watchedRouteIds.includes(r.id)) return null;
+        {/* Two passes — every white outline first, then every colored line —
+            so on roads shared by several routes one route's outline never
+            covers another route's line; the colors overlap instead. */}
+        {shownRouteLines.map(({ coords, key }) => (
+          <Polyline
+            key={`route-casing-${key}`}
+            coordinates={coords}
+            strokeColor={ROUTE_LINE_CASING}
+            strokeColors={[ROUTE_LINE_CASING]}
+            strokeWidth={7}
+            lineCap="round"
+            lineJoin="round"
+            zIndex={1}
+          />
+        ))}
+        {shownRouteLines.map(({ route: r, coords, key }) => {
           const lineColor = (r.color ?? primaryColor) + '99';
-          const lineKey = `${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}`;
-          // A white outline under the colored line, like road layers in
-          // Apple/Google Maps, so the route reads as sitting above the map.
           return (
-            <React.Fragment key={`route-path-${lineKey}`}>
-              <Polyline
-                coordinates={coords}
-                strokeColor={ROUTE_LINE_CASING}
-                strokeColors={[ROUTE_LINE_CASING]}
-                strokeWidth={7}
-                lineCap="round"
-                lineJoin="round"
-                zIndex={1}
-              />
-              <Polyline
-                coordinates={coords}
-                strokeColor={lineColor}
-                strokeColors={[lineColor]}
-                strokeWidth={4}
-                lineCap="round"
-                lineJoin="round"
-                zIndex={1}
-              />
-            </React.Fragment>
+            <Polyline
+              key={`route-path-${key}`}
+              coordinates={coords}
+              strokeColor={lineColor}
+              strokeColors={[lineColor]}
+              strokeWidth={4}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={1}
+            />
           );
         })}
 
-        {/* Campus stops — hidden destination stop while ride is active */}
         {/* Stops on other routes than the watched one stay mounted and are
             hidden via opacity, like buses (see the marker note below). */}
         {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => {
