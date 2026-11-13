@@ -313,6 +313,28 @@ export default function DriverScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSharing, activeRoute?.id]);
 
+  // Online and the route being driven goes away — an admin deleted it, or
+  // (with routes assigned) removed this driver's assignment. The bus then has
+  // no route, so tell the driver instead of leaving them on a route-less bus.
+  // When routes are assigned the driver can't pick one, so go offline.
+  const lastDrivenRouteRef = useRef<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!isSharing) { lastDrivenRouteRef.current = null; return; }
+    if (activeRoute) { lastDrivenRouteRef.current = { id: activeRoute.id, name: activeRoute.name }; return; }
+    const lost = lastDrivenRouteRef.current;
+    if (!lost || orgRoutes.length < 2) return;
+    lastDrivenRouteRef.current = null;
+    const deleted = !orgRoutes.some((r) => r.id === lost.id);
+    const what = deleted ? `"${lost.name}" was removed by your admin.` : `Your admin removed your route assignment ("${lost.name}").`;
+    if (routeLocked) {
+      void stopSharing();
+      Alert.alert('Route removed', `${what} You're offline until they assign you a route.`);
+    } else {
+      Alert.alert('Route removed', `${what} Pick the route you're driving under Route Progress — until then riders don't see which route you're on.`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSharing, activeRoute?.id, orgRoutes, routeLocked]);
+
   // Route chip tapped. While online, confirm first: riders see the bus move
   // to the new route.
   const chooseRoute = (route: Route) => {
@@ -1161,7 +1183,7 @@ export default function DriverScreen() {
             )}
             {needsRouteChoice && (
               <Text style={[styles.headerSubtitle, styles.headerSubtitleWarn]}>
-                <Icon name="route" size={12} color="#b45309" /> {routeLocked ? 'No route assigned yet' : 'Choose your route to go online'}
+                <Icon name="route" size={12} color="#b45309" /> {routeLocked ? 'No route assigned yet' : isSharing ? 'Pick the route you\'re driving' : 'Choose your route to go online'}
               </Text>
             )}
           </View>
@@ -1455,7 +1477,9 @@ export default function DriverScreen() {
             <Text style={styles.emptyText}>
               {routeLocked
                 ? 'Your admin assigns routes. Ask them to assign you one to go online.'
-                : 'Choose the route you\'re driving to go online.'}
+                : isSharing
+                  ? 'Pick the route you\'re driving so riders see your bus on it.'
+                  : 'Choose the route you\'re driving to go online.'}
             </Text>
           )}
 

@@ -67,8 +67,11 @@ export function watchedRoutesLabel(watchedRoutes: { name: string }[]): string {
 /**
  * Pin style for a stop. Only the routes being watched count (all of them for
  * All routes):
- * - on none of them: hidden — unless the stop is on no route at all, which
- *   stays visible in the org color;
+ * - on none of them: hidden;
+ * - on no route at all: hidden too once the org has routes — drivers only
+ *   see their own route's stops, so nobody would serve a request there (e.g.
+ *   a stop left behind when its route was deleted). In an org with no
+ *   routes every stop is shown in the org color;
  * - on one (or several sharing a color): that route's color;
  * - on several: a neutral pin with one dot per route color.
  */
@@ -80,7 +83,7 @@ export function getStopMarkerStyle(
   watchedRouteIds: readonly string[],
 ): StopMarkerStyle {
   const onRoutes = routes.filter((r) => r.stopIds.includes(stopId));
-  if (onRoutes.length === 0) return { color: orgColor, dots: [], visible: true };
+  if (onRoutes.length === 0) return { color: orgColor, dots: [], visible: routes.length === 0 };
 
   const counted = watchedRouteIds.length > 0
     ? onRoutes.filter((r) => watchedRouteIds.includes(r.id))
@@ -119,4 +122,13 @@ export function pickDefaultRouteColor(
   taken.add(orgColor.toLowerCase());
   const free = palette.find((c) => !taken.has(c.toLowerCase()));
   return free ?? palette[existingRoutes.length % palette.length];
+}
+
+/**
+ * Stops that are on none of the given routes. Once an org has routes these
+ * can't be requested (no driver sees them), so the admin is warned before a
+ * route deletion leaves any behind.
+ */
+export function stopsOnNoRoute<S extends { id: string }>(stops: S[], routes: RouteLike[]): S[] {
+  return stops.filter((s) => !routes.some((r) => r.stopIds.includes(s.id)));
 }

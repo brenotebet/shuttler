@@ -4,6 +4,7 @@ import {
   parseStoredWatchedRouteIds,
   pickDefaultRouteColor,
   resolveWatchedRouteIds,
+  stopsOnNoRoute,
   toggleWatchedRoute,
   watchedRoutesLabel,
 } from '../src/utils/routeDisplay';
@@ -99,8 +100,12 @@ describe('getStopMarkerStyle — All routes', () => {
     expect(getStopMarkerStyle('s', same, ORG, NEUTRAL, [])).toEqual({ color: '#2563eb', dots: [], visible: true });
   });
 
-  it('keeps a stop on no route in the org color', () => {
-    expect(getStopMarkerStyle('lonely', routes, ORG, NEUTRAL, [])).toEqual({ color: ORG, dots: [], visible: true });
+  it('hides a stop on no route once the org has routes (no driver serves it)', () => {
+    expect(getStopMarkerStyle('lonely', routes, ORG, NEUTRAL, [])).toEqual({ color: ORG, dots: [], visible: false });
+  });
+
+  it('shows every stop in the org color when the org has no routes', () => {
+    expect(getStopMarkerStyle('lonely', [], ORG, NEUTRAL, [])).toEqual({ color: ORG, dots: [], visible: true });
   });
 });
 
@@ -122,8 +127,8 @@ describe('getStopMarkerStyle — watching routes', () => {
     expect(getStopMarkerStyle('d', routes, ORG, NEUTRAL, ['north', 'south']).visible).toBe(false);
   });
 
-  it('still shows stops on no route', () => {
-    expect(getStopMarkerStyle('lonely', routes, ORG, NEUTRAL, ['south'])).toEqual({ color: ORG, dots: [], visible: true });
+  it('hides stops on no route', () => {
+    expect(getStopMarkerStyle('lonely', routes, ORG, NEUTRAL, ['south']).visible).toBe(false);
   });
 });
 
@@ -161,5 +166,15 @@ describe('pickDefaultRouteColor', () => {
   it('cycles through the palette once every color is used', () => {
     const used = palette.map((c, i) => ({ id: `r${i}`, stopIds: [], color: c }));
     expect(pickDefaultRouteColor(used, palette, ORG)).toBe(palette[0]);
+  });
+});
+
+describe('stopsOnNoRoute', () => {
+  const stops = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  it('lists stops no route uses', () => {
+    expect(stopsOnNoRoute(stops, [{ id: 'r', stopIds: ['a'] }])).toEqual([{ id: 'b' }, { id: 'c' }]);
+  });
+  it('is empty when every stop is on a route', () => {
+    expect(stopsOnNoRoute(stops, [{ id: 'r', stopIds: ['a', 'b'] }, { id: 's', stopIds: ['c'] }])).toEqual([]);
   });
 });

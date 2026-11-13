@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase/firebaseconfig';
 import MapView, { Marker, Polyline, Region } from 'react-native-maps';
-import { collection, doc, getDocs, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, updateDoc, setDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { signOut } from 'firebase/auth';
@@ -54,7 +54,8 @@ import { ORG_TYPES, allowsParentRole } from '../src/constants/orgTypes';
 import { getTodayScheduleText } from '../src/utils/scheduleUtils';
 import { fetchLoopPath } from '../src/utils/directions';
 import { routePathKey, encodePath } from '../src/utils/routePath';
-import { pickDefaultRouteColor } from '../src/utils/routeDisplay';
+import { pickDefaultRouteColor, stopsOnNoRoute } from '../src/utils/routeDisplay';
+import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
@@ -1319,6 +1320,39 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
     return persist(stops, routes.filter((r) => r.id !== route.id), `"${route.name}" deleted.`);
   }, [routes, stops, persist]);
 
+  // Extra lines for the "Delete route" confirmation: stops the deletion
+  // would leave on no route (riders can't request those once the org has
+  // routes, since no driver sees them) and buses driving the route now.
+  const getRouteDeleteWarnings = useCallback(async (route: Route): Promise<string[]> => {
+    const warnings: string[] = [];
+    const remaining = routes.filter((r) => r.id !== route.id);
+    if (remaining.length > 0) {
+      const stranded = stopsOnNoRoute(stops.filter((s) => route.stopIds.includes(s.id)), remaining);
+      if (stranded.length > 0) {
+        const names = stranded.map((s) => s.name);
+        const list = names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+        warnings.push(`${list} won't be on any route, so riders won't be able to request ${stranded.length === 1 ? 'it' : 'them'}. Add ${stranded.length === 1 ? 'it' : 'them'} to another route to keep ${stranded.length === 1 ? 'it' : 'them'} in service.`);
+      }
+    }
+    if (org) {
+      try {
+        const snap = await getDocs(query(collection(db, 'orgs', org.orgId, 'buses'), where('routeId', '==', route.id)));
+        const now = Date.now();
+        const online = snap.docs.filter((d) => {
+          const data = d.data();
+          const updatedMs = data.updatedAt?.toMillis?.() ?? 0;
+          return data.online === true && now - updatedMs < ONLINE_BUS_STALE_SECONDS * 1000;
+        }).length;
+        if (online > 0) {
+          warnings.push(`${online} driver${online === 1 ? ' is' : 's are'} on this route right now and will be asked to pick another${org.driversChooseRoute === false ? ' — with routes assigned by you, they go offline until you assign one' : ''}.`);
+        }
+      } catch {
+        // Best effort: the warning is advisory, the delete still works.
+      }
+    }
+    return warnings;
+  }, [org, routes, stops]);
+
   const routesUsing = (stopId: string) => routes.filter((r) => r.stopIds.includes(stopId));
 
   const initialRegion: Region = {
@@ -1430,7 +1464,9 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                       <View style={{ flex: 1 }}>
                         <Text style={stopsUi.rowTitle} numberOfLines={1}>{stop.name}</Text>
                         <Text style={stopsUi.rowSub} numberOfLines={1}>
-                          {used.length === 0 ? 'Not on a route yet' : `On ${used.map((r) => r.name).join(', ')}`}
+                          {used.length === 0
+                            ? routes.length > 0 ? 'Not on a route — riders can\'t request it' : 'Not on a route yet'
+                            : `On ${used.map((r) => r.name).join(', ')}`}
                         </Text>
                       </View>
                       <Icon name="chevron-right" size={20} color={GRAY_400} />
@@ -1638,6 +1674,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
             const ok = await handleDeleteRoute(route);
             if (ok) setRouteEditorTarget(null);
           }}
+          getDeleteWarnings={getRouteDeleteWarnings}
           isSaving={isSaving}
         />
       )}
@@ -1656,6 +1693,7 @@ function RouteEditorModal({
   onClose,
   onSave,
   onDelete,
+  getDeleteWarnings,
   isSaving,
 }: {
   route: Route;
@@ -1665,6 +1703,7 @@ function RouteEditorModal({
   onClose: () => void;
   onSave: (route: Route) => void;
   onDelete: (route: Route) => void;
+  getDeleteWarnings: (route: Route) => Promise<string[]>;
   isSaving: boolean;
 }) {
   const { primaryColor } = useOrgTheme();
@@ -1735,10 +1774,11 @@ function RouteEditorModal({
     onSave(finalRoute);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
+    const warnings = await getDeleteWarnings(route);
     Alert.alert(
       'Delete route',
-      `Delete "${route.name}"? Drivers who default to it will need a new route.`,
+      [`Delete "${route.name}"? Drivers who default to it will need a new route.`, ...warnings].join('\n\n'),
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => onDelete(route) },

@@ -458,14 +458,12 @@ export default function MapScreen() {
     }
 
     const stopById = new Map(stops.map((s) => [s.id, s]));
-    const seenStopIds = new Set<string>();
     const entries: RequestableStop[] = [];
 
     for (const route of orgRoutes) {
       route.stopIds.forEach((stopId, idx) => {
         const stop = stopById.get(stopId);
         if (!stop) return;
-        seenStopIds.add(stopId);
         entries.push({
           key: `${stopId}::${route.id}`,
           stop,
@@ -477,13 +475,10 @@ export default function MapScreen() {
       });
     }
 
-    // Stops not on any route
-    for (const stop of stops) {
-      if (!seenStopIds.has(stop.id)) {
-        entries.push({ key: stop.id, stop, routeId: null, routeName: null, position: null, totalStops: null });
-      }
-    }
-
+    // Stops on no route aren't requestable once the org has routes: drivers
+    // only see their own route's stops, so nobody would serve the request
+    // (e.g. a stop left behind when its route was deleted). Their pins are
+    // hidden too — see getStopMarkerStyle.
     return entries;
   }, [orgRoutes, stops]);
 
