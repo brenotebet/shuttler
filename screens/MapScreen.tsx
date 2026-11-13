@@ -83,6 +83,7 @@ import {
   isBusShown,
   parseStoredWatchedRouteIds,
   resolveWatchedRouteIds,
+  routeHasServingBus,
   toggleWatchedRoute,
   watchedRoutesLabel,
   type StopMarkerStyle,
@@ -2011,6 +2012,29 @@ const handleRequest = async (entry: RequestableStop) => {
 
   const { stop: selectedStop, routeId: entryRouteId } = entry;
 
+  // Only request on a route that has a bus to serve it right now: drivers see
+  // only their own route's stops, so a request on a route with no bus would
+  // be paired with another route's bus that never stops there (e.g. the
+  // overnight Hotel Shuttle at 2 PM while the Terminal Loop runs).
+  if (entryRouteId) {
+    const entryRoute = orgRoutes.find((r) => r.id === entryRouteId) ?? null;
+    if (entryRoute && !isRouteActive(entryRoute, new Date(), org?.timezone)) {
+      const next = getNextOpenText(entryRoute, new Date(), org?.timezone);
+      showAlert(
+        `${entryRoute.name} isn't running right now.${next && next !== 'No upcoming hours found' ? ` ${next}.` : ''}`,
+        'Route not running',
+      );
+      return;
+    }
+    if (!routeHasServingBus(entryRouteId, visibleBusIds, busRouteIds)) {
+      showAlert(
+        `No ${entryRoute?.name ?? 'bus on this route'} bus is online right now. Please try again shortly.`,
+        'No bus on this route',
+      );
+      return;
+    }
+  }
+
   // Block requests from users who aren't physically near a stop.
   // Orgs can opt out via requireStopProximity: false (demo/review orgs where
   // testers are nowhere near the campus).
@@ -2988,7 +3012,13 @@ const handleConfirmSheetConfirm = async () => {
             </View>
 
             {(() => {
-              const info = routeStopMap.get(visibleRequest.stop?.id);
+              // The request's own route — a terminal shared by several routes
+              // would otherwise show whichever route lists it first.
+              const stopId = visibleRequest.stop?.id ?? visibleRequest.stopId;
+              const reqRoute = orgRoutes.find((r) => r.id === visibleRequest.routeId && r.stopIds.includes(stopId));
+              const info = reqRoute
+                ? { routeName: reqRoute.name, position: reqRoute.stopIds.indexOf(stopId) + 1, totalStops: reqRoute.stopIds.length }
+                : routeStopMap.get(stopId);
               if (!info) return null;
               return (
                 <Text style={styles.cardRouteMeta}>

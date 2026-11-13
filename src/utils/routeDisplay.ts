@@ -109,6 +109,20 @@ export function isBusShown(
 }
 
 /**
+ * Whether any online bus can serve a request on this route: a bus driving it,
+ * or a bus with no route (older app versions, or an org without routes).
+ * A request with no route can be served by any bus.
+ */
+export function routeHasServingBus(
+  routeId: string | null | undefined,
+  onlineBusIds: readonly string[],
+  busRouteIds: Readonly<Record<string, string | null | undefined>>,
+): boolean {
+  if (!routeId) return onlineBusIds.length > 0;
+  return onlineBusIds.some((id) => !busRouteIds[id] || busRouteIds[id] === routeId);
+}
+
+/**
  * A color for a new route: the first palette color no existing route uses and
  * that differs from the org color, so routes are told apart on the map. When
  * every color is taken, cycles through the palette.

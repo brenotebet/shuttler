@@ -51,7 +51,7 @@ import BottomSheet from '../components/BottomSheet';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useOrgSetupProgress } from '../src/hooks/useOrgSetupProgress';
 import { ORG_TYPES, allowsParentRole } from '../src/constants/orgTypes';
-import { getTodayScheduleText } from '../src/utils/scheduleUtils';
+import { getTodayScheduleText, END_OF_DAY } from '../src/utils/scheduleUtils';
 import { fetchLoopPath } from '../src/utils/directions';
 import { routePathKey, encodePath } from '../src/utils/routePath';
 import { pickDefaultRouteColor, stopsOnNoRoute } from '../src/utils/routeDisplay';
@@ -736,15 +736,19 @@ const WEEK_DAYS: { key: keyof WeekSchedule; label: string }[] = [
   { key: 'sunday',    label: 'Sun' },
 ];
 
-// Every 30 minutes: 00:00, 00:30, 01:00 … 23:30
+// Every 30 minutes: 00:00, 00:30, 01:00 … 23:30. Closing times can also be
+// '24:00' ("Midnight", the end of the day), so 12:00 AM – Midnight is a
+// route that runs all day (e.g. an airport terminal loop).
 const TIME_SLOTS: string[] = [];
 for (let h = 0; h < 24; h++) {
   for (const m of [0, 30]) {
     TIME_SLOTS.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
   }
 }
+const CLOSE_TIME_SLOTS: string[] = [...TIME_SLOTS, END_OF_DAY];
 
 function fmt12h(hhmm: string): string {
+  if (hhmm === END_OF_DAY) return 'Midnight';
   const [hStr, mStr] = hhmm.split(':');
   let h = parseInt(hStr, 10);
   const ampm = h >= 12 ? 'PM' : 'AM';
@@ -830,7 +834,7 @@ function ScheduleEditor({
           </TouchableOpacity>
         </View>
         <Picker selectedValue={pickerTemp} onValueChange={(v) => setPickerTemp(v as string)}>
-          {TIME_SLOTS.map((slot) => (
+          {(pickerField?.field === 'close' ? CLOSE_TIME_SLOTS : TIME_SLOTS).map((slot) => (
             <Picker.Item key={slot} label={fmt12h(slot)} value={slot} />
           ))}
         </Picker>

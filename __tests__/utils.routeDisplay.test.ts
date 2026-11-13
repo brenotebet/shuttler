@@ -5,6 +5,7 @@ import {
   pickDefaultRouteColor,
   resolveWatchedRouteIds,
   stopsOnNoRoute,
+  routeHasServingBus,
   toggleWatchedRoute,
   watchedRoutesLabel,
 } from '../src/utils/routeDisplay';
@@ -176,5 +177,22 @@ describe('stopsOnNoRoute', () => {
   });
   it('is empty when every stop is on a route', () => {
     expect(stopsOnNoRoute(stops, [{ id: 'r', stopIds: ['a', 'b'] }, { id: 's', stopIds: ['c'] }])).toEqual([]);
+  });
+});
+
+describe('routeHasServingBus', () => {
+  const routes = { b1: 'terminal', b2: 'parking', b3: null };
+  it('is true when a bus drives the route', () => {
+    expect(routeHasServingBus('parking', ['b1', 'b2'], routes)).toBe(true);
+  });
+  it('is false when only other routes have buses', () => {
+    expect(routeHasServingBus('hotel', ['b1', 'b2'], routes)).toBe(false);
+  });
+  it('counts a bus with no route as serving any route', () => {
+    expect(routeHasServingBus('hotel', ['b1', 'b3'], routes)).toBe(true);
+  });
+  it('accepts any bus for a request with no route, and none when nothing is online', () => {
+    expect(routeHasServingBus(null, ['b1'], routes)).toBe(true);
+    expect(routeHasServingBus('parking', [], routes)).toBe(false);
   });
 });
