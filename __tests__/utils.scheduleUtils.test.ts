@@ -187,3 +187,29 @@ describe('getRunsUntilText', () => {
     expect(getRunsUntilText(routeWith(overnight), tuesday1am, 'UTC')).toBe('Runs until 2:00 AM');
   });
 });
+
+describe('all-day routes (00:00 – 24:00)', () => {
+  const day = { isOpen: true, open: '00:00', close: '24:00' };
+  const ALL_DAY: WeekSchedule = {
+    sunday: day, monday: day, tuesday: day, wednesday: day, thursday: day, friday: day, saturday: day,
+  };
+
+  it('is active at every minute of the day, including 23:45 and midnight', () => {
+    for (const t of ['2026-07-27T00:00:00Z', '2026-07-27T12:00:00Z', '2026-07-27T23:45:00Z', '2026-07-27T23:59:00Z']) {
+      expect(isRouteActive(routeWith(ALL_DAY), new Date(t), 'UTC')).toBe(true);
+    }
+  });
+
+  it('runs until midnight when the evening window ends at 24:00', () => {
+    const evening: WeekSchedule = { ...WEEKDAYS_9_TO_5, monday: { isOpen: true, open: '18:00', close: '24:00' } };
+    expect(isRouteActive(routeWith(evening), new Date('2026-07-27T23:50:00Z'), 'UTC')).toBe(true);
+    expect(isRouteActive(routeWith(evening), new Date('2026-07-28T00:10:00Z'), 'UTC')).toBe(false);
+    expect(getRunsUntilText(routeWith(evening), new Date('2026-07-27T20:00:00Z'), 'UTC')).toBe('Runs until midnight');
+  });
+
+  it('describes the day as open 24 hours', () => {
+    const mondayNoon = new Date('2026-07-27T12:00:00Z');
+    expect(getTodayScheduleText(routeWith(ALL_DAY), mondayNoon, 'UTC')).toBe('Today: Open 24 hours');
+    expect(getRunsUntilText(routeWith(ALL_DAY), mondayNoon, 'UTC')).toBe('Open 24 hours');
+  });
+});

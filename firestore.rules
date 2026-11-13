@@ -202,6 +202,26 @@ service cloud.firestore {
     }
 
     // ---------- Bus locations ----------
+
+    // "Allow drivers to choose their route" off (org.driversChooseRoute ==
+    // false): a driver may only put their bus on the route an admin assigned
+    // them (defaultRouteId), or on the org's only route. Admins are exempt,
+    // and clearing the route or leaving it unchanged (every GPS update) is
+    // always allowed. The org and user docs are already read by the checks
+    // above, so this adds no extra document reads.
+    function busRouteAllowed(orgId) {
+      let newRoute = request.resource.data.get('routeId', null);
+      let oldRoute = resource == null ? null : resource.data.get('routeId', null);
+      let org = get(/databases/$(database)/documents/orgs/$(orgId)).data;
+      let routes = org.get('routes', []);
+      return newRoute == oldRoute
+        || newRoute == null
+        || org.get('driversChooseRoute', true) != false
+        || isAdmin(orgId)
+        || newRoute == get(userDocPath(orgId, request.auth.uid)).data.get('defaultRouteId', null)
+        || (routes.size() == 1 && routes[0].id == newRoute);
+    }
+
     match /orgs/{orgId}/buses/{busId} {
       // Any org member can read bus locations (students see buses on map).
       allow read: if isMember(orgId);
@@ -210,7 +230,8 @@ service cloud.firestore {
       allow create, update: if signedIn()
         && isDriver(orgId)
         && request.auth.uid == busId
-        && orgIsActive(orgId);
+        && orgIsActive(orgId)
+        && busRouteAllowed(orgId);
 
       allow delete: if false;
     }

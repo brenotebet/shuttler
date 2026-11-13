@@ -47,9 +47,19 @@ export function getTodayKey(now: Date = new Date(), timezone?: string): keyof We
   return getDayAndMinutes(now, timezone).key;
 }
 
+// Closing times run up to '24:00' — the end of the day — so a route can be
+// open the whole day (00:00–24:00, e.g. an airport terminal loop) instead of
+// stopping at 23:30.
+export const END_OF_DAY = '24:00';
+
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;
+}
+
+/** A day that runs from midnight to midnight. */
+export function isAllDay(day: DaySchedule | undefined): boolean {
+  return !!day?.isOpen && day.open === '00:00' && day.close === END_OF_DAY;
 }
 
 export function isRouteActive(
@@ -75,6 +85,7 @@ export function isRouteActive(
 }
 
 export function formatTime12h(hhmm: string): string {
+  if (hhmm === END_OF_DAY) return 'midnight';
   const [hStr, mStr] = hhmm.split(':');
   let h = parseInt(hStr, 10);
   const m = mStr;
@@ -121,6 +132,7 @@ export function getTodayScheduleText(
   const { key } = getDayAndMinutes(now, timezone);
   const day = route.schedule[key];
   if (!day.isOpen) return 'Closed today';
+  if (isAllDay(day)) return 'Today: Open 24 hours';
   return `Today: ${formatTime12h(day.open)} – ${formatTime12h(day.close)}`;
 }
 
@@ -139,6 +151,7 @@ export function getRunsUntilText(
   const inYesterdayTail = !!yesterday?.isOpen
     && toMinutes(yesterday.close) < toMinutes(yesterday.open)
     && cur < toMinutes(yesterday.close);
+  if (!inYesterdayTail && isAllDay(day)) return 'Open 24 hours';
   const close = inYesterdayTail ? yesterday!.close : day.close;
   return `Runs until ${formatTime12h(close)}`;
 }

@@ -15,6 +15,7 @@ import { AuthProvider } from './src/auth/AuthProvider';
 import { OrgProvider } from './src/org/OrgContext';
 import { AccessibilityProvider } from './src/contexts/AccessibilityContext';
 import { usePushToken } from './src/hooks/usePushToken';
+import { useFirestoreForegroundRestart } from './src/hooks/useFirestoreForegroundRestart';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase/firebaseconfig';
 import * as Sentry from '@sentry/react-native';
@@ -88,6 +89,11 @@ function PushTokenRegistrar() {
   return null;
 }
 
+function FirestoreForegroundRestart() {
+  useFirestoreForegroundRestart();
+  return null;
+}
+
 function NotificationDeepLinker({ navigationRef }: { navigationRef: React.RefObject<NavigationContainerRef<RootStackParamList> | null> }) {
   const lastResponse = Notifications.useLastNotificationResponse();
 
@@ -142,6 +148,7 @@ export default function App() {
         <OrgProvider>
           <AuthProvider>
             <PushTokenRegistrar />
+            <FirestoreForegroundRestart />
             <DriverProvider>
               <LocationProvider>
                 <NavigationContainer ref={navigationRef}>

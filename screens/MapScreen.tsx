@@ -1,7 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, Image, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking } from 'react-native'
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking, ScrollView, AppState } from 'react-native'
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -16,6 +16,8 @@ import MapView, {
   Marker,
 } from 'react-native-maps';
 import MapMarker from '../components/MapMarker';
+import BusIcon from '../components/BusIcon';
+import { hapticBusArrived, hapticRequestSent } from '../src/utils/haptics';
 import { grayscaleMapStyle, MAX_LAT_DELTA, MAX_LON_DELTA } from '../src/constants/mapConfig';
 import {
   BACKGROUND_COLOR,
@@ -54,7 +56,8 @@ import {
   runTransaction,
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
-import { db, auth } from '../firebase/firebaseconfig';
+import { db, auth, firestoreReconnector } from '../firebase/firebaseconfig';
+import { isFeedStalled } from '../src/utils/firestoreReconnect';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
@@ -72,10 +75,20 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText } from '../src/utils/scheduleUtils';
 import { getBusProgress, AT_STOP_METERS } from '../src/utils/busRoute';
-import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
+import { nextHeading, glideDurationMs, shouldJumpToPosition } from '../src/utils/busMotion';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
 import { groupOverlappingBuses, sameGroups, type BusGroups } from '../src/utils/busClusters';
 import { decodePath, snapToPath } from '../src/utils/routePath';
+import {
+  getStopMarkerStyle,
+  isBusShown,
+  parseStoredWatchedRouteIds,
+  resolveWatchedRouteIds,
+  routeHasServingBus,
+  toggleWatchedRoute,
+  watchedRoutesLabel,
+  type StopMarkerStyle,
+} from '../src/utils/routeDisplay';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
@@ -84,6 +97,11 @@ import { borderRadius } from '../src/styles/common';
 
 // A bus marker is shown only while a rider could request a stop: the bus is
 // online, its GPS is fresh, and service is open (see visibleBusIds).
+
+// White outline drawn under route lines (see the route lines in the map).
+const ROUTE_LINE_CASING = '#ffffffe6';
+// Lines of routes the rider isn't watching (mounted, drawn invisible).
+const HIDDEN_LINE_COLOR = '#00000000';
 
 // Maximum distance from the nearest stop to allow a pickup request.
 // Keeps requests honest — students must physically be on/near campus.
@@ -261,6 +279,65 @@ export default function MapScreen() {
   }, [org?.routes]);
   const routePathsRef = useRef(routePaths);
   routePathsRef.current = routePaths;
+
+  // "Now watching" route filter: one or more routes, or [] for All routes.
+  // Saved per org on this device; deleted routes drop out, and a one-route
+  // org (or watching every route) means All routes.
+  const WATCHED_ROUTE_KEY = `map_watched_route_${orgId ?? 'none'}`;
+  const [storedWatchedRouteIds, setStoredWatchedRouteIds] = useState<string[]>([]);
+  const [showRoutePicker, setShowRoutePicker] = useState(false);
+  useEffect(() => {
+    if (!orgId) return;
+    AsyncStorage.getItem(WATCHED_ROUTE_KEY)
+      .then((raw) => setStoredWatchedRouteIds(parseStoredWatchedRouteIds(raw)))
+      .catch(() => {});
+  }, [orgId, WATCHED_ROUTE_KEY]);
+  const watchRoutes = useCallback((routeIds: string[]) => {
+    setStoredWatchedRouteIds(routeIds);
+    (routeIds.length > 0
+      ? AsyncStorage.setItem(WATCHED_ROUTE_KEY, JSON.stringify(routeIds))
+      : AsyncStorage.removeItem(WATCHED_ROUTE_KEY)
+    ).catch(() => {});
+  }, [WATCHED_ROUTE_KEY]);
+  const watchedRouteIds = resolveWatchedRouteIds(storedWatchedRouteIds, orgRoutes);
+  const watchedKey = watchedRouteIds.join(',');
+  const watchedRoutes = orgRoutes.filter((r) => watchedRouteIds.includes(r.id));
+
+  // Pin color (and route dots / visibility) for every stop, from its routes
+  // and the watched route.
+  const stopStyles = useMemo(() => {
+    const map: Record<string, StopMarkerStyle> = {};
+    stops.forEach((s) => {
+      map[s.id] = getStopMarkerStyle(s.id, orgRoutes, primaryColor, GRAY_500, watchedRouteIds);
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.stops, org?.routes, primaryColor, watchedKey]);
+  // Route lines: routes with a saved road path. The key changes when a
+  // route's path or color changes so the line is replaced rather than mutated.
+  // Every route with a path is listed (and stays mounted on the map); routes
+  // the rider isn't watching are flagged hidden and drawn invisible.
+  const routeLines = useMemo(
+    () => orgRoutes
+      .filter((r) => routePaths[r.id])
+      .map((r) => ({
+        route: r,
+        coords: routePaths[r.id],
+        key: `${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}`,
+        hidden: watchedRouteIds.length > 0 && !watchedRouteIds.includes(r.id),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org?.routes, routePaths, watchedKey],
+  );
+  const stopStylesRef = useRef(stopStyles);
+  stopStylesRef.current = stopStyles;
+  // Changes whenever any pin's look changes, to redraw the marker snapshots.
+  const stopStylesKey = useMemo(
+    () => Object.entries(stopStyles)
+      .map(([id, st]) => `${id}:${st.color}:${st.dots.join('/')}:${st.visible ? 1 : 0}`)
+      .join('|'),
+    [stopStyles],
+  );
   // Returns a Firestore CollectionReference scoped to the current org.
   // Throws if orgId is not loaded — callers must only run after org is available.
   const orgCol = (name: string) => {
@@ -383,14 +460,12 @@ export default function MapScreen() {
     }
 
     const stopById = new Map(stops.map((s) => [s.id, s]));
-    const seenStopIds = new Set<string>();
     const entries: RequestableStop[] = [];
 
     for (const route of orgRoutes) {
       route.stopIds.forEach((stopId, idx) => {
         const stop = stopById.get(stopId);
         if (!stop) return;
-        seenStopIds.add(stopId);
         entries.push({
           key: `${stopId}::${route.id}`,
           stop,
@@ -402,13 +477,10 @@ export default function MapScreen() {
       });
     }
 
-    // Stops not on any route
-    for (const stop of stops) {
-      if (!seenStopIds.has(stop.id)) {
-        entries.push({ key: stop.id, stop, routeId: null, routeName: null, position: null, totalStops: null });
-      }
-    }
-
+    // Stops on no route aren't requestable once the org has routes: drivers
+    // only see their own route's stops, so nobody would serve the request
+    // (e.g. a stop left behind when its route was deleted). Their pins are
+    // hidden too — see getStopMarkerStyle.
     return entries;
   }, [orgRoutes, stops]);
 
@@ -439,6 +511,8 @@ export default function MapScreen() {
         { latitude: targetStop.latitude, longitude: targetStop.longitude, latitudeDelta: 0.007, longitudeDelta: 0.007 },
         600,
       );
+      // A stop on another route would be hidden by the filter — show all routes.
+      if (stopStylesRef.current[focusStopId]?.visible === false) watchRoutes([]);
       const match = requestableStops.find((e) => e.stop.id === focusStopId);
       if (match) setSelectedStopKey(match.key);
       // Arriving from the Routes tab: show the stop's card with its Request button.
@@ -491,6 +565,38 @@ export default function MapScreen() {
   const busOnline = freshBusCount > 0;
   // Never show a bus the rider can't request a stop from.
   const visibleBusIds = serviceIsOpen ? freshBusIds : [];
+  // Buses that pass the "Now watching" filter. Filtered-out buses stay
+  // mounted (hidden via opacity) — see the marker note in the map below.
+  // The rider's own ride is never filtered out: its assigned driver, or
+  // any bus on the route the request was made on. If the request has no
+  // route, or no bus on it is online, the ride falls back to the closest bus
+  // of any route (see resolvedDriverId) — so nothing is filtered then.
+  const rideInProgress = !!request && request.id !== dismissedRequestId
+    && ['pending', 'accepted', 'awaiting_confirmation'].includes(request.status);
+  const rideRouteId: string | null = rideInProgress ? request?.routeId ?? null : null;
+  const rideRouteHasBus = !!rideRouteId && visibleBusIds.some((id) => busRouteIds[id] === rideRouteId);
+  const shownBusIds = visibleBusIds.filter((id) => isBusShown(
+    busRouteIds[id],
+    watchedRouteIds,
+    rideInProgress && (id === driverId || !rideRouteHasBus || busRouteIds[id] === rideRouteId),
+  ));
+
+  // Bus marker slots for the map (see the bus marker note in the map below).
+  // A bus keeps its slot while it's online; a freed slot is reused by the
+  // next bus to come online; the list only grows, at the end.
+  const busSlotsRef = useRef<(string | null)[]>([]);
+  const busSlots = useMemo(() => {
+    const live = visibleBusIds.filter((id) => !!busLocations[id]);
+    const slots = busSlotsRef.current.map((id) => (id && live.includes(id) ? id : null));
+    live.forEach((id) => {
+      if (slots.includes(id)) return;
+      const free = slots.indexOf(null);
+      if (free >= 0) slots[free] = id;
+      else slots.push(id);
+    });
+    busSlotsRef.current = slots;
+    return slots;
+  }, [visibleBusIds, busLocations]);
 
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedStopKey, setSelectedStopKey] = useState<string | null>(null);
@@ -529,7 +635,7 @@ export default function MapScreen() {
     const region = r ?? regionRef.current ?? INITIAL_REGION;
     const { width, height } = Dimensions.get('window');
     const next = groupOverlappingBuses(
-      visibleBusIds
+      shownBusIds
         .map((id) => (busLocations[id] ? { id, latitude: busLocations[id].latitude, longitude: busLocations[id].longitude } : null))
         .filter((b): b is { id: string; latitude: number; longitude: number } => !!b),
       region,
@@ -561,7 +667,6 @@ export default function MapScreen() {
 
   const [cameraMode, setCameraMode] = useState<CameraMode>('followUser');
 
-  const busIcon = require('../assets/bus-icon.png');
 
   const [forceBusTracks, setForceBusTracks] = useState(true);
   const forceTracksTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -585,7 +690,8 @@ export default function MapScreen() {
   const updateStopLabels = (r: { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number }) => {
     const { width, height } = Dimensions.get('window');
     const priority = selectedStopCardId ? [selectedStopCardId] : [];
-    const next = pickVisibleStopLabels(stops, r, { width, height }, priority);
+    const labelStops = stops.filter((s) => stopStyles[s.id]?.visible !== false);
+    const next = pickVisibleStopLabels(labelStops, r, { width, height }, priority);
     setVisibleLabelIds((prev) => {
       if (sameIdSet(prev, next)) return prev;
       bumpStopTracks();
@@ -598,12 +704,22 @@ export default function MapScreen() {
   useEffect(() => {
     updateBusGroups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busLocations, visibleBusIds.join(',')]);
+  }, [busLocations, shownBusIds.join(',')]);
+  // A bus changed route, or a route changed color: redraw bus snapshots.
+  const busColorKey = useMemo(
+    () => Object.entries(busRouteIds)
+      .map(([id, routeId]) => `${id}:${orgRoutes.find((r) => r.id === routeId)?.color ?? ''}`)
+      .join('|'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [busRouteIds, org?.routes],
+  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { bumpBusTracks(); }, [busColorKey, primaryColor]);
   // Close the chooser if its group breaks up (a bus drove off or went offline).
   useEffect(() => {
-    if (groupChooser && groupChooser.filter((id) => visibleBusIds.includes(id)).length < 2) setGroupChooser(null);
+    if (groupChooser && groupChooser.filter((id) => shownBusIds.includes(id)).length < 2) setGroupChooser(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleBusIds.join(','), groupChooser]);
+  }, [shownBusIds.join(','), groupChooser]);
   // Same pop-in as the bus card (fade + slight rise + scale), replayed for
   // each new stop so switching stops reads as a new card.
   const stopCardAnim = useRef(new Animated.Value(0)).current;
@@ -622,8 +738,11 @@ export default function MapScreen() {
     const r = regionRef.current ?? region ?? INITIAL_REGION;
     if (r) updateStopLabels(r as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stops, selectedStopCardId]);
+  }, [stops, selectedStopCardId, watchedKey]);
   useEffect(() => { bumpStopTracks(); }, [selectedStopCardId]);
+  // Pin colors / route filter changed: redraw the stop marker snapshots.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { bumpStopTracks(); }, [stopStylesKey]);
 
   const cloudAnim = useRef(new Animated.Value(0)).current;
 
@@ -771,6 +890,17 @@ export default function MapScreen() {
 
   // ✅ NEW: for "hide only destination stop marker while active"
   const destinationStopId = request?.stop?.id ?? request?.stopId ?? null;
+  // Where the always-mounted ride pin and ETA line sit while there's no ride
+  // (hidden): the ride's stop, else any fixed point on the map.
+  const idleRidePoint = {
+    latitude: request?.stop?.latitude ?? stops[0]?.latitude ?? INITIAL_REGION.latitude,
+    longitude: request?.stop?.longitude ?? stops[0]?.longitude ?? INITIAL_REGION.longitude,
+  };
+  const rideLineCoords = routeCoords.length > 0 ? routeCoords : [idleRidePoint, idleRidePoint];
+  // The destination stop is hidden (not unmounted) during a ride; redraw the
+  // stop snapshots when that changes so its label comes back afterwards.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { bumpStopTracks(); }, [rideActive, destinationStopId]);
 
   const userLocRef = useRef<{ latitude: number; longitude: number } | null>(null);
   // Serializes handleRequest so two rapid taps (different stops before the
@@ -954,6 +1084,24 @@ export default function MapScreen() {
       locationSub = sub;
     })();
 
+    // Stall watchdog: drivers write every few seconds, so a feed that showed
+    // live buses and then goes silent means the Firestore connection hung
+    // (it can, without erroring). Restart it once per silence. A listener
+    // that errors is re-attached instead of staying dead. See
+    // src/utils/firestoreReconnect.ts.
+    let lastBusSnapshotMs: number | null = null;
+    let expectingBusUpdates = false;
+    let stallRestartDone = false;
+    let resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+    const stallTimer = setInterval(() => {
+      if (stallRestartDone || AppState.currentState !== 'active') return;
+      if (isFeedStalled(lastBusSnapshotMs, expectingBusUpdates, Date.now())) {
+        stallRestartDone = true;
+        firestoreReconnector.restart('rider bus feed went silent').catch(() => {});
+      }
+    }, 10_000);
+
+    const subscribeBuses = () => {
     unsubBus = onSnapshot(
       orgCol('buses'),
       (snapshot) => {
@@ -1041,6 +1189,10 @@ export default function MapScreen() {
 
         const visibleBuses = buses; // all online buses; opacity reflects freshness
 
+        lastBusSnapshotMs = Date.now();
+        stallRestartDone = false;
+        expectingBusUpdates = buses.some((b: any) => b.secondsAgo < FRESHNESS_WINDOW_SECONDS);
+
         const newLocations: {
           [id: string]: {
             latitude: number;
@@ -1073,18 +1225,26 @@ export default function MapScreen() {
           const prev = lastCoords.current[id];
           const positionChanged = !prev || prev.latitude !== latitude || prev.longitude !== longitude;
           if (!prev) anyBusMoved = true;
+          const updateMs = timestamp.getTime();
+          // Catching up after a long gap (app was backgrounded): jump instead
+          // of gliding a straight line across campus — see shouldJumpToPosition.
+          const jump = positionChanged
+            && shouldJumpToPosition(lastUpdateMs.current[id] ?? null, updateMs, prev ?? null, { latitude, longitude });
           // Parked buses keep their heading (they used to snap to north), and
           // turns are eased over a couple of updates instead of snapping.
+          // After a jump, the direction between the two far-apart fixes says
+          // nothing about which way the bus faces now: keep the old heading
+          // and stop trusting it until the next real movement.
           const prevHeading = headings.current[id] ?? null;
-          const computed = nextHeading(prevHeading, prev ?? null, { latitude, longitude });
-          if (computed !== null) headingKnown.current.add(id);
+          const computed = jump ? prevHeading : nextHeading(prevHeading, prev ?? null, { latitude, longitude });
+          if (jump) headingKnown.current.delete(id);
+          else if (computed !== null) headingKnown.current.add(id);
           const heading = computed ?? 0;
           if (!anyBusMoved && prev && (positionChanged || heading !== prevHeading)) anyBusMoved = true;
           headings.current[id] = heading;
 
           // Glide over the real time since this bus's last update so it
           // arrives as the next one lands, instead of moving then pausing.
-          const updateMs = timestamp.getTime();
           const glideMs = glideDurationMs(lastUpdateMs.current[id] ?? null, updateMs);
           if (positionChanged) lastUpdateMs.current[id] = updateMs;
 
@@ -1108,6 +1268,9 @@ export default function MapScreen() {
               latitudeDelta: 0,
               longitudeDelta: 0,
             });
+          } else if (jump) {
+            busRegions.current[id].stopAnimation(() => {});
+            busRegions.current[id].setValue({ latitude, longitude, latitudeDelta: 0, longitudeDelta: 0 });
           } else if (positionChanged) {
             // Only re-aim when this bus moved — other buses' updates also
             // fire this snapshot and must not restart its glide.
@@ -1184,11 +1347,17 @@ export default function MapScreen() {
           code: (err as any)?.code,
           message: (err as any)?.message,
         });
+        // An errored listener is dead for good — attach a new one shortly.
+        if (mounted) resubscribeTimer = setTimeout(() => { if (mounted) subscribeBuses(); }, 5_000);
       },
     );
+    };
+    subscribeBuses();
 
     return () => {
       mounted = false;
+      clearInterval(stallTimer);
+      if (resubscribeTimer) clearTimeout(resubscribeTimer);
       if (unsubBus) unsubBus();
       if (locationSub) locationSub.remove();
       if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);
@@ -1512,6 +1681,19 @@ export default function MapScreen() {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rideActive, approachingMs, requestId, rideBusLoc?.latitude, rideBusLoc?.longitude]);
+
+  // Haptic when the bus reaches the rider's stop (the driver's app stamps
+  // arrivedAt). Only on the change itself — not when reopening the app on a
+  // request that had already arrived.
+  const arrivalSeenRef = useRef<{ requestId: string; arrived: boolean } | null>(null);
+  const requestArrived = !!request?.arrivedAt;
+  useEffect(() => {
+    const id: string | null = request?.id ?? null;
+    if (!id) { arrivalSeenRef.current = null; return; }
+    const seen = arrivalSeenRef.current;
+    if (seen?.requestId === id && !seen.arrived && requestArrived) hapticBusArrived();
+    arrivalSeenRef.current = { requestId: id, arrived: requestArrived };
+  }, [request?.id, requestArrived]);
 
   useEffect(() => {
     if (request?.status === 'completed') {
@@ -1859,6 +2041,29 @@ const handleRequest = async (entry: RequestableStop) => {
 
   const { stop: selectedStop, routeId: entryRouteId } = entry;
 
+  // Only request on a route that has a bus to serve it right now: drivers see
+  // only their own route's stops, so a request on a route with no bus would
+  // be paired with another route's bus that never stops there (e.g. the
+  // overnight Hotel Shuttle at 2 PM while the Terminal Loop runs).
+  if (entryRouteId) {
+    const entryRoute = orgRoutes.find((r) => r.id === entryRouteId) ?? null;
+    if (entryRoute && !isRouteActive(entryRoute, new Date(), org?.timezone)) {
+      const next = getNextOpenText(entryRoute, new Date(), org?.timezone);
+      showAlert(
+        `${entryRoute.name} isn't running right now.${next && next !== 'No upcoming hours found' ? ` ${next}.` : ''}`,
+        'Route not running',
+      );
+      return;
+    }
+    if (!routeHasServingBus(entryRouteId, visibleBusIds, busRouteIds)) {
+      showAlert(
+        `No ${entryRoute?.name ?? 'bus on this route'} bus is online right now. Please try again shortly.`,
+        'No bus on this route',
+      );
+      return;
+    }
+  }
+
   // Block requests from users who aren't physically near a stop.
   // Orgs can opt out via requireStopProximity: false (demo/review orgs where
   // testers are nowhere near the campus).
@@ -1935,6 +2140,7 @@ const handleRequest = async (entry: RequestableStop) => {
       });
 
       if (__DEV__) console.log('[handleRequest] created stopRequest', ref.id);
+      hapticRequestSent();
       if (orgId) void notifyDriversNewRequest(orgId);
     } catch (e: any) {
       console.error('[handleRequest] addDoc FAILED', e?.code, e?.message);
@@ -2114,11 +2320,19 @@ const handleConfirmSheetConfirm = async () => {
               <Icon name="directions-bus" size={15} color={GRAY_500} />
               <Text style={styles.statusPillText} numberOfLines={1}>No buses online yet · check back shortly</Text>
             </View>
+          ) : shownBusIds.length === 0 ? (
+            // Buses are running, just not on the routes the rider is watching.
+            <View style={styles.statusPill}>
+              <Icon name="directions-bus" size={15} color={GRAY_500} />
+              <Text style={styles.statusPillText} numberOfLines={1}>No buses on your routes right now</Text>
+            </View>
           ) : (
+            // Counts only the buses on the map: the watched routes (plus the
+            // rider's own ride), not every bus in the org.
             <View style={styles.statusPill}>
               <View style={styles.busCountDot} />
               <Text style={styles.statusPillText}>
-                {visibleBusIds.length} bus{visibleBusIds.length !== 1 ? 'es' : ''} online
+                {shownBusIds.length} bus{shownBusIds.length !== 1 ? 'es' : ''} online
               </Text>
             </View>
           )}
@@ -2150,7 +2364,9 @@ const handleConfirmSheetConfirm = async () => {
           <View style={styles.overlay}>
             <View style={[styles.locationListContainer, { top: role === 'parent' ? topOverlay + 106 : topOverlay + 60 }]}>
               <FlatList
-                data={requestableStops}
+                data={watchedRouteIds.length > 0
+                  ? requestableStops.filter((e) => !e.routeId || watchedRouteIds.includes(e.routeId))
+                  : requestableStops}
                 keyExtractor={(item) => item.key}
                 renderItem={({ item }) => (
                   <TouchableOpacity
@@ -2214,84 +2430,178 @@ const handleConfirmSheetConfirm = async () => {
           />
         )}
 
-        {/* Polylines pass strokeColors as well as strokeColor: with the Google
-            provider on iOS (react-native-maps 1.20) strokeColor alone is
-            overridden by a default style span and renders blue. */}
-        {/* Route lines along the roads (only routes with a saved path). Drawn
-            first so stops and buses sit on top. Key includes the path so a
-            changed route replaces its line rather than mutating it. */}
-        {orgRoutes.map((r) => {
-          const coords = routePaths[r.id];
-          if (!coords) return null;
-          const lineColor = (r.color ?? primaryColor) + '73';
+        {/* Stops on other routes than the watched one stay mounted and are
+            hidden via opacity, like buses (see the marker note below). So is
+            the ride's destination stop, which the flag marker replaces. */}
+        {stops.map((stop) => {
+          const stopStyle = stopStyles[stop.id];
+          const filteredOut = stopStyle?.visible === false
+            || (rideActive && stop.id === destinationStopId);
+          return (
+            <Marker
+              key={`${stop.id}-${primaryColor}`}
+              coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+              anchor={{ x: 0.5, y: 1 }}
+              // Constant zIndex — see the zIndex note on the bus markers.
+              zIndex={2}
+              opacity={filteredOut ? 0 : 1}
+              tracksViewChanges={forceStopTracks}
+              onPress={() => {
+                if (filteredOut) return;
+                // Show the stop's info card first instead of jumping straight
+                // into a request — avoids accidental requests from a mistap.
+                if (selectedBusId) closeSelectedBus();
+                setShowLocationList(false);
+                setGroupChooser(null);
+                setSelectedStopCardId(stop.id);
+              }}
+            >
+              <MapMarker
+                label={stop.name}
+                color={stopStyle?.color}
+                dots={stopStyle?.dots}
+                labelHidden={filteredOut || (!visibleLabelIds.has(stop.id) && stop.id !== selectedStopCardId)}
+              />
+            </Marker>
+          );
+        })}
+
+        {/* Ride destination pin and ETA line: always mounted, hidden while
+            there's no ride (opacity 0 / a zero-length line), and placed before the
+            bus markers. Mounting them only during a ride inserted and removed
+            map children before the route lines — on iOS (Google provider + New
+            Architecture interop) that pairs later children with the wrong
+            native views, and the ride's bus and its stop went blank when the
+            ride ended. See the marker note below.
+            With no ride the line is a zero-length path rather than []:
+            react-native-maps' iOS Google polyline ignores an empty coordinate
+            list and keeps drawing the previous line. */}
+        <Marker
+          coordinate={idleRidePoint}
+          anchor={{ x: 0.5, y: 1 }}
+          tracksViewChanges={forceStopTracks}
+          opacity={rideActive && request?.stop ? 1 : 0}
+          zIndex={10}
+        >
+          <MapMarker icon="flag" label={request?.stop?.name ?? ''} color="#22c55e" />
+        </Marker>
+        <Polyline
+          coordinates={rideLineCoords}
+          strokeWidth={2}
+          strokeColor={primaryColor + '40'}
+          strokeColors={[primaryColor + '40']}
+          lineCap="round"
+          lineJoin="round"
+          zIndex={1}
+        />
+        <Polyline
+          coordinates={rideLineCoords}
+          strokeWidth={5}
+          strokeColor={primaryColor}
+          strokeColors={[primaryColor]}
+          lineCap="round"
+          lineJoin="round"
+          zIndex={2}
+        />
+
+        {/* Route lines along the roads (routes with a saved path). Polylines
+            pass strokeColors as well as strokeColor: with the Google provider
+            on iOS (react-native-maps 1.20) strokeColor alone is overridden by
+            a default style span and renders blue. Key includes the path so a
+            changed route replaces its line rather than mutating it.
+            Every route's lines stay mounted; routes the rider isn't watching
+            are drawn with no width and no color. Adding/removing map children
+            as the filter changes made the RN legacy-view interop (New
+            Architecture) pair later children with the wrong native views —
+            stop pins and buses went blank. See the marker note above.
+            Two passes — every white outline, then every colored line — with
+            zIndex keeping outlines under all colored lines, so on roads shared
+            by several routes the colors overlap instead of being covered. */}
+        {routeLines.map(({ coords, key, hidden }) => {
+          const casingColor = hidden ? HIDDEN_LINE_COLOR : ROUTE_LINE_CASING;
           return (
             <Polyline
-              key={`route-path-${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}`}
+              key={`route-casing-${key}`}
+              coordinates={coords}
+              strokeColor={casingColor}
+              strokeColors={[casingColor]}
+              strokeWidth={hidden ? 0 : 7}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={0}
+            />
+          );
+        })}
+        {routeLines.map(({ route: r, coords, key, hidden }) => {
+          const lineColor = hidden ? HIDDEN_LINE_COLOR : (r.color ?? primaryColor) + '99';
+          return (
+            <Polyline
+              key={`route-path-${key}`}
               coordinates={coords}
               strokeColor={lineColor}
               strokeColors={[lineColor]}
-              strokeWidth={4}
+              strokeWidth={hidden ? 0 : 4}
+              lineCap="round"
+              lineJoin="round"
               zIndex={1}
             />
           );
         })}
 
-        {/* Campus stops — hidden destination stop while ride is active */}
-        {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
-          <Marker
-            key={`${stop.id}-${primaryColor}`}
-            coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
-            anchor={{ x: 0.5, y: 1 }}
-            zIndex={2}
-            tracksViewChanges={forceStopTracks}
-            onPress={() => {
-              // Show the stop's info card first instead of jumping straight
-              // into a request — avoids accidental requests from a mistap.
-              if (selectedBusId) closeSelectedBus();
-              setShowLocationList(false);
-              setGroupChooser(null);
-              setSelectedStopCardId(stop.id);
-            }}
-          >
-            <MapMarker label={stop.name} labelHidden={!visibleLabelIds.has(stop.id) && stop.id !== selectedStopCardId} />
-          </Marker>
-        ))}
-
         {/*
-          One native marker per bus, and nothing else is mounted/unmounted in
-          the MapView when a bus is tapped or a badge toggles. On iOS (Google
-          provider + New Architecture interop in react-native-maps 1.20),
-          inserting/removing sibling markers can leave native markers paired
-          with the wrong icon — stop pins vanished and phantom buses appeared.
-          Badges live inside the bus marker's own view (always mounted, shown
-          via opacity) and the bus info card is rendered outside the map.
+          Bus markers come LAST among the map's children, one marker per slot
+          (see busSlots). On iOS the map is a legacy view under the New
+          Architecture interop (react-native-maps 1.20, Google provider), which
+          mishandles children inserted or removed anywhere but the end of the
+          list: later children got paired with the wrong native views (stop
+          pins and buses went blank, phantom buses appeared) and it could crash
+          the app (out-of-range insert in AIRGoogleMap). So every other map
+          child is always mounted, a bus keeps its slot while it's online, a
+          free slot stays mounted (invisible), and the pool only grows at the
+          end. Badges live inside the bus marker's own view (always mounted,
+          shown via opacity) and the bus info card is rendered outside the map.
         */}
-        {visibleBusIds.map((id) => {
-          const loc = busLocations[id];
-          if (!loc) return null;
+        {busSlots.map((slotBusId, slot) => {
+          // An empty slot renders the same marker tree, invisible and inert.
+          const id = slotBusId ?? '';
+          const empty = !slotBusId || !busLocations[slotBusId];
+          const loc = empty
+            ? { ...idleRidePoint, heading: 0, onBreak: false, lastUpdated: new Date() }
+            : busLocations[id];
 
-          const animatedCoord = busRegions.current[id];
+          const animatedCoord = empty ? undefined : busRegions.current[id];
           const updateAgeSeconds = (Date.now() - loc.lastUpdated.getTime()) / 1000;
-          const showLateLabel = !loc.onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
+          const showLateLabel = !empty && !loc.onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
           // The rider's own bus during a ride shows its ETA above it.
           const rideEtaText = rideActive && id === resolvedDriverId && !loc.onBreak && eta ? eta : null;
-          // With more than one route, ring each bus in its route's color so
-          // riders can tell which bus is which at a glance.
-          const busRoute = orgRoutes.length > 1 ? orgRoutes.find((r) => r.id === busRouteIds[id]) : undefined;
-          const ringColor = busRoute ? busRoute.color ?? primaryColor : null;
+          // Each bus is drawn in its route's color so riders can tell which
+          // bus is which at a glance; no route → the org color.
+          const busRoute = orgRoutes.find((r) => r.id === busRouteIds[id]);
+          const busColor = busRoute?.color ?? primaryColor;
           const group = busGroups[id];
-          const hiddenInGroup = !!group && group.lead !== id;
+          const filteredOut = empty || !shownBusIds.includes(id);
+          const hiddenInGroup = filteredOut || (!!group && group.lead !== id);
           const groupCount = group && group.lead === id ? group.members.length : 0;
 
           return (
             <MarkerAnimated
-              key={id}
+              key={`bus-slot-${slot}`}
               coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
               anchor={{ x: 0.5, y: 0.5 }}
-              onPress={() => (group ? openGroupChooser(group.members) : handleBusPress(id))}
-              tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel || !!rideEtaText}
+              onPress={() => {
+                if (filteredOut) return;
+                if (group) openGroupChooser(group.members);
+                else handleBusPress(id);
+              }}
+              tracksViewChanges={!empty && (forceBusTracks || loc.onBreak || showLateLabel || !!rideEtaText)}
               opacity={hiddenInGroup ? 0 : 1}
-              zIndex={hiddenInGroup ? 49 : 50}
+              // zIndex must never change: Fabric orders a view's children by
+              // zIndex (markers are position: absolute), so changing it moves
+              // the marker in the native child list — the remove + mid-list
+              // insert that the legacy interop mishandles (blank markers, and
+              // an out-of-range insert crash in AIRGoogleMap). Hidden markers
+              // use opacity only.
+              zIndex={50}
             >
               {/* Equal-height badge slots above and below keep the bus centered on the anchor. */}
               <View style={styles.busMarkerWrap}>
@@ -2307,13 +2617,7 @@ const handleConfirmSheetConfirm = async () => {
                   )}
                 </View>
                 <View style={styles.busIconWrap}>
-                  {/* Always mounted; shown via opacity (see the marker note above). */}
-                  <View style={[styles.busRouteRing, { borderColor: ringColor ?? 'transparent', opacity: ringColor ? 1 : 0 }]} />
-                  <Image
-                    source={busIcon}
-                    style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
-                    resizeMode="contain"
-                  />
+                  <BusIcon color={busColor} heading={loc.heading} />
                   {/* Count for overlapping buses — always mounted, shown via opacity. */}
                   <View style={[styles.busCountBadge, { backgroundColor: primaryColor, opacity: groupCount > 1 ? 1 : 0 }]}>
                     <Text style={styles.busCountBadgeText}>{groupCount > 1 ? groupCount : ''}</Text>
@@ -2328,44 +2632,6 @@ const handleConfirmSheetConfirm = async () => {
             </MarkerAnimated>
           );
         })}
-
-        {/* Destination pin only while ride is active */}
-        {rideActive && request?.stop && (
-          <Marker
-            coordinate={{
-              latitude: request.stop.latitude,
-              longitude: request.stop.longitude,
-            }}
-            anchor={{ x: 0.5, y: 1 }}
-            tracksViewChanges={false}
-            zIndex={10}
-          >
-            <MapMarker icon="flag" label={request.stop.name} color="#22c55e" />
-          </Marker>
-        )}
-
-        {routeCoords.length > 0 && (
-          <>
-            <Polyline
-              coordinates={routeCoords}
-              strokeWidth={2}
-              strokeColor={primaryColor + '40'}
-              strokeColors={[primaryColor + '40']}
-              lineCap="round"
-              lineJoin="round"
-              zIndex={1}
-            />
-            <Polyline
-              coordinates={routeCoords}
-              strokeWidth={5}
-              strokeColor={primaryColor}
-              strokeColors={[primaryColor]}
-              lineCap="round"
-              lineJoin="round"
-              zIndex={2}
-            />
-          </>
-        )}
       </MapView>
 
       {locationPermDenied && (
@@ -2421,11 +2687,11 @@ const handleConfirmSheetConfirm = async () => {
           <Icon name="map" size={22} color={GRAY_900} />
         </TouchableOpacity>
 
-        {!rideActive && visibleBusIds.length > 0 && (
+        {!rideActive && shownBusIds.length > 0 && (
           <TouchableOpacity
             style={styles.fab}
             onPress={() => {
-              const points = visibleBusIds
+              const points = shownBusIds
                 .map((id) => busLocations[id])
                 .filter(Boolean)
                 .map((b) => ({ latitude: b.latitude, longitude: b.longitude }));
@@ -2452,6 +2718,45 @@ const handleConfirmSheetConfirm = async () => {
           </TouchableOpacity>
         )}
       </Animated.View>
+
+      {/* "Now watching" route filter — bottom right, opposite the map buttons,
+          to keep the top of the map clear. Only when there's a choice to make;
+          hidden during a ride (the ride card owns the bottom then). */}
+      {orgRoutes.length > 1 && !rideActive && (
+        <Animated.View
+          pointerEvents="box-none"
+          style={[
+            styles.fabWrapBottomRight,
+            {
+              bottom: fabBottom,
+              transform: [{ translateY: Animated.multiply(buttonsLift, -1) }],
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={[styles.watchingFab, {
+              borderColor: (watchedRoutes.length === 1 ? watchedRoutes[0].color ?? primaryColor : GRAY_300) + '88',
+            }]}
+            onPress={() => setShowRoutePicker(true)}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel={`Now watching ${watchedRoutes.length > 0 ? watchedRoutes.map((r) => r.name).join(', ') : 'all routes'}`}
+            accessibilityHint="Choose which routes to show on the map"
+          >
+            {watchedRoutes.length > 0 ? (
+              <View style={styles.watchingDots}>
+                {watchedRoutes.slice(0, 3).map((r) => (
+                  <View key={r.id} style={[styles.watchingDot, { backgroundColor: r.color ?? primaryColor }]} />
+                ))}
+              </View>
+            ) : (
+              <Icon name="layers" size={18} color={GRAY_700} />
+            )}
+            <Text style={styles.watchingName} numberOfLines={1}>{watchedRoutesLabel(watchedRoutes)}</Text>
+            <Icon name="keyboard-arrow-up" size={18} color={GRAY_500} />
+          </TouchableOpacity>
+        </Animated.View>
+      )}
 
       {groupChooser && !selectedBusId && (
         <>
@@ -2736,7 +3041,13 @@ const handleConfirmSheetConfirm = async () => {
             </View>
 
             {(() => {
-              const info = routeStopMap.get(visibleRequest.stop?.id);
+              // The request's own route — a terminal shared by several routes
+              // would otherwise show whichever route lists it first.
+              const stopId = visibleRequest.stop?.id ?? visibleRequest.stopId;
+              const reqRoute = orgRoutes.find((r) => r.id === visibleRequest.routeId && r.stopIds.includes(stopId));
+              const info = reqRoute
+                ? { routeName: reqRoute.name, position: reqRoute.stopIds.indexOf(stopId) + 1, totalStops: reqRoute.stopIds.length }
+                : routeStopMap.get(stopId);
               if (!info) return null;
               return (
                 <Text style={styles.cardRouteMeta}>
@@ -2814,6 +3125,75 @@ const handleConfirmSheetConfirm = async () => {
           <Text style={styles.noRideText}>No active stop</Text>
         )}
       </Animated.View>
+
+      {/* Route picker for the "Now watching" filter: All routes, or any mix of routes. */}
+      <Modal visible={showRoutePicker} transparent animationType="slide" onRequestClose={() => setShowRoutePicker(false)}>
+        <TouchableWithoutFeedback onPress={() => setShowRoutePicker(false)}>
+          <View style={styles.childPickerOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.childPickerSheet, { paddingBottom: Math.max(40, insets.bottom + 16) }]}>
+                <Text style={styles.childPickerTitle}>Which routes do you want to watch?</Text>
+                <Text style={styles.routePickerHint}>Pick one or more. Other routes' stops and buses are hidden.</Text>
+                <ScrollView style={{ maxHeight: 360 }}>
+                  <TouchableOpacity
+                    style={[styles.childPickerRow, watchedRouteIds.length === 0 && { backgroundColor: `${primaryColor}12` }]}
+                    onPress={() => { watchRoutes([]); setSelectedStopCardId(null); }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: watchedRouteIds.length === 0 }}
+                  >
+                    <View style={[styles.childPickerAvatar, { backgroundColor: GRAY_100 }]}>
+                      <Icon name="layers" size={18} color={GRAY_700} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.childPickerName}>All routes</Text>
+                      <Text style={styles.childPickerGrade}>Every route, stop and bus</Text>
+                    </View>
+                    {watchedRouteIds.length === 0 && <Icon name="check" size={20} color={primaryColor} />}
+                  </TouchableOpacity>
+                  {orgRoutes.map((r) => {
+                    const checked = watchedRouteIds.includes(r.id);
+                    const dotColor = r.color ?? primaryColor;
+                    return (
+                      <TouchableOpacity
+                        key={r.id}
+                        style={[styles.childPickerRow, checked && { backgroundColor: `${dotColor}12` }]}
+                        onPress={() => {
+                          watchRoutes(toggleWatchedRoute(watchedRouteIds, r.id));
+                          setSelectedStopCardId(null);
+                        }}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked }}
+                      >
+                        <View style={[styles.childPickerAvatar, { backgroundColor: `${dotColor}22` }]}>
+                          <View style={[styles.routePickerSwatch, { backgroundColor: dotColor }]} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.childPickerName}>{r.name}</Text>
+                          <Text style={styles.childPickerGrade}>
+                            {`${r.stopIds.length} stop${r.stopIds.length === 1 ? '' : 's'}${isRouteActive(r, new Date(), org?.timezone) ? ' · running now' : ''}`}
+                          </Text>
+                        </View>
+                        <Icon
+                          name={checked ? 'check-box' : 'check-box-outline-blank'}
+                          size={22}
+                          color={checked ? dotColor : GRAY_400}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                <TouchableOpacity
+                  style={[styles.routePickerDone, { backgroundColor: primaryColor }]}
+                  onPress={() => setShowRoutePicker(false)}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.routePickerDoneText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
 
       {/* Child picker — shown when parent has multiple children */}
       <Modal visible={showChildPicker} transparent animationType="slide" onRequestClose={() => setShowChildPicker(false)}>
@@ -2955,6 +3335,36 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   statusPillText: { fontSize: 13, fontWeight: '600', color: GRAY_700, flexShrink: 1 },
+  fabWrapBottomRight: {
+    position: 'absolute',
+    right: 14,
+    zIndex: 120,
+    alignItems: 'flex-end',
+    maxWidth: '60%',
+  },
+  watchingFab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 44,
+    maxWidth: '100%',
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    backgroundColor: WHITE,
+    shadowColor: BLACK,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  watchingDots: { flexDirection: 'row', gap: 3 },
+  watchingDot: { width: 10, height: 10, borderRadius: 5 },
+  watchingName: { fontSize: 14, fontWeight: '700', color: GRAY_900, flexShrink: 1 },
+  routePickerSwatch: { width: 16, height: 16, borderRadius: 8 },
+  routePickerHint: { fontSize: 13, color: GRAY_500, textAlign: 'center', marginTop: -6, marginBottom: 10 },
+  routePickerDone: { marginTop: 12, borderRadius: borderRadius.md, paddingVertical: 13, alignItems: 'center' },
+  routePickerDoneText: { color: WHITE, fontSize: 15, fontWeight: '700' },
   tipClose: { position: 'absolute', top: 10, right: 10, padding: 4 },
   busCountDot: {
     width: 7,
@@ -3333,14 +3743,6 @@ const styles = StyleSheet.create({
   },
   groupRowTitle: { fontSize: 15, fontWeight: '700', color: GRAY_900 },
   groupRowSub: { fontSize: 13, color: GRAY_500, marginTop: 1 },
-  busRouteRing: {
-    position: 'absolute',
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 3,
-    backgroundColor: 'rgba(255,255,255,0.6)',
-  },
   etaBadge: {
     borderRadius: 10,
     paddingHorizontal: 8,

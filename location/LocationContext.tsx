@@ -29,6 +29,8 @@ import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
 type LocationContextType = {
   isSharing: boolean;
   startSharing: (routeId?: string) => Promise<void>;
+  /** The driver switched routes mid-shift: service-hours checks follow the new route. */
+  setSharingRouteId: (routeId: string | null) => void;
   stopSharing: () => Promise<void>;
   isOnBreak: boolean;
   breakEndsAt: Date | null;
@@ -40,6 +42,7 @@ type LocationContextType = {
 const LocationContext = createContext<LocationContextType>({
   isSharing: false,
   startSharing: async () => {},
+  setSharingRouteId: () => {},
   stopSharing: async () => {},
   isOnBreak: false,
   breakEndsAt: null,
@@ -388,6 +391,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     }
   };
 
+  const setSharingRouteId = (routeId: string | null) => {
+    currentRouteIdRef.current = routeId;
+  };
+
   const beginSharing = async (routeId?: string) => {
     const uid = requireUid();
     currentUid.current = uid;
@@ -713,7 +720,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }, [isSharing]);
 
   return (
-    <LocationContext.Provider value={{ isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak }}>
+    <LocationContext.Provider value={{ isSharing, startSharing, setSharingRouteId, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak }}>
       {children}
     </LocationContext.Provider>
   );

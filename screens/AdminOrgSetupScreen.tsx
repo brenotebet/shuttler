@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase/firebaseconfig';
 import MapView, { Marker, Polyline, Region } from 'react-native-maps';
-import { collection, doc, getDocs, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, updateDoc, setDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { GOOGLE_MAPS_API_KEY } from '../config';
 import * as WebBrowser from 'expo-web-browser';
 import { signOut } from 'firebase/auth';
@@ -51,9 +51,11 @@ import BottomSheet from '../components/BottomSheet';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useOrgSetupProgress } from '../src/hooks/useOrgSetupProgress';
 import { ORG_TYPES, allowsParentRole } from '../src/constants/orgTypes';
-import { getTodayScheduleText } from '../src/utils/scheduleUtils';
+import { getTodayScheduleText, END_OF_DAY } from '../src/utils/scheduleUtils';
 import { fetchLoopPath } from '../src/utils/directions';
 import { routePathKey, encodePath } from '../src/utils/routePath';
+import { pickDefaultRouteColor, stopsOnNoRoute } from '../src/utils/routeDisplay';
+import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
@@ -734,15 +736,19 @@ const WEEK_DAYS: { key: keyof WeekSchedule; label: string }[] = [
   { key: 'sunday',    label: 'Sun' },
 ];
 
-// Every 30 minutes: 00:00, 00:30, 01:00 … 23:30
+// Every 30 minutes: 00:00, 00:30, 01:00 … 23:30. Closing times can also be
+// '24:00' ("Midnight", the end of the day), so 12:00 AM – Midnight is a
+// route that runs all day (e.g. an airport terminal loop).
 const TIME_SLOTS: string[] = [];
 for (let h = 0; h < 24; h++) {
   for (const m of [0, 30]) {
     TIME_SLOTS.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
   }
 }
+const CLOSE_TIME_SLOTS: string[] = [...TIME_SLOTS, END_OF_DAY];
 
 function fmt12h(hhmm: string): string {
+  if (hhmm === END_OF_DAY) return 'Midnight';
   const [hStr, mStr] = hhmm.split(':');
   let h = parseInt(hStr, 10);
   const ampm = h >= 12 ? 'PM' : 'AM';
@@ -828,7 +834,7 @@ function ScheduleEditor({
           </TouchableOpacity>
         </View>
         <Picker selectedValue={pickerTemp} onValueChange={(v) => setPickerTemp(v as string)}>
-          {TIME_SLOTS.map((slot) => (
+          {(pickerField?.field === 'close' ? CLOSE_TIME_SLOTS : TIME_SLOTS).map((slot) => (
             <Picker.Item key={slot} label={fmt12h(slot)} value={slot} />
           ))}
         </Picker>
@@ -1303,8 +1309,11 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       showLimitAlert('maxRoutes', routes.length + 1);
       return;
     }
-    setRouteEditorTarget({ route: { id: newId('route'), name: '', stopIds: [] }, isNew: true });
-  }, [routes.length, planLimits.maxRoutes, showLimitAlert]);
+    // Each new route starts with a color no other route uses, so routes are
+    // easy to tell apart on the rider map. Admins can still change it.
+    const color = pickDefaultRouteColor(routes, COLOR_SWATCHES, primaryColor);
+    setRouteEditorTarget({ route: { id: newId('route'), name: '', stopIds: [], color }, isNew: true });
+  }, [routes, planLimits.maxRoutes, showLimitAlert, primaryColor]);
 
   const handleSaveRoute = useCallback(async (route: Route, isNew: boolean): Promise<boolean> => {
     const nextRoutes = isNew ? [...routes, route] : routes.map((r) => (r.id === route.id ? route : r));
@@ -1314,6 +1323,39 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   const handleDeleteRoute = useCallback(async (route: Route): Promise<boolean> => {
     return persist(stops, routes.filter((r) => r.id !== route.id), `"${route.name}" deleted.`);
   }, [routes, stops, persist]);
+
+  // Extra lines for the "Delete route" confirmation: stops the deletion
+  // would leave on no route (riders can't request those once the org has
+  // routes, since no driver sees them) and buses driving the route now.
+  const getRouteDeleteWarnings = useCallback(async (route: Route): Promise<string[]> => {
+    const warnings: string[] = [];
+    const remaining = routes.filter((r) => r.id !== route.id);
+    if (remaining.length > 0) {
+      const stranded = stopsOnNoRoute(stops.filter((s) => route.stopIds.includes(s.id)), remaining);
+      if (stranded.length > 0) {
+        const names = stranded.map((s) => s.name);
+        const list = names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+        warnings.push(`${list} won't be on any route, so riders won't be able to request ${stranded.length === 1 ? 'it' : 'them'}. Add ${stranded.length === 1 ? 'it' : 'them'} to another route to keep ${stranded.length === 1 ? 'it' : 'them'} in service.`);
+      }
+    }
+    if (org) {
+      try {
+        const snap = await getDocs(query(collection(db, 'orgs', org.orgId, 'buses'), where('routeId', '==', route.id)));
+        const now = Date.now();
+        const online = snap.docs.filter((d) => {
+          const data = d.data();
+          const updatedMs = data.updatedAt?.toMillis?.() ?? 0;
+          return data.online === true && now - updatedMs < ONLINE_BUS_STALE_SECONDS * 1000;
+        }).length;
+        if (online > 0) {
+          warnings.push(`${online} driver${online === 1 ? ' is' : 's are'} on this route right now and will be asked to pick another${org.driversChooseRoute === false ? ' — with routes assigned by you, they go offline until you assign one' : ''}.`);
+        }
+      } catch {
+        // Best effort: the warning is advisory, the delete still works.
+      }
+    }
+    return warnings;
+  }, [org, routes, stops]);
 
   const routesUsing = (stopId: string) => routes.filter((r) => r.stopIds.includes(stopId));
 
@@ -1426,7 +1468,9 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                       <View style={{ flex: 1 }}>
                         <Text style={stopsUi.rowTitle} numberOfLines={1}>{stop.name}</Text>
                         <Text style={stopsUi.rowSub} numberOfLines={1}>
-                          {used.length === 0 ? 'Not on a route yet' : `On ${used.map((r) => r.name).join(', ')}`}
+                          {used.length === 0
+                            ? routes.length > 0 ? 'Not on a route — riders can\'t request it' : 'Not on a route yet'
+                            : `On ${used.map((r) => r.name).join(', ')}`}
                         </Text>
                       </View>
                       <Icon name="chevron-right" size={20} color={GRAY_400} />
@@ -1634,6 +1678,7 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
             const ok = await handleDeleteRoute(route);
             if (ok) setRouteEditorTarget(null);
           }}
+          getDeleteWarnings={getRouteDeleteWarnings}
           isSaving={isSaving}
         />
       )}
@@ -1652,6 +1697,7 @@ function RouteEditorModal({
   onClose,
   onSave,
   onDelete,
+  getDeleteWarnings,
   isSaving,
 }: {
   route: Route;
@@ -1661,6 +1707,7 @@ function RouteEditorModal({
   onClose: () => void;
   onSave: (route: Route) => void;
   onDelete: (route: Route) => void;
+  getDeleteWarnings: (route: Route) => Promise<string[]>;
   isSaving: boolean;
 }) {
   const { primaryColor } = useOrgTheme();
@@ -1731,10 +1778,11 @@ function RouteEditorModal({
     onSave(finalRoute);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
+    const warnings = await getDeleteWarnings(route);
     Alert.alert(
       'Delete route',
-      `Delete "${route.name}"? Drivers who default to it will need a new route.`,
+      [`Delete "${route.name}"? Drivers who default to it will need a new route.`, ...warnings].join('\n\n'),
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => onDelete(route) },
@@ -2090,6 +2138,8 @@ function UsersTab() {
   const [targetChildren, setTargetChildren] = useState<{ id: string; name: string; grade?: string | null; createdSec: number }[] | 'error' | null>(null);
 
   const orgRoutes = org?.routes ?? [];
+  // "Allow drivers to choose their route" off: the default route becomes a fixed assignment.
+  const routesLocked = org?.driversChooseRoute === false;
 
   const loadMembers = useCallback(async () => {
     if (!org) return;
@@ -2329,7 +2379,7 @@ function UsersTab() {
     const isOwner = !!(org?.ownerUid && member.uid === org.ownerUid);
     const detail = [
       ROLE_LABELS[member.role],
-      isStaffMember && orgRoutes.length > 0 ? (assignedRoute ? assignedRoute.name : 'No default route') : null,
+      isStaffMember && orgRoutes.length > 0 ? (assignedRoute ? assignedRoute.name : routesLocked ? 'No route assigned' : 'No default route') : null,
     ].filter(Boolean).join(' · ');
     return (
       <TouchableOpacity
@@ -2657,9 +2707,13 @@ function UsersTab() {
 
           {targetIsStaff && orgRoutes.length > 0 && (
             <>
-              <Text style={usersStyles.sheetLabel}>Default route</Text>
-              <Text style={[styles.hint, { marginBottom: 6 }]}>Pre-selected when they go online. They can still switch.</Text>
-              {[{ id: null as string | null, name: 'No default' }, ...orgRoutes.map((r) => ({ id: r.id as string | null, name: r.name }))].map((r) => {
+              <Text style={usersStyles.sheetLabel}>{routesLocked ? 'Assigned route' : 'Default route'}</Text>
+              <Text style={[styles.hint, { marginBottom: 6 }]}>
+                {routesLocked
+                  ? 'Drivers always drive this route ("Allow drivers to choose their route" is off in Operations). Without one, they can\'t go online.'
+                  : 'Pre-selected when they go online. They can still switch.'}
+              </Text>
+              {[{ id: null as string | null, name: routesLocked ? 'No route' : 'No default' }, ...orgRoutes.map((r) => ({ id: r.id as string | null, name: r.name }))].map((r) => {
                 const active = targetRouteId === r.id;
                 return (
                   <TouchableOpacity
@@ -3788,6 +3842,8 @@ function OperationsTab() {
   const [enabled, setEnabled] = useState(existing?.enabled ?? false);
   const [maxMinutes, setMaxMinutes] = useState(existing?.maxMinutes ?? 15);
   const [breaksPerShift, setBreaksPerShift] = useState(existing?.breaksPerShift ?? 1);
+  const [driversChooseRoute, setDriversChooseRoute] = useState(org?.driversChooseRoute !== false);
+  const hasRoutes = (org?.routes ?? []).length > 0;
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = useCallback(async () => {
@@ -3799,17 +3855,17 @@ function OperationsTab() {
       const res = await fetch(`${SHUTTLER_API_URL}/orgs/${org.orgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ breakSettings }),
+        body: JSON.stringify({ breakSettings, driversChooseRoute }),
       });
       if (!res.ok) throw new Error('Save failed');
       await refreshOrg();
-      showToast('Break settings saved.', 'success');
+      showToast('Operations settings saved.', 'success');
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to save settings.', 'error');
     } finally {
       setIsSaving(false);
     }
-  }, [org, enabled, maxMinutes, breaksPerShift, refreshOrg]);
+  }, [org, enabled, maxMinutes, breaksPerShift, driversChooseRoute, refreshOrg]);
 
   return (
     <ScrollView
@@ -3870,6 +3926,53 @@ function OperationsTab() {
         </>
       )}
 
+      <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Driver Routes</Text>
+      <Text style={styles.hint}>
+        Decide whether drivers pick their own route or always drive the route you assign them.
+      </Text>
+
+      <View style={opsStyles.settingRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={opsStyles.settingLabel}>Allow drivers to choose their route</Text>
+          <Text style={opsStyles.settingHint}>
+            {driversChooseRoute
+              ? 'Drivers pick a route each time they go online.'
+              : 'Drivers always drive the route you assign them.'}
+          </Text>
+        </View>
+        <Switch
+          value={driversChooseRoute}
+          onValueChange={setDriversChooseRoute}
+          trackColor={{ true: primaryColor }}
+          thumbColor={WHITE}
+          accessibilityLabel="Allow drivers to choose their route"
+        />
+      </View>
+
+      <View style={opsStyles.infoBox}>
+        <View style={opsStyles.infoHeader}>
+          <Icon name="info-outline" size={16} color={GRAY_700} />
+          <Text style={opsStyles.infoTitle}>How it works</Text>
+        </View>
+        <Text style={opsStyles.infoLine}>
+          <Text style={opsStyles.infoStrong}>On: </Text>
+          Drivers choose the route they're driving before going online. The route you assign in Users → Default route is pre-selected, and they can switch routes during a shift.
+        </Text>
+        <Text style={opsStyles.infoLine}>
+          <Text style={opsStyles.infoStrong}>Off: </Text>
+          Drivers always drive the route you assign in Users. They can't pick another one, and a driver with no assigned route can't go online. To move a driver, change their route in Users — their bus moves to it right away, even mid-shift.
+        </Text>
+        <Text style={opsStyles.infoLine}>
+          <Text style={opsStyles.infoStrong}>Either way: </Text>
+          If you have one route, drivers use it automatically. Admins can always choose any route.
+        </Text>
+        {!hasRoutes && (
+          <Text style={[opsStyles.infoLine, { color: '#b45309' }]}>
+            You don't have any routes yet, so this has no effect until you create one in the Stops tab.
+          </Text>
+        )}
+      </View>
+
       <AppButton
         label={isSaving ? 'Saving…' : 'Save Operations'}
         onPress={handleSave}
@@ -3926,6 +4029,34 @@ const opsStyles = StyleSheet.create({
   },
   chipTextActive: {
     color: WHITE,
+  },
+  infoBox: {
+    backgroundColor: GRAY_50,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: GRAY_200,
+    padding: 14,
+    gap: 8,
+    marginBottom: 8,
+  },
+  infoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  infoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: GRAY_700,
+  },
+  infoLine: {
+    fontSize: 13,
+    color: GRAY_700,
+    lineHeight: 18,
+  },
+  infoStrong: {
+    fontWeight: '700',
+    color: GRAY_900,
   },
 });
 
