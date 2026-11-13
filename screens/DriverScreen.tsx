@@ -54,7 +54,7 @@ import {
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS, STALE_WINDOW_SECONDS } from '../src/constants/stops';
 import { getPlanLimits, planFor } from '../src/constants/planLimits';
-import { useOrg, Stop } from '../src/org/OrgContext';
+import { useOrg, Stop, Route } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
@@ -185,7 +185,7 @@ function nextStopFromNearest(nearestStopId: string | null, stops: Stop[]) {
 export default function DriverScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak } = useLocationSharing();
+  const { isSharing, startSharing, setSharingRouteId, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak } = useLocationSharing();
   const [occupancy, setOccupancy] = useState<'open' | 'filling' | 'full'>('open');
   const { driverId, loading } = useDriver();
   const { org } = useOrg();
@@ -278,11 +278,44 @@ export default function DriverScreen() {
     return () => clearInterval(id);
   }, [isOnBreak, breakEndsAt]);
 
-  // Resolve the active route. Auto-selects the first route when routes are available.
+  // Resolve the active route. A one-route org uses it automatically; with
+  // several routes the driver must choose one (an admin-assigned default
+  // pre-selects it) before going online. No routes at all → null.
   const activeRoute = useMemo(() => {
     if (orgRoutes.length === 0) return null;
-    return orgRoutes.find((r) => r.id === selectedRouteId) ?? orgRoutes[0];
+    if (orgRoutes.length === 1) return orgRoutes[0];
+    return orgRoutes.find((r) => r.id === selectedRouteId) ?? null;
   }, [orgRoutes, selectedRouteId]);
+  const needsRouteChoice = orgRoutes.length > 1 && !activeRoute;
+
+  // While online, service-hours checks follow the route being driven —
+  // whether the driver switched or an admin changed their default.
+  useEffect(() => {
+    if (isSharing) setSharingRouteId(activeRoute?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSharing, activeRoute?.id]);
+
+  // Route chip tapped. While online, confirm first: riders see the bus move
+  // to the new route.
+  const chooseRoute = (route: Route) => {
+    if (route.id === activeRoute?.id) return;
+    const apply = () => {
+      manuallySelectedRoute.current = true;
+      setSelectedRouteId(route.id);
+    };
+    if (!isSharing) { apply(); return; }
+    Alert.alert(
+      `Switch to ${route.name}?`,
+      `Riders will see your bus on ${route.name}.` +
+        (activeRequests.length > 0
+          ? ` You still have ${activeRequests.length} open stop request${activeRequests.length !== 1 ? 's' : ''}.`
+          : ''),
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Switch Route', onPress: apply },
+      ],
+    );
+  };
 
   // Watch the driver's user doc for admin-assigned route changes + write public profile
   // once on mount so students see the driver's name when they tap the bus.
@@ -319,7 +352,7 @@ export default function DriverScreen() {
   }, [driverId, orgId]);
 
   // If the selected route was deleted by an admin, clear the stale ID so the
-  // route picker highlights the correct fallback (orgRoutes[0]).
+  // driver is asked to choose a route again.
   useEffect(() => {
     if (!selectedRouteId) return;
     if (!orgRoutes.find((r) => r.id === selectedRouteId)) {
@@ -1103,7 +1136,12 @@ export default function DriverScreen() {
             <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
             {activeRoute && (
               <Text style={styles.headerSubtitle}>
-                <Icon name="route" size={12} color={GRAY_500} /> {activeRoute.name} · {routeOrderedStops.length} stop{routeOrderedStops.length !== 1 ? 's' : ''}
+                <Icon name="route" size={12} color={activeRoute.color ?? GRAY_500} /> {isSharing ? 'Driving: ' : ''}{activeRoute.name} · {routeOrderedStops.length} stop{routeOrderedStops.length !== 1 ? 's' : ''}
+              </Text>
+            )}
+            {needsRouteChoice && (
+              <Text style={[styles.headerSubtitle, styles.headerSubtitleWarn]}>
+                <Icon name="route" size={12} color="#b45309" /> Choose your route to go online
               </Text>
             )}
           </View>
@@ -1132,9 +1170,30 @@ export default function DriverScreen() {
                 }
                 await stopSharing();
               } else {
+                // A route is required whenever the org has routes.
+                if (needsRouteChoice) {
+                  Alert.alert(
+                    'Choose your route',
+                    'Pick the route you\'re driving under Route Progress, then tap Start Sharing.',
+                  );
+                  return;
+                }
+                if (orgRoutes.length > 1 && activeRoute) {
+                  await new Promise<void>((resolve, reject) => {
+                    Alert.alert(
+                      `Go online on ${activeRoute.name}?`,
+                      'Riders will see your bus on this route. You can switch routes later.',
+                      [
+                        { text: 'Change Route', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
+                        { text: 'Go Online', onPress: () => resolve() },
+                      ],
+                    );
+                  });
+                }
+
                 // Check route operating hours before going online — before
                 // claiming a vehicle slot, so backing out here holds none.
-                const routeToCheck = orgRoutes.find((r) => r.id === (selectedRouteId ?? orgRoutes[0]?.id)) ?? orgRoutes[0] ?? null;
+                const routeToCheck = activeRoute;
                 if (routeToCheck?.schedule && !isRouteActive(routeToCheck, new Date(), org?.timezone)) {
                   const todayText = getTodayScheduleText(routeToCheck, new Date(), org?.timezone);
                   const nextOpen = getNextOpenText(routeToCheck, new Date(), org?.timezone);
@@ -1194,7 +1253,7 @@ export default function DriverScreen() {
                   );
                   return;
                 }
-                await startSharing(selectedRouteId ?? undefined);
+                await startSharing(activeRoute?.id);
               }
             } catch (err: any) {
               if (err?.message !== 'cancelled') {
@@ -1365,6 +1424,10 @@ export default function DriverScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Route Progress</Text>
 
+          {needsRouteChoice && (
+            <Text style={styles.emptyText}>Choose the route you're driving to go online.</Text>
+          )}
+
           {orgRoutes.length > 1 && (
             <ScrollView
               horizontal
@@ -1373,14 +1436,17 @@ export default function DriverScreen() {
               contentContainerStyle={styles.routePickerContent}
             >
               {orgRoutes.map((route) => {
-                const isSelected = (selectedRouteId ?? orgRoutes[0]?.id) === route.id;
+                const isSelected = activeRoute?.id === route.id;
+                const chipColor = route.color ?? primaryColor;
                 return (
                   <TouchableOpacity
                     key={route.id}
-                    style={[styles.routeChip, { borderColor: primaryColor }, isSelected && { backgroundColor: primaryColor }]}
-                    onPress={() => { manuallySelectedRoute.current = true; setSelectedRouteId(route.id); }}
+                    style={[styles.routeChip, { borderColor: chipColor }, isSelected && { backgroundColor: chipColor }]}
+                    onPress={() => chooseRoute(route)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isSelected }}
                   >
-                    <Text style={[styles.routeChipText, { color: primaryColor }, isSelected && styles.routeChipTextSelected]}>
+                    <Text style={[styles.routeChipText, { color: chipColor }, isSelected && styles.routeChipTextSelected]}>
                       {route.name}
                     </Text>
                   </TouchableOpacity>
@@ -1636,6 +1702,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 22, fontWeight: '700', color: GRAY_900 },
   headerSubtitle: { fontSize: 12, color: GRAY_500, marginTop: 2 },
+  headerSubtitleWarn: { color: '#b45309', fontWeight: '600' },
   scrollContent: {
     paddingHorizontal: 14,
     gap: 12,

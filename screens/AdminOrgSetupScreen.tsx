@@ -54,6 +54,7 @@ import { ORG_TYPES, allowsParentRole } from '../src/constants/orgTypes';
 import { getTodayScheduleText } from '../src/utils/scheduleUtils';
 import { fetchLoopPath } from '../src/utils/directions';
 import { routePathKey, encodePath } from '../src/utils/routePath';
+import { pickDefaultRouteColor } from '../src/utils/routeDisplay';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
 
@@ -1303,8 +1304,11 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
       showLimitAlert('maxRoutes', routes.length + 1);
       return;
     }
-    setRouteEditorTarget({ route: { id: newId('route'), name: '', stopIds: [] }, isNew: true });
-  }, [routes.length, planLimits.maxRoutes, showLimitAlert]);
+    // Each new route starts with a color no other route uses, so routes are
+    // easy to tell apart on the rider map. Admins can still change it.
+    const color = pickDefaultRouteColor(routes, COLOR_SWATCHES, primaryColor);
+    setRouteEditorTarget({ route: { id: newId('route'), name: '', stopIds: [], color }, isNew: true });
+  }, [routes, planLimits.maxRoutes, showLimitAlert, primaryColor]);
 
   const handleSaveRoute = useCallback(async (route: Route, isNew: boolean): Promise<boolean> => {
     const nextRoutes = isNew ? [...routes, route] : routes.map((r) => (r.id === route.id ? route : r));

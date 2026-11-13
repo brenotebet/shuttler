@@ -76,6 +76,7 @@ import { nextHeading, glideDurationMs } from '../src/utils/busMotion';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
 import { groupOverlappingBuses, sameGroups, type BusGroups } from '../src/utils/busClusters';
 import { decodePath, snapToPath } from '../src/utils/routePath';
+import { getStopMarkerStyle, isBusShown, resolveWatchedRouteId, type StopMarkerStyle } from '../src/utils/routeDisplay';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
@@ -261,6 +262,39 @@ export default function MapScreen() {
   }, [org?.routes]);
   const routePathsRef = useRef(routePaths);
   routePathsRef.current = routePaths;
+
+  // "Now watching" route filter. null = All routes. Saved per org on this
+  // device; a deleted route or a one-route org falls back to All routes.
+  const WATCHED_ROUTE_KEY = `map_watched_route_${orgId ?? 'none'}`;
+  const [storedWatchedRouteId, setStoredWatchedRouteId] = useState<string | null>(null);
+  const [showRoutePicker, setShowRoutePicker] = useState(false);
+  useEffect(() => {
+    if (!orgId) return;
+    AsyncStorage.getItem(WATCHED_ROUTE_KEY).then(setStoredWatchedRouteId).catch(() => {});
+  }, [orgId, WATCHED_ROUTE_KEY]);
+  const watchRoute = useCallback((routeId: string | null) => {
+    setStoredWatchedRouteId(routeId);
+    (routeId ? AsyncStorage.setItem(WATCHED_ROUTE_KEY, routeId) : AsyncStorage.removeItem(WATCHED_ROUTE_KEY)).catch(() => {});
+  }, [WATCHED_ROUTE_KEY]);
+  const watchedRouteId = resolveWatchedRouteId(storedWatchedRouteId, orgRoutes);
+  const watchedRoute = watchedRouteId ? orgRoutes.find((r) => r.id === watchedRouteId) ?? null : null;
+
+  // Pin color (and route dots / visibility) for every stop, from its routes
+  // and the watched route.
+  const stopStyles = useMemo(() => {
+    const map: Record<string, StopMarkerStyle> = {};
+    stops.forEach((s) => {
+      map[s.id] = getStopMarkerStyle(s.id, orgRoutes, primaryColor, GRAY_500, watchedRouteId);
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.stops, org?.routes, primaryColor, watchedRouteId]);
+  const stopStylesRef = useRef(stopStyles);
+  stopStylesRef.current = stopStyles;
+  // Changes whenever any pin's look changes, to redraw the marker snapshots.
+  const stopStylesKey = Object.entries(stopStyles)
+    .map(([id, st]) => `${id}:${st.color}:${st.dots.join('/')}:${st.visible ? 1 : 0}`)
+    .join('|');
   // Returns a Firestore CollectionReference scoped to the current org.
   // Throws if orgId is not loaded — callers must only run after org is available.
   const orgCol = (name: string) => {
@@ -439,6 +473,8 @@ export default function MapScreen() {
         { latitude: targetStop.latitude, longitude: targetStop.longitude, latitudeDelta: 0.007, longitudeDelta: 0.007 },
         600,
       );
+      // A stop on another route would be hidden by the filter — show all routes.
+      if (stopStylesRef.current[focusStopId]?.visible === false) watchRoute(null);
       const match = requestableStops.find((e) => e.stop.id === focusStopId);
       if (match) setSelectedStopKey(match.key);
       // Arriving from the Routes tab: show the stop's card with its Request button.
@@ -491,6 +527,17 @@ export default function MapScreen() {
   const busOnline = freshBusCount > 0;
   // Never show a bus the rider can't request a stop from.
   const visibleBusIds = serviceIsOpen ? freshBusIds : [];
+  // Buses that pass the "Now watching" filter. Filtered-out buses stay
+  // mounted (hidden via opacity) — see the marker note in the map below.
+  // The rider's own ride is never filtered out: its assigned driver, or
+  // any bus on the route the request was made on.
+  const rideInProgress = !!request && request.id !== dismissedRequestId
+    && ['pending', 'accepted', 'awaiting_confirmation'].includes(request.status);
+  const shownBusIds = visibleBusIds.filter((id) => isBusShown(
+    busRouteIds[id],
+    watchedRouteId,
+    rideInProgress && (id === driverId || (!!request?.routeId && busRouteIds[id] === request.routeId)),
+  ));
 
   const [showLocationList, setShowLocationList] = useState(false);
   const [selectedStopKey, setSelectedStopKey] = useState<string | null>(null);
@@ -529,7 +576,7 @@ export default function MapScreen() {
     const region = r ?? regionRef.current ?? INITIAL_REGION;
     const { width, height } = Dimensions.get('window');
     const next = groupOverlappingBuses(
-      visibleBusIds
+      shownBusIds
         .map((id) => (busLocations[id] ? { id, latitude: busLocations[id].latitude, longitude: busLocations[id].longitude } : null))
         .filter((b): b is { id: string; latitude: number; longitude: number } => !!b),
       region,
@@ -585,7 +632,8 @@ export default function MapScreen() {
   const updateStopLabels = (r: { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number }) => {
     const { width, height } = Dimensions.get('window');
     const priority = selectedStopCardId ? [selectedStopCardId] : [];
-    const next = pickVisibleStopLabels(stops, r, { width, height }, priority);
+    const labelStops = stops.filter((s) => stopStyles[s.id]?.visible !== false);
+    const next = pickVisibleStopLabels(labelStops, r, { width, height }, priority);
     setVisibleLabelIds((prev) => {
       if (sameIdSet(prev, next)) return prev;
       bumpStopTracks();
@@ -598,12 +646,12 @@ export default function MapScreen() {
   useEffect(() => {
     updateBusGroups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busLocations, visibleBusIds.join(',')]);
+  }, [busLocations, shownBusIds.join(',')]);
   // Close the chooser if its group breaks up (a bus drove off or went offline).
   useEffect(() => {
-    if (groupChooser && groupChooser.filter((id) => visibleBusIds.includes(id)).length < 2) setGroupChooser(null);
+    if (groupChooser && groupChooser.filter((id) => shownBusIds.includes(id)).length < 2) setGroupChooser(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleBusIds.join(','), groupChooser]);
+  }, [shownBusIds.join(','), groupChooser]);
   // Same pop-in as the bus card (fade + slight rise + scale), replayed for
   // each new stop so switching stops reads as a new card.
   const stopCardAnim = useRef(new Animated.Value(0)).current;
@@ -622,8 +670,11 @@ export default function MapScreen() {
     const r = regionRef.current ?? region ?? INITIAL_REGION;
     if (r) updateStopLabels(r as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stops, selectedStopCardId]);
+  }, [stops, selectedStopCardId, watchedRouteId]);
   useEffect(() => { bumpStopTracks(); }, [selectedStopCardId]);
+  // Pin colors / route filter changed: redraw the stop marker snapshots.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { bumpStopTracks(); }, [stopStylesKey]);
 
   const cloudAnim = useRef(new Animated.Value(0)).current;
 
@@ -2122,6 +2173,26 @@ const handleConfirmSheetConfirm = async () => {
               </Text>
             </View>
           )}
+          {/* "Now watching" route filter — only when there's a choice to make. */}
+          {orgRoutes.length > 1 && (
+            <TouchableOpacity
+              style={[styles.statusPill, styles.watchingPill, { borderColor: (watchedRoute?.color ?? primaryColor) + '55' }]}
+              onPress={() => setShowRoutePicker(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Now watching ${watchedRoute ? watchedRoute.name : 'all routes'}`}
+              accessibilityHint="Choose which route to show on the map"
+            >
+              {watchedRoute ? (
+                <View style={[styles.watchingDot, { backgroundColor: watchedRoute.color ?? primaryColor }]} />
+              ) : (
+                <Icon name="layers" size={15} color={GRAY_700} />
+              )}
+              <Text style={styles.statusPillText} numberOfLines={1}>
+                Now watching: <Text style={styles.watchingName}>{watchedRoute ? watchedRoute.name : 'All routes'}</Text>
+              </Text>
+              <Icon name="keyboard-arrow-down" size={18} color={GRAY_500} />
+            </TouchableOpacity>
+          )}
           {serviceIsOpen && busOnline && showMapTip && (
             <View style={{ marginTop: 8 }}>
               <InfoBanner
@@ -2150,7 +2221,9 @@ const handleConfirmSheetConfirm = async () => {
           <View style={styles.overlay}>
             <View style={[styles.locationListContainer, { top: role === 'parent' ? topOverlay + 106 : topOverlay + 60 }]}>
               <FlatList
-                data={requestableStops}
+                data={watchedRouteId
+                  ? requestableStops.filter((e) => !e.routeId || e.routeId === watchedRouteId)
+                  : requestableStops}
                 keyExtractor={(item) => item.key}
                 renderItem={({ item }) => (
                   <TouchableOpacity
@@ -2223,6 +2296,7 @@ const handleConfirmSheetConfirm = async () => {
         {orgRoutes.map((r) => {
           const coords = routePaths[r.id];
           if (!coords) return null;
+          if (watchedRouteId && r.id !== watchedRouteId) return null;
           const lineColor = (r.color ?? primaryColor) + '73';
           return (
             <Polyline
@@ -2237,25 +2311,38 @@ const handleConfirmSheetConfirm = async () => {
         })}
 
         {/* Campus stops — hidden destination stop while ride is active */}
-        {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => (
-          <Marker
-            key={`${stop.id}-${primaryColor}`}
-            coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
-            anchor={{ x: 0.5, y: 1 }}
-            zIndex={2}
-            tracksViewChanges={forceStopTracks}
-            onPress={() => {
-              // Show the stop's info card first instead of jumping straight
-              // into a request — avoids accidental requests from a mistap.
-              if (selectedBusId) closeSelectedBus();
-              setShowLocationList(false);
-              setGroupChooser(null);
-              setSelectedStopCardId(stop.id);
-            }}
-          >
-            <MapMarker label={stop.name} labelHidden={!visibleLabelIds.has(stop.id) && stop.id !== selectedStopCardId} />
-          </Marker>
-        ))}
+        {/* Stops on other routes than the watched one stay mounted and are
+            hidden via opacity, like buses (see the marker note below). */}
+        {stops.filter((s) => !rideActive || s.id !== destinationStopId).map((stop) => {
+          const stopStyle = stopStyles[stop.id];
+          const filteredOut = stopStyle?.visible === false;
+          return (
+            <Marker
+              key={`${stop.id}-${primaryColor}`}
+              coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+              anchor={{ x: 0.5, y: 1 }}
+              zIndex={filteredOut ? 0 : 2}
+              opacity={filteredOut ? 0 : 1}
+              tracksViewChanges={forceStopTracks}
+              onPress={() => {
+                if (filteredOut) return;
+                // Show the stop's info card first instead of jumping straight
+                // into a request — avoids accidental requests from a mistap.
+                if (selectedBusId) closeSelectedBus();
+                setShowLocationList(false);
+                setGroupChooser(null);
+                setSelectedStopCardId(stop.id);
+              }}
+            >
+              <MapMarker
+                label={stop.name}
+                color={stopStyle?.color}
+                dots={stopStyle?.dots}
+                labelHidden={filteredOut || (!visibleLabelIds.has(stop.id) && stop.id !== selectedStopCardId)}
+              />
+            </Marker>
+          );
+        })}
 
         {/*
           One native marker per bus, and nothing else is mounted/unmounted in
@@ -2280,7 +2367,8 @@ const handleConfirmSheetConfirm = async () => {
           const busRoute = orgRoutes.length > 1 ? orgRoutes.find((r) => r.id === busRouteIds[id]) : undefined;
           const ringColor = busRoute ? busRoute.color ?? primaryColor : null;
           const group = busGroups[id];
-          const hiddenInGroup = !!group && group.lead !== id;
+          const filteredOut = !shownBusIds.includes(id);
+          const hiddenInGroup = filteredOut || (!!group && group.lead !== id);
           const groupCount = group && group.lead === id ? group.members.length : 0;
 
           return (
@@ -2288,7 +2376,11 @@ const handleConfirmSheetConfirm = async () => {
               key={id}
               coordinate={animatedCoord ?? { latitude: loc.latitude, longitude: loc.longitude }}
               anchor={{ x: 0.5, y: 0.5 }}
-              onPress={() => (group ? openGroupChooser(group.members) : handleBusPress(id))}
+              onPress={() => {
+                if (filteredOut) return;
+                if (group) openGroupChooser(group.members);
+                else handleBusPress(id);
+              }}
               tracksViewChanges={forceBusTracks || loc.onBreak || showLateLabel || !!rideEtaText}
               opacity={hiddenInGroup ? 0 : 1}
               zIndex={hiddenInGroup ? 49 : 50}
@@ -2421,11 +2513,11 @@ const handleConfirmSheetConfirm = async () => {
           <Icon name="map" size={22} color={GRAY_900} />
         </TouchableOpacity>
 
-        {!rideActive && visibleBusIds.length > 0 && (
+        {!rideActive && shownBusIds.length > 0 && (
           <TouchableOpacity
             style={styles.fab}
             onPress={() => {
-              const points = visibleBusIds
+              const points = shownBusIds
                 .map((id) => busLocations[id])
                 .filter(Boolean)
                 .map((b) => ({ latitude: b.latitude, longitude: b.longitude }));
@@ -2815,6 +2907,52 @@ const handleConfirmSheetConfirm = async () => {
         )}
       </Animated.View>
 
+      {/* Route picker for the "Now watching" filter */}
+      <Modal visible={showRoutePicker} transparent animationType="slide" onRequestClose={() => setShowRoutePicker(false)}>
+        <TouchableWithoutFeedback onPress={() => setShowRoutePicker(false)}>
+          <View style={styles.childPickerOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.childPickerSheet, { paddingBottom: Math.max(40, insets.bottom + 16) }]}>
+                <Text style={styles.childPickerTitle}>Which route do you want to watch?</Text>
+                {[null, ...orgRoutes].map((r) => {
+                  const id = r?.id ?? null;
+                  const active = watchedRouteId === id;
+                  const dotColor = r ? r.color ?? primaryColor : null;
+                  return (
+                    <TouchableOpacity
+                      key={id ?? 'all'}
+                      style={[styles.childPickerRow, active && { backgroundColor: `${primaryColor}12` }]}
+                      onPress={() => {
+                        watchRoute(id);
+                        setShowRoutePicker(false);
+                        setSelectedStopCardId(null);
+                      }}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                    >
+                      <View style={[styles.childPickerAvatar, { backgroundColor: dotColor ? `${dotColor}22` : GRAY_100 }]}>
+                        {dotColor
+                          ? <View style={[styles.routePickerSwatch, { backgroundColor: dotColor }]} />
+                          : <Icon name="layers" size={18} color={GRAY_700} />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.childPickerName}>{r ? r.name : 'All routes'}</Text>
+                        <Text style={styles.childPickerGrade}>
+                          {r
+                            ? `${r.stopIds.length} stop${r.stopIds.length === 1 ? '' : 's'}${isRouteActive(r, new Date(), org?.timezone) ? ' · running now' : ''}`
+                            : 'Every route, stop and bus'}
+                        </Text>
+                      </View>
+                      {active && <Icon name="check" size={20} color={primaryColor} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
       {/* Child picker — shown when parent has multiple children */}
       <Modal visible={showChildPicker} transparent animationType="slide" onRequestClose={() => setShowChildPicker(false)}>
         <TouchableWithoutFeedback onPress={() => setShowChildPicker(false)}>
@@ -2955,6 +3093,10 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   statusPillText: { fontSize: 13, fontWeight: '600', color: GRAY_700, flexShrink: 1 },
+  watchingPill: { marginTop: 8, borderWidth: 1.5 },
+  watchingDot: { width: 10, height: 10, borderRadius: 5 },
+  watchingName: { fontWeight: '800', color: GRAY_900 },
+  routePickerSwatch: { width: 16, height: 16, borderRadius: 8 },
   tipClose: { position: 'absolute', top: 10, right: 10, padding: 4 },
   busCountDot: {
     width: 7,

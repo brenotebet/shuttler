@@ -40,6 +40,12 @@ const STUDENT_STEPS: Step[] = [
     color: '#3B82F6',
   },
   {
+    icon: 'layers',
+    title: 'Pick Your Route',
+    body: 'Each route has its own color — its line, its stops and the ring around its buses all match. Tap the "Now watching" pill to show just your route, or switch back to All routes any time. A stop on several routes shows a dot for each one.',
+    color: '#0891B2',
+  },
+  {
     icon: 'place',
     title: 'Tap Your Stop',
     body: 'Tap any stop pin on the map to select it. A callout will appear showing the stop name and a "Request Stop" button.',
@@ -77,6 +83,12 @@ const DRIVER_STEPS: Step[] = [
     title: 'Log In & Start Your Shift',
     body: 'Log in with your org credentials. You\'ll land on the Live Location tab — this is your main workspace while driving.',
     color: '#3B82F6',
+  },
+  {
+    icon: 'alt-route',
+    title: 'Choose Your Route',
+    body: 'If your organization has routes, pick the one you\'re driving under Route Progress before going online — your admin may have pre-selected it. You can switch routes during your shift; riders will see your bus move to the new route.',
+    color: '#0891B2',
   },
   {
     icon: 'location-on',
@@ -120,7 +132,7 @@ const ADMIN_STEPS: Step[] = [
   {
     icon: 'alt-route',
     title: 'Create Routes',
-    body: 'In the Stops tab you can group stops into named routes and set their order. Drivers use this to see which stops come next on their run.',
+    body: 'In the Stops tab, group stops into named routes, set their order and give each a color. Riders see each route\'s line, stops and buses in its color and can choose which route to watch. Once you have routes, drivers must pick one before going online.',
     color: '#8B5CF6',
   },
   {
@@ -165,8 +177,8 @@ const ADMIN_SETUP_STEPS: Step[] = [
   },
   {
     icon: 'alt-route',
-    title: 'Step 2 — Create a Route (Optional)',
-    body: 'Group your stops into a named route and set their order. This helps drivers know the sequence and makes the map easier to read for students.',
+    title: 'Step 2 — Create a Route',
+    body: 'Group your stops into a named route, set their order and pick a color. Riders see each route in its own color and can choose which one to watch. Once you have routes, drivers pick theirs before going online.',
     color: '#8B5CF6',
   },
   {
@@ -201,6 +213,12 @@ const PARENT_STEPS: Step[] = [
     title: 'See the Live Bus Map',
     body: 'Once signed in you\'ll see the map with your child\'s bus stop and the shuttle\'s real-time position. The bus icon moves as the driver reports location.',
     color: '#10B981',
+  },
+  {
+    icon: 'layers',
+    title: 'Pick Your Child\'s Route',
+    body: 'Each route has its own color on the map. Tap the "Now watching" pill to show only your child\'s route — its stops and buses — or switch back to All routes any time.',
+    color: '#0891B2',
   },
   {
     icon: 'place',
