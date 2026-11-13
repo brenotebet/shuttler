@@ -1,7 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking, ScrollView } from 'react-native'
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking, ScrollView, AppState } from 'react-native'
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -56,7 +56,8 @@ import {
   runTransaction,
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
-import { db, auth } from '../firebase/firebaseconfig';
+import { db, auth, firestoreReconnector } from '../firebase/firebaseconfig';
+import { isFeedStalled } from '../src/utils/firestoreReconnect';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { showAlert } from '../src/utils/alerts';
@@ -1083,6 +1084,24 @@ export default function MapScreen() {
       locationSub = sub;
     })();
 
+    // Stall watchdog: drivers write every few seconds, so a feed that showed
+    // live buses and then goes silent means the Firestore connection hung
+    // (it can, without erroring). Restart it once per silence. A listener
+    // that errors is re-attached instead of staying dead. See
+    // src/utils/firestoreReconnect.ts.
+    let lastBusSnapshotMs: number | null = null;
+    let expectingBusUpdates = false;
+    let stallRestartDone = false;
+    let resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+    const stallTimer = setInterval(() => {
+      if (stallRestartDone || AppState.currentState !== 'active') return;
+      if (isFeedStalled(lastBusSnapshotMs, expectingBusUpdates, Date.now())) {
+        stallRestartDone = true;
+        firestoreReconnector.restart('rider bus feed went silent').catch(() => {});
+      }
+    }, 10_000);
+
+    const subscribeBuses = () => {
     unsubBus = onSnapshot(
       orgCol('buses'),
       (snapshot) => {
@@ -1169,6 +1188,10 @@ export default function MapScreen() {
           });
 
         const visibleBuses = buses; // all online buses; opacity reflects freshness
+
+        lastBusSnapshotMs = Date.now();
+        stallRestartDone = false;
+        expectingBusUpdates = buses.some((b: any) => b.secondsAgo < FRESHNESS_WINDOW_SECONDS);
 
         const newLocations: {
           [id: string]: {
@@ -1324,11 +1347,17 @@ export default function MapScreen() {
           code: (err as any)?.code,
           message: (err as any)?.message,
         });
+        // An errored listener is dead for good — attach a new one shortly.
+        if (mounted) resubscribeTimer = setTimeout(() => { if (mounted) subscribeBuses(); }, 5_000);
       },
     );
+    };
+    subscribeBuses();
 
     return () => {
       mounted = false;
+      clearInterval(stallTimer);
+      if (resubscribeTimer) clearTimeout(resubscribeTimer);
       if (unsubBus) unsubBus();
       if (locationSub) locationSub.remove();
       if (forceTracksTimerRef.current) clearTimeout(forceTracksTimerRef.current);

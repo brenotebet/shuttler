@@ -1,7 +1,8 @@
 // firebase/firebaseconfig.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp, getApp, getApps } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, disableNetwork, enableNetwork } from 'firebase/firestore';
+import { createReconnector } from '../src/utils/firestoreReconnect';
 import { getStorage } from 'firebase/storage';
 import { initializeAuth, getAuth, Auth } from 'firebase/auth';
 import { getReactNativePersistence } from 'firebase/auth/react-native';
@@ -35,4 +36,13 @@ try {
 const db = getFirestore(app);
 const storage = getStorage(app);
 
-export { app, auth, db, storage };
+// One shared, throttled restart for the Firestore connection — used when the
+// app returns to the foreground and when a live feed goes silent. See
+// src/utils/firestoreReconnect.ts.
+const firestoreReconnector = createReconnector({
+  disableNetwork: () => disableNetwork(db),
+  enableNetwork: () => enableNetwork(db),
+  log: __DEV__ ? (m) => console.log(m) : undefined,
+});
+
+export { app, auth, db, storage, firestoreReconnector };
