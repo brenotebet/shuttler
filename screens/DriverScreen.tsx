@@ -201,6 +201,8 @@ export default function DriverScreen() {
   const [breakCountdown, setBreakCountdown] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const manuallySelectedRoute = useRef(false);
+  // The route an admin assigned this driver (defaultRouteId on their user doc).
+  const [assignedRouteId, setAssignedRouteId] = useState<string | null>(null);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
   const [busOnline, setBusOnline] = useState(false);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
@@ -278,14 +280,21 @@ export default function DriverScreen() {
     return () => clearInterval(id);
   }, [isOnBreak, breakEndsAt]);
 
-  // Resolve the active route. A one-route org uses it automatically; with
-  // several routes the driver must choose one (an admin-assigned default
-  // pre-selects it) before going online. No routes at all → null.
+  // "Allow drivers to choose their route" is off: drivers drive the route an
+  // admin assigned them and can't pick another (firestore.rules enforces
+  // this on the bus doc). Admins can always choose.
+  const routeLocked = org?.driversChooseRoute === false && authRole !== 'admin';
+
+  // Resolve the active route. A one-route org uses it automatically. With
+  // several routes: when locked, the assigned route; otherwise the driver's
+  // choice (an admin-assigned default pre-selects it). No routes → null.
   const activeRoute = useMemo(() => {
     if (orgRoutes.length === 0) return null;
     if (orgRoutes.length === 1) return orgRoutes[0];
-    return orgRoutes.find((r) => r.id === selectedRouteId) ?? null;
-  }, [orgRoutes, selectedRouteId]);
+    const id = routeLocked ? assignedRouteId : selectedRouteId;
+    return orgRoutes.find((r) => r.id === id) ?? null;
+  }, [orgRoutes, selectedRouteId, assignedRouteId, routeLocked]);
+  // With several routes, a driver can't go online without one.
   const needsRouteChoice = orgRoutes.length > 1 && !activeRoute;
 
   // While online, service-hours checks follow the route being driven —
@@ -298,7 +307,7 @@ export default function DriverScreen() {
   // Route chip tapped. While online, confirm first: riders see the bus move
   // to the new route.
   const chooseRoute = (route: Route) => {
-    if (route.id === activeRoute?.id) return;
+    if (routeLocked || route.id === activeRoute?.id) return;
     const apply = () => {
       manuallySelectedRoute.current = true;
       setSelectedRouteId(route.id);
@@ -341,8 +350,10 @@ export default function DriverScreen() {
         }
 
         // Apply admin-assigned default route only when the driver hasn't manually
-        // picked a different route themselves.
+        // picked a different route themselves. (When routes are locked the
+        // assignment is used directly — see activeRoute.)
         const defaultRouteId: string | undefined = snap.data()?.defaultRouteId;
+        setAssignedRouteId(defaultRouteId ?? null);
         if (defaultRouteId && !manuallySelectedRoute.current) {
           setSelectedRouteId(defaultRouteId);
         }
@@ -1141,7 +1152,7 @@ export default function DriverScreen() {
             )}
             {needsRouteChoice && (
               <Text style={[styles.headerSubtitle, styles.headerSubtitleWarn]}>
-                <Icon name="route" size={12} color="#b45309" /> Choose your route to go online
+                <Icon name="route" size={12} color="#b45309" /> {routeLocked ? 'No route assigned yet' : 'Choose your route to go online'}
               </Text>
             )}
           </View>
@@ -1172,13 +1183,20 @@ export default function DriverScreen() {
               } else {
                 // A route is required whenever the org has routes.
                 if (needsRouteChoice) {
-                  Alert.alert(
-                    'Choose your route',
-                    'Pick the route you\'re driving under Route Progress, then tap Start Sharing.',
-                  );
+                  if (routeLocked) {
+                    Alert.alert(
+                      'No route assigned',
+                      'Your admin assigns routes for your organization. Ask them to assign you one in Org Setup → Users, then tap Start Sharing.',
+                    );
+                  } else {
+                    Alert.alert(
+                      'Choose your route',
+                      'Pick the route you\'re driving under Route Progress, then tap Start Sharing.',
+                    );
+                  }
                   return;
                 }
-                if (orgRoutes.length > 1 && activeRoute) {
+                if (orgRoutes.length > 1 && activeRoute && !routeLocked) {
                   await new Promise<void>((resolve, reject) => {
                     Alert.alert(
                       `Go online on ${activeRoute.name}?`,
@@ -1425,10 +1443,14 @@ export default function DriverScreen() {
           <Text style={styles.cardTitle}>Route Progress</Text>
 
           {needsRouteChoice && (
-            <Text style={styles.emptyText}>Choose the route you're driving to go online.</Text>
+            <Text style={styles.emptyText}>
+              {routeLocked
+                ? 'Your admin assigns routes. Ask them to assign you one to go online.'
+                : 'Choose the route you\'re driving to go online.'}
+            </Text>
           )}
 
-          {orgRoutes.length > 1 && (
+          {orgRoutes.length > 1 && !routeLocked && (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -1457,6 +1479,15 @@ export default function DriverScreen() {
 
           {activeRoute && orgRoutes.length === 1 && (
             <Text style={styles.routeSingleName}>{activeRoute.name}</Text>
+          )}
+
+          {activeRoute && orgRoutes.length > 1 && routeLocked && (
+            <View style={styles.routeLockedRow}>
+              <View style={[styles.routeLockedDot, { backgroundColor: activeRoute.color ?? primaryColor }]} />
+              <Text style={styles.routeSingleName}>{activeRoute.name}</Text>
+              <Icon name="lock" size={13} color={GRAY_500} style={{ marginBottom: 8 }} />
+              <Text style={styles.routeLockedHint}>Assigned by your admin</Text>
+            </View>
           )}
 
           {routeOrderedStops.length === 0 && (
@@ -1800,6 +1831,9 @@ const styles = StyleSheet.create({
   routeChipText: { fontSize: 13, fontWeight: '600' },
   routeChipTextSelected: { color: WHITE },
   routeSingleName: { fontSize: 13, fontWeight: '600', color: GRAY_700, marginBottom: 8 },
+  routeLockedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  routeLockedDot: { width: 10, height: 10, borderRadius: 5, marginBottom: 8 },
+  routeLockedHint: { fontSize: 12, color: GRAY_500, marginBottom: 8 },
   routeRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   routeIndex: { fontSize: 13, fontWeight: '700', color: GRAY_400, minWidth: 20, textAlign: 'center' },
   routeRow: {

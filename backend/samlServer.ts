@@ -1935,7 +1935,10 @@ app.patch(
   requireOrgAdmin,
   async (req: Request, res: Response) => {
     const orgId = req.params.orgId as string;
-    const { breakSettings } = req.body as { breakSettings?: Record<string, any> };
+    const { breakSettings, driversChooseRoute } = req.body as {
+      breakSettings?: Record<string, any>;
+      driversChooseRoute?: unknown;
+    };
 
     const update: Record<string, any> = {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1946,6 +1949,14 @@ app.patch(
       const maxMinutes = typeof breakSettings.maxMinutes === 'number' && breakSettings.maxMinutes > 0 ? breakSettings.maxMinutes : 15;
       const breaksPerShift = typeof breakSettings.breaksPerShift === 'number' && breakSettings.breaksPerShift > 0 ? breakSettings.breaksPerShift : 1;
       update.breakSettings = { enabled, maxMinutes, breaksPerShift };
+    }
+
+    // "Allow drivers to choose their route" (see firestore.rules, buses).
+    if (driversChooseRoute !== undefined) {
+      if (typeof driversChooseRoute !== 'boolean') {
+        return res.status(400).json({ error: 'driversChooseRoute must be true or false.' });
+      }
+      update.driversChooseRoute = driversChooseRoute;
     }
 
     await admin.firestore().collection('orgs').doc(orgId).update(update);

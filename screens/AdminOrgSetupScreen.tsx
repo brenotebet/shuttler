@@ -2094,6 +2094,8 @@ function UsersTab() {
   const [targetChildren, setTargetChildren] = useState<{ id: string; name: string; grade?: string | null; createdSec: number }[] | 'error' | null>(null);
 
   const orgRoutes = org?.routes ?? [];
+  // "Allow drivers to choose their route" off: the default route becomes a fixed assignment.
+  const routesLocked = org?.driversChooseRoute === false;
 
   const loadMembers = useCallback(async () => {
     if (!org) return;
@@ -2333,7 +2335,7 @@ function UsersTab() {
     const isOwner = !!(org?.ownerUid && member.uid === org.ownerUid);
     const detail = [
       ROLE_LABELS[member.role],
-      isStaffMember && orgRoutes.length > 0 ? (assignedRoute ? assignedRoute.name : 'No default route') : null,
+      isStaffMember && orgRoutes.length > 0 ? (assignedRoute ? assignedRoute.name : routesLocked ? 'No route assigned' : 'No default route') : null,
     ].filter(Boolean).join(' · ');
     return (
       <TouchableOpacity
@@ -2661,9 +2663,13 @@ function UsersTab() {
 
           {targetIsStaff && orgRoutes.length > 0 && (
             <>
-              <Text style={usersStyles.sheetLabel}>Default route</Text>
-              <Text style={[styles.hint, { marginBottom: 6 }]}>Pre-selected when they go online. They can still switch.</Text>
-              {[{ id: null as string | null, name: 'No default' }, ...orgRoutes.map((r) => ({ id: r.id as string | null, name: r.name }))].map((r) => {
+              <Text style={usersStyles.sheetLabel}>{routesLocked ? 'Assigned route' : 'Default route'}</Text>
+              <Text style={[styles.hint, { marginBottom: 6 }]}>
+                {routesLocked
+                  ? 'Drivers always drive this route ("Allow drivers to choose their route" is off in Operations). Without one, they can\'t go online.'
+                  : 'Pre-selected when they go online. They can still switch.'}
+              </Text>
+              {[{ id: null as string | null, name: routesLocked ? 'No route' : 'No default' }, ...orgRoutes.map((r) => ({ id: r.id as string | null, name: r.name }))].map((r) => {
                 const active = targetRouteId === r.id;
                 return (
                   <TouchableOpacity
@@ -3792,6 +3798,8 @@ function OperationsTab() {
   const [enabled, setEnabled] = useState(existing?.enabled ?? false);
   const [maxMinutes, setMaxMinutes] = useState(existing?.maxMinutes ?? 15);
   const [breaksPerShift, setBreaksPerShift] = useState(existing?.breaksPerShift ?? 1);
+  const [driversChooseRoute, setDriversChooseRoute] = useState(org?.driversChooseRoute !== false);
+  const hasRoutes = (org?.routes ?? []).length > 0;
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = useCallback(async () => {
@@ -3803,17 +3811,17 @@ function OperationsTab() {
       const res = await fetch(`${SHUTTLER_API_URL}/orgs/${org.orgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ breakSettings }),
+        body: JSON.stringify({ breakSettings, driversChooseRoute }),
       });
       if (!res.ok) throw new Error('Save failed');
       await refreshOrg();
-      showToast('Break settings saved.', 'success');
+      showToast('Operations settings saved.', 'success');
     } catch (e: any) {
       showToast(e?.message ?? 'Failed to save settings.', 'error');
     } finally {
       setIsSaving(false);
     }
-  }, [org, enabled, maxMinutes, breaksPerShift, refreshOrg]);
+  }, [org, enabled, maxMinutes, breaksPerShift, driversChooseRoute, refreshOrg]);
 
   return (
     <ScrollView
@@ -3874,6 +3882,53 @@ function OperationsTab() {
         </>
       )}
 
+      <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Driver Routes</Text>
+      <Text style={styles.hint}>
+        Decide whether drivers pick their own route or always drive the route you assign them.
+      </Text>
+
+      <View style={opsStyles.settingRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={opsStyles.settingLabel}>Allow drivers to choose their route</Text>
+          <Text style={opsStyles.settingHint}>
+            {driversChooseRoute
+              ? 'Drivers pick a route each time they go online.'
+              : 'Drivers always drive the route you assign them.'}
+          </Text>
+        </View>
+        <Switch
+          value={driversChooseRoute}
+          onValueChange={setDriversChooseRoute}
+          trackColor={{ true: primaryColor }}
+          thumbColor={WHITE}
+          accessibilityLabel="Allow drivers to choose their route"
+        />
+      </View>
+
+      <View style={opsStyles.infoBox}>
+        <View style={opsStyles.infoHeader}>
+          <Icon name="info-outline" size={16} color={GRAY_700} />
+          <Text style={opsStyles.infoTitle}>How it works</Text>
+        </View>
+        <Text style={opsStyles.infoLine}>
+          <Text style={opsStyles.infoStrong}>On: </Text>
+          Drivers choose the route they're driving before going online. The route you assign in Users → Default route is pre-selected, and they can switch routes during a shift.
+        </Text>
+        <Text style={opsStyles.infoLine}>
+          <Text style={opsStyles.infoStrong}>Off: </Text>
+          Drivers always drive the route you assign in Users. They can't pick another one, and a driver with no assigned route can't go online. To move a driver, change their route in Users — their bus moves to it right away, even mid-shift.
+        </Text>
+        <Text style={opsStyles.infoLine}>
+          <Text style={opsStyles.infoStrong}>Either way: </Text>
+          If you have one route, drivers use it automatically. Admins can always choose any route.
+        </Text>
+        {!hasRoutes && (
+          <Text style={[opsStyles.infoLine, { color: '#b45309' }]}>
+            You don't have any routes yet, so this has no effect until you create one in the Stops tab.
+          </Text>
+        )}
+      </View>
+
       <AppButton
         label={isSaving ? 'Saving…' : 'Save Operations'}
         onPress={handleSave}
@@ -3930,6 +3985,34 @@ const opsStyles = StyleSheet.create({
   },
   chipTextActive: {
     color: WHITE,
+  },
+  infoBox: {
+    backgroundColor: GRAY_50,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: GRAY_200,
+    padding: 14,
+    gap: 8,
+    marginBottom: 8,
+  },
+  infoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  infoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: GRAY_700,
+  },
+  infoLine: {
+    fontSize: 13,
+    color: GRAY_700,
+    lineHeight: 18,
+  },
+  infoStrong: {
+    fontWeight: '700',
+    color: GRAY_900,
   },
 });
 

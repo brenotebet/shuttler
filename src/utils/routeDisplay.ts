@@ -1,6 +1,6 @@
 // How routes show up on the rider map: stop pin colors, which stops and buses
-// pass the rider's "Now watching" route filter, and a default color for new
-// routes in Org Setup.
+// pass the rider's "Now watching" route filter (one or more routes; an empty
+// list means All routes), and a default color for new routes in Org Setup.
 
 type RouteLike = { id: string; stopIds: string[]; color?: string };
 
@@ -9,7 +9,7 @@ export type StopMarkerStyle = {
   color: string;
   /** Extra route dots for a stop on several routes; empty otherwise. */
   dots: string[];
-  /** False when the rider is watching a route this stop isn't on. */
+  /** False when the rider is watching only routes this stop isn't on. */
   visible: boolean;
 };
 
@@ -21,43 +21,73 @@ function routeColor(route: RouteLike, orgColor: string): string {
 }
 
 /**
- * The watched route id, or null for "All routes". A stored id is dropped when
- * the route no longer exists, and filtering is off for orgs with one route.
+ * The watched route ids in org route order; empty means "All routes". Ids of
+ * deleted routes are dropped, filtering is off for orgs with one route, and
+ * watching every route is the same as All routes.
  */
-export function resolveWatchedRouteId(
-  storedId: string | null | undefined,
+export function resolveWatchedRouteIds(
+  storedIds: readonly string[] | null | undefined,
   routes: RouteLike[],
-): string | null {
-  if (!storedId || routes.length < 2) return null;
-  return routes.some((r) => r.id === storedId) ? storedId : null;
+): string[] {
+  if (!storedIds || storedIds.length === 0 || routes.length < 2) return [];
+  const watched = routes.filter((r) => storedIds.includes(r.id)).map((r) => r.id);
+  return watched.length === routes.length ? [] : watched;
 }
 
 /**
- * Pin style for a stop.
- * - Watching a route: stops on it take its color; stops on other routes are
- *   hidden; stops on no route stay visible in the org color.
- * - All routes: a stop on one route takes that route's color; a stop on
- *   several routes gets a neutral pin with one dot per route color; a stop on
- *   no route keeps the org color.
+ * Reads the saved filter. Older app versions saved a single route id as a
+ * plain string; newer ones save a JSON array.
+ */
+export function parseStoredWatchedRouteIds(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string');
+  } catch {
+    // Not JSON: a single id from an older version.
+  }
+  return [raw];
+}
+
+/** Adds or removes one route from the watched list. */
+export function toggleWatchedRoute(watchedIds: readonly string[], routeId: string): string[] {
+  return watchedIds.includes(routeId)
+    ? watchedIds.filter((id) => id !== routeId)
+    : [...watchedIds, routeId];
+}
+
+/** Pill text: "All routes", "North Loop", "North Loop, South Loop" or "North Loop +2". */
+export function watchedRoutesLabel(watchedRoutes: { name: string }[]): string {
+  if (watchedRoutes.length === 0) return 'All routes';
+  if (watchedRoutes.length === 1) return watchedRoutes[0].name;
+  if (watchedRoutes.length === 2) return `${watchedRoutes[0].name}, ${watchedRoutes[1].name}`;
+  return `${watchedRoutes[0].name} +${watchedRoutes.length - 1}`;
+}
+
+/**
+ * Pin style for a stop. Only the routes being watched count (all of them for
+ * All routes):
+ * - on none of them: hidden — unless the stop is on no route at all, which
+ *   stays visible in the org color;
+ * - on one (or several sharing a color): that route's color;
+ * - on several: a neutral pin with one dot per route color.
  */
 export function getStopMarkerStyle(
   stopId: string,
   routes: RouteLike[],
   orgColor: string,
   neutralColor: string,
-  watchedRouteId: string | null,
+  watchedRouteIds: readonly string[],
 ): StopMarkerStyle {
   const onRoutes = routes.filter((r) => r.stopIds.includes(stopId));
   if (onRoutes.length === 0) return { color: orgColor, dots: [], visible: true };
 
-  if (watchedRouteId) {
-    const watched = onRoutes.find((r) => r.id === watchedRouteId);
-    return watched
-      ? { color: routeColor(watched, orgColor), dots: [], visible: true }
-      : { color: orgColor, dots: [], visible: false };
-  }
+  const counted = watchedRouteIds.length > 0
+    ? onRoutes.filter((r) => watchedRouteIds.includes(r.id))
+    : onRoutes;
+  if (counted.length === 0) return { color: orgColor, dots: [], visible: false };
 
-  const colors = Array.from(new Set(onRoutes.map((r) => routeColor(r, orgColor))));
+  const colors = Array.from(new Set(counted.map((r) => routeColor(r, orgColor))));
   if (colors.length === 1) return { color: colors[0], dots: [], visible: true };
   return { color: neutralColor, dots: colors, visible: true };
 }
@@ -68,11 +98,11 @@ export function getStopMarkerStyle(
  */
 export function isBusShown(
   busRouteId: string | null | undefined,
-  watchedRouteId: string | null,
+  watchedRouteIds: readonly string[],
   isRidersBus: boolean,
 ): boolean {
-  if (!watchedRouteId || isRidersBus || !busRouteId) return true;
-  return busRouteId === watchedRouteId;
+  if (watchedRouteIds.length === 0 || isRidersBus || !busRouteId) return true;
+  return watchedRouteIds.includes(busRouteId);
 }
 
 /**
