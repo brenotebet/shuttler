@@ -1,7 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, Image, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking, ScrollView } from 'react-native'
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking, ScrollView } from 'react-native'
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -16,6 +16,8 @@ import MapView, {
   Marker,
 } from 'react-native-maps';
 import MapMarker from '../components/MapMarker';
+import BusIcon from '../components/BusIcon';
+import { hapticBusArrived, hapticRequestSent } from '../src/utils/haptics';
 import { grayscaleMapStyle, MAX_LAT_DELTA, MAX_LON_DELTA } from '../src/constants/mapConfig';
 import {
   BACKGROUND_COLOR,
@@ -93,6 +95,9 @@ import { borderRadius } from '../src/styles/common';
 
 // A bus marker is shown only while a rider could request a stop: the bus is
 // online, its GPS is fresh, and service is open (see visibleBusIds).
+
+// White outline drawn under route lines (see the route lines in the map).
+const ROUTE_LINE_CASING = '#ffffffe6';
 
 // Maximum distance from the nearest stop to allow a pickup request.
 // Keeps requests honest — students must physically be on/near campus.
@@ -623,7 +628,6 @@ export default function MapScreen() {
 
   const [cameraMode, setCameraMode] = useState<CameraMode>('followUser');
 
-  const busIcon = require('../assets/bus-icon.png');
 
   const [forceBusTracks, setForceBusTracks] = useState(true);
   const forceTracksTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -662,6 +666,12 @@ export default function MapScreen() {
     updateBusGroups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busLocations, shownBusIds.join(',')]);
+  // A bus changed route, or a route changed color: redraw bus snapshots.
+  const busColorKey = Object.entries(busRouteIds)
+    .map(([id, routeId]) => `${id}:${orgRoutes.find((r) => r.id === routeId)?.color ?? ''}`)
+    .join('|');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { bumpBusTracks(); }, [busColorKey, primaryColor]);
   // Close the chooser if its group breaks up (a bus drove off or went offline).
   useEffect(() => {
     if (groupChooser && groupChooser.filter((id) => shownBusIds.includes(id)).length < 2) setGroupChooser(null);
@@ -1579,6 +1589,19 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rideActive, approachingMs, requestId, rideBusLoc?.latitude, rideBusLoc?.longitude]);
 
+  // Haptic when the bus reaches the rider's stop (the driver's app stamps
+  // arrivedAt). Only on the change itself — not when reopening the app on a
+  // request that had already arrived.
+  const arrivalSeenRef = useRef<{ requestId: string; arrived: boolean } | null>(null);
+  const requestArrived = !!request?.arrivedAt;
+  useEffect(() => {
+    const id: string | null = request?.id ?? null;
+    if (!id) { arrivalSeenRef.current = null; return; }
+    const seen = arrivalSeenRef.current;
+    if (seen?.requestId === id && !seen.arrived && requestArrived) hapticBusArrived();
+    arrivalSeenRef.current = { requestId: id, arrived: requestArrived };
+  }, [request?.id, requestArrived]);
+
   useEffect(() => {
     if (request?.status === 'completed') {
       Notifications.scheduleNotificationAsync({
@@ -2001,6 +2024,7 @@ const handleRequest = async (entry: RequestableStop) => {
       });
 
       if (__DEV__) console.log('[handleRequest] created stopRequest', ref.id);
+      hapticRequestSent();
       if (orgId) void notifyDriversNewRequest(orgId);
     } catch (e: any) {
       console.error('[handleRequest] addDoc FAILED', e?.code, e?.message);
@@ -2318,16 +2342,31 @@ const handleConfirmSheetConfirm = async () => {
           const coords = routePaths[r.id];
           if (!coords) return null;
           if (watchedRouteIds.length > 0 && !watchedRouteIds.includes(r.id)) return null;
-          const lineColor = (r.color ?? primaryColor) + '73';
+          const lineColor = (r.color ?? primaryColor) + '99';
+          const lineKey = `${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}`;
+          // A white outline under the colored line, like road layers in
+          // Apple/Google Maps, so the route reads as sitting above the map.
           return (
-            <Polyline
-              key={`route-path-${r.id}-${r.pathKey ?? ''}-${r.color ?? ''}`}
-              coordinates={coords}
-              strokeColor={lineColor}
-              strokeColors={[lineColor]}
-              strokeWidth={4}
-              zIndex={1}
-            />
+            <React.Fragment key={`route-path-${lineKey}`}>
+              <Polyline
+                coordinates={coords}
+                strokeColor={ROUTE_LINE_CASING}
+                strokeColors={[ROUTE_LINE_CASING]}
+                strokeWidth={7}
+                lineCap="round"
+                lineJoin="round"
+                zIndex={1}
+              />
+              <Polyline
+                coordinates={coords}
+                strokeColor={lineColor}
+                strokeColors={[lineColor]}
+                strokeWidth={4}
+                lineCap="round"
+                lineJoin="round"
+                zIndex={1}
+              />
+            </React.Fragment>
           );
         })}
 
@@ -2383,10 +2422,10 @@ const handleConfirmSheetConfirm = async () => {
           const showLateLabel = !loc.onBreak && updateAgeSeconds >= LATE_UPDATE_LABEL_SECONDS;
           // The rider's own bus during a ride shows its ETA above it.
           const rideEtaText = rideActive && id === resolvedDriverId && !loc.onBreak && eta ? eta : null;
-          // With more than one route, ring each bus in its route's color so
-          // riders can tell which bus is which at a glance.
-          const busRoute = orgRoutes.length > 1 ? orgRoutes.find((r) => r.id === busRouteIds[id]) : undefined;
-          const ringColor = busRoute ? busRoute.color ?? primaryColor : null;
+          // Each bus is drawn in its route's color so riders can tell which
+          // bus is which at a glance; no route → the org color.
+          const busRoute = orgRoutes.find((r) => r.id === busRouteIds[id]);
+          const busColor = busRoute?.color ?? primaryColor;
           const group = busGroups[id];
           const filteredOut = !shownBusIds.includes(id);
           const hiddenInGroup = filteredOut || (!!group && group.lead !== id);
@@ -2420,13 +2459,7 @@ const handleConfirmSheetConfirm = async () => {
                   )}
                 </View>
                 <View style={styles.busIconWrap}>
-                  {/* Always mounted; shown via opacity (see the marker note above). */}
-                  <View style={[styles.busRouteRing, { borderColor: ringColor ?? 'transparent', opacity: ringColor ? 1 : 0 }]} />
-                  <Image
-                    source={busIcon}
-                    style={{ width: 70, height: 70, transform: [{ rotate: `${loc.heading}deg` }] }}
-                    resizeMode="contain"
-                  />
+                  <BusIcon color={busColor} heading={loc.heading} />
                   {/* Count for overlapping buses — always mounted, shown via opacity. */}
                   <View style={[styles.busCountBadge, { backgroundColor: primaryColor, opacity: groupCount > 1 ? 1 : 0 }]}>
                     <Text style={styles.busCountBadgeText}>{groupCount > 1 ? groupCount : ''}</Text>
@@ -3523,14 +3556,6 @@ const styles = StyleSheet.create({
   },
   groupRowTitle: { fontSize: 15, fontWeight: '700', color: GRAY_900 },
   groupRowSub: { fontSize: 13, color: GRAY_500, marginTop: 1 },
-  busRouteRing: {
-    position: 'absolute',
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 3,
-    backgroundColor: 'rgba(255,255,255,0.6)',
-  },
   etaBadge: {
     borderRadius: 10,
     paddingHorizontal: 8,

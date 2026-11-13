@@ -11,8 +11,8 @@ export type BusGroups = Record<string, { lead: string; members: string[] }>;
 
 /**
  * On-screen distance within which two bus icons overlap, in points. The
- * marker image is 70×70 pt but the bus drawn in it is only ~13×28 pt
- * (assets/bus-icon.png is mostly transparent padding).
+ * marker is 70×70 pt but the bus drawn in it (components/BusIcon) is only
+ * ~20×40 pt.
  */
 export const BUS_OVERLAP_PT = 30;
 

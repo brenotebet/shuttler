@@ -274,7 +274,20 @@ export default function RoutesScreen() {
               toolbarEnabled={false}
             >
               {roadPath.length >= 2 && (
-                <Polyline coordinates={roadPath} strokeColor={selectedRoute.color ?? primaryColor} strokeWidth={4} />
+                <>
+                  {/* White outline under the line, matching the rider map.
+                      strokeColors too: on iOS with the Google provider
+                      strokeColor alone can render blue (see MapScreen). */}
+                  <Polyline coordinates={roadPath} strokeColor="#ffffffe6" strokeColors={['#ffffffe6']} strokeWidth={7} lineCap="round" lineJoin="round" />
+                  <Polyline
+                    coordinates={roadPath}
+                    strokeColor={selectedRoute.color ?? primaryColor}
+                    strokeColors={[selectedRoute.color ?? primaryColor]}
+                    strokeWidth={4}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                </>
               )}
               {routeStops.map((s, i) => (
                 <Marker

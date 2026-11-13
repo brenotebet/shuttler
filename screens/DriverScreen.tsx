@@ -58,6 +58,7 @@ import { useOrg, Stop, Route } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+import { hapticDriverOnline } from '../src/utils/haptics';
 import { STOP_REQUEST_CHANNEL_ID, STOP_REQUEST_SOUND } from '../src/hooks/usePushToken';
 import { borderRadius } from '../src/styles/common';
 
@@ -296,6 +297,14 @@ export default function DriverScreen() {
   }, [orgRoutes, selectedRouteId, assignedRouteId, routeLocked]);
   // With several routes, a driver can't go online without one.
   const needsRouteChoice = orgRoutes.length > 1 && !activeRoute;
+
+  // Haptic the moment sharing actually starts (startSharing can return
+  // without going online, e.g. when location permission is denied).
+  const wasSharingRef = useRef(isSharing);
+  useEffect(() => {
+    if (isSharing && !wasSharingRef.current) hapticDriverOnline();
+    wasSharingRef.current = isSharing;
+  }, [isSharing]);
 
   // While online, service-hours checks follow the route being driven —
   // whether the driver switched or an admin changed their default.
