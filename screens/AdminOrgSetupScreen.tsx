@@ -55,6 +55,7 @@ import { getTodayScheduleText, END_OF_DAY } from '../src/utils/scheduleUtils';
 import { fetchLoopPath } from '../src/utils/directions';
 import { routePathKey, encodePath } from '../src/utils/routePath';
 import { pickDefaultRouteColor, stopsOnNoRoute } from '../src/utils/routeDisplay';
+import InfoBanner from '../components/InfoBanner';
 import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
 
 type Tab = 'profile' | 'auth' | 'stops' | 'users' | 'billing' | 'ops';
@@ -1358,6 +1359,8 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
   }, [org, routes, stops]);
 
   const routesUsing = (stopId: string) => routes.filter((r) => r.stopIds.includes(stopId));
+  // Stops riders can't request: on no route, once the org has routes.
+  const unroutedStops = routes.length > 0 ? stopsOnNoRoute(stops, routes) : [];
 
   const initialRegion: Region = {
     latitude: mapCenter.latitude,
@@ -1453,6 +1456,22 @@ function StopsTab({ onGoToBilling }: { onGoToBilling: () => void }) {
                     ? 'Tap "Add stop", or tap the map where riders get picked up.'
                     : 'Tap a stop to rename it, move it, or delete it.'}
                 </Text>
+
+                {/* Once the org has routes, riders only see stops on a route
+                    (drivers only see their route's stops, so nobody would
+                    serve the rest). Make stops that fell off every route
+                    impossible to miss. */}
+                {unroutedStops.length > 0 && (
+                  <InfoBanner
+                    variant="warning"
+                    icon="warning-amber"
+                    // The warning style shows only a title (no description),
+                    // so the stop names and the consequence go in it.
+                    title={`${unroutedStops.slice(0, 3).map((st) => st.name).join(', ')}${unroutedStops.length > 3 ? ` and ${unroutedStops.length - 3} more` : ''} ${unroutedStops.length === 1 ? "isn't" : "aren't"} on any route, so riders can't request ${unroutedStops.length === 1 ? 'it' : 'them'}. Add ${unroutedStops.length === 1 ? 'it' : 'them'} to a route or delete ${unroutedStops.length === 1 ? 'it' : 'them'}.`}
+                    action={{ label: 'Edit routes', onPress: () => setView('routes') }}
+                    style={{ marginBottom: 12 }}
+                  />
+                )}
 
                 {stops.map((stop) => {
                   const used = routesUsing(stop.id);
