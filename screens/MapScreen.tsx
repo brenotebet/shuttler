@@ -360,6 +360,22 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgRoutes, clockTick]);
 
+  // Routes not running right now → when they next open (or '' if unknown).
+  // Stops on these routes are marked "Not running" in the request list and
+  // stop card; requesting them is blocked (see handleRequest).
+  const closedRouteNextOpen = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const r of orgRoutes) {
+      if (r.schedule && !isRouteActive(r, new Date(), org?.timezone)) {
+        const t = getNextOpenText(r, new Date(), org?.timezone);
+        map[r.id] = t && t !== 'No upcoming hours found' ? t : '';
+      }
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgRoutes, clockTick, org?.timezone]);
+  const isEntryClosed = (e: { routeId: string | null }) => !!e.routeId && e.routeId in closedRouteNextOpen;
+
   // Next opening time for the compact "Closed" pill (first scheduled route that has one).
   const closedNextOpenText = useMemo(() => {
     for (const r of orgRoutes) {
@@ -2364,25 +2380,37 @@ const handleConfirmSheetConfirm = async () => {
           <View style={styles.overlay}>
             <View style={[styles.locationListContainer, { top: role === 'parent' ? topOverlay + 106 : topOverlay + 60 }]}>
               <FlatList
-                data={watchedRouteIds.length > 0
+                // Stops on routes that aren't running go last, dimmed. They stay
+                // tappable: handleRequest explains when the route opens.
+                data={(watchedRouteIds.length > 0
                   ? requestableStops.filter((e) => !e.routeId || watchedRouteIds.includes(e.routeId))
-                  : requestableStops}
+                  : requestableStops
+                ).slice().sort((a, b) => Number(isEntryClosed(a)) - Number(isEntryClosed(b)))}
                 keyExtractor={(item) => item.key}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.locationItem}
-                    onPress={() => confirmAndRequest(item)}
-                  >
-                    <Text style={styles.locationText}>
-                      {item.stop.name}{item.routeName ? ` — ${item.routeName}` : ''}
-                    </Text>
-                    {item.routeName && item.position !== null ? (
-                      <Text style={styles.locationRouteMeta}>
-                        Stop {item.position} of {item.totalStops}
+                renderItem={({ item }) => {
+                  const closed = isEntryClosed(item);
+                  const opens = closed && item.routeId ? closedRouteNextOpen[item.routeId] : '';
+                  return (
+                    <TouchableOpacity
+                      style={styles.locationItem}
+                      onPress={() => confirmAndRequest(item)}
+                      accessibilityHint={closed ? 'This route is not running right now' : undefined}
+                    >
+                      <Text style={[styles.locationText, closed && styles.locationTextClosed]}>
+                        {item.stop.name}{item.routeName ? ` — ${item.routeName}` : ''}
                       </Text>
-                    ) : null}
-                  </TouchableOpacity>
-                )}
+                      {closed ? (
+                        <Text style={styles.locationRouteMetaClosed}>
+                          Not running{opens ? ` · ${opens}` : ''}
+                        </Text>
+                      ) : item.routeName && item.position !== null ? (
+                        <Text style={styles.locationRouteMeta}>
+                          Stop {item.position} of {item.totalStops}
+                        </Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                }}
               />
             </View>
           </View>
@@ -2809,10 +2837,15 @@ const handleConfirmSheetConfirm = async () => {
         if (!stop) return null;
         const entries = requestableStops.filter((e) => e.stop.id === stop.id);
         const nextBusText = stopNextBusText(stop.id);
-        const canRequestNow = serviceIsOpen && busOnline && !rideActive && entries.length > 0
+        const runningEntries = entries.filter((e) => !isEntryClosed(e));
+        const allRoutesClosed = entries.length > 0 && runningEntries.length === 0;
+        const closedOpens = allRoutesClosed && entries[0].routeId ? closedRouteNextOpen[entries[0].routeId] : '';
+        const canRequestNow = serviceIsOpen && busOnline && !rideActive && runningEntries.length > 0
           && (role !== 'parent' || !!selectedChild);
         const blockedReason = rideActive
           ? 'You already have a ride requested.'
+          : allRoutesClosed
+          ? `${entries.length === 1 && entries[0].routeName ? `${entries[0].routeName} isn't` : 'No route here is'} running right now${closedOpens ? ` · ${closedOpens}` : ''}.`
           : !serviceIsOpen
           ? `Service is closed${closedNextOpenText ? ` · ${closedNextOpenText}` : ''}.`
           : !busOnline
@@ -2844,10 +2877,11 @@ const handleConfirmSheetConfirm = async () => {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.busCloudTitle} numberOfLines={2}>{stop.name}</Text>
                     {entries.some((e) => e.routeName) && (
-                      <Text style={styles.busCloudSubtitle} numberOfLines={2}>
+                      // One line per route — an airport terminal can be on several.
+                      <Text style={styles.busCloudSubtitle} numberOfLines={Math.max(2, entries.length)}>
                         {entries
                           .filter((e) => e.routeName)
-                          .map((e) => `${e.routeName}${e.position !== null ? ` · stop ${e.position} of ${e.totalStops}` : ''}`)
+                          .map((e) => `${e.routeName}${e.position !== null ? ` · stop ${e.position} of ${e.totalStops}` : ''}${isEntryClosed(e) ? ' · not running' : ''}`)
                           .join('\n')}
                       </Text>
                     )}
@@ -2873,8 +2907,8 @@ const handleConfirmSheetConfirm = async () => {
                     style={[styles.stopCardBtn, { backgroundColor: primaryColor }]}
                     onPress={() => {
                       setSelectedStopCardId(null);
-                      if (entries.length === 1) {
-                        confirmAndRequest(entries[0]);
+                      if (runningEntries.length === 1) {
+                        confirmAndRequest(runningEntries[0]);
                       } else {
                         // Served by more than one route — let the rider pick which.
                         setSelectedStopKey(null);
@@ -2885,7 +2919,7 @@ const handleConfirmSheetConfirm = async () => {
                   >
                     <Icon name="place" size={18} color={WHITE} />
                     <Text style={styles.stopCardBtnText}>
-                      {entries.length === 1 ? 'Request pickup here' : 'Choose a route to request'}
+                      {runningEntries.length === 1 ? 'Request pickup here' : 'Choose a route to request'}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -3400,6 +3434,8 @@ const styles = StyleSheet.create({
   },
   locationText: { fontSize: 16, color: GRAY_800 },
   locationRouteMeta: { fontSize: 12, color: GRAY_400, marginTop: 2 },
+  locationTextClosed: { color: GRAY_400 },
+  locationRouteMetaClosed: { fontSize: 12, color: '#b45309', marginTop: 2 },
 
   pastDueBanner: {
     position: 'absolute',
