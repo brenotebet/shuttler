@@ -26,6 +26,7 @@ import { routeHasServingBus } from '../src/utils/routeDisplay';
 import { notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 import { showAlert } from '../src/utils/alerts';
 import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
+import { decideFixWrite, decideHeartbeatWrite } from '../src/utils/gpsWrite';
 
 type LocationContextType = {
   isSharing: boolean;
@@ -52,11 +53,10 @@ const LocationContext = createContext<LocationContextType>({
   endBreak: async () => {},
 });
 
-const WRITE_MIN_INTERVAL_MS = 4000;
-const WRITE_MIN_DISTANCE_M = 8;
-// A parked bus stops producing GPS callbacks (distanceInterval), so re-send the
-// last position at least this often to keep riders' freshness window satisfied.
-const HEARTBEAT_INTERVAL_MS = 15 * 1000;
+// Write rate limits (WRITE_MIN_INTERVAL_MS, HEARTBEAT_INTERVAL_MS) live in
+// src/utils/gpsWrite.ts. A parked bus stops producing GPS callbacks
+// (distanceInterval), so the heartbeat flushes a held fix or re-sends the last
+// position to keep riders' freshness window satisfied.
 const HEARTBEAT_CHECK_MS = 5 * 1000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // auto-stop after 15 min of no GPS movement
 const INACTIVITY_CHECK_MS = 60 * 1000;         // check once per minute
@@ -85,22 +85,6 @@ function getTimestampMs(data: any): number | null {
   if (lastSeenDateMs !== null && !Number.isNaN(lastSeenDateMs)) return lastSeenDateMs;
 
   return null;
-}
-
-function distanceMeters(
-  a: { latitude: number; longitude: number },
-  b: { latitude: number; longitude: number },
-) {
-  const toRad = (v: number) => (v * Math.PI) / 180;
-  const R = 6371000;
-  const dLat = toRad(b.latitude - a.latitude);
-  const dLon = toRad(b.longitude - a.longitude);
-  const lat1 = toRad(a.latitude);
-  const lat2 = toRad(b.latitude);
-  const x =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
 function todayDateString(): string {
@@ -235,6 +219,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
   const lastWrittenAt = useRef<number>(0);
   const lastWrittenCoords = useRef<{ latitude: number; longitude: number } | null>(null);
+  // Newest fix not yet written (arrived inside the write interval); the heartbeat flushes it.
+  const pendingCoords = useRef<{ latitude: number; longitude: number } | null>(null);
   const smoothedCoords = useRef<{ latitude: number; longitude: number } | null>(null);
   const lastActivityAt = useRef<number>(Date.now());
 
@@ -519,12 +505,12 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
           const now = Date.now();
 
-          const tooSoon = now - lastWrittenAt.current < WRITE_MIN_INTERVAL_MS;
-          const last = lastWrittenCoords.current;
-          const movedEnough = !last || distanceMeters(last, coords) >= WRITE_MIN_DISTANCE_M;
+          // At most one write per WRITE_MIN_INTERVAL_MS — see src/utils/gpsWrite.ts.
+          const decision = decideFixWrite(now, lastWrittenAt.current, lastWrittenCoords.current, coords);
+          if (decision === 'skip') { pendingCoords.current = null; return; }
+          if (decision === 'hold') { pendingCoords.current = coords; return; }
 
-          if (tooSoon && !movedEnough) return;
-
+          pendingCoords.current = null;
           await writeBusDoc(id, coords);
           lastWrittenAt.current = now;
           lastWrittenCoords.current = coords;
@@ -586,6 +572,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
       sessionOrgId.current = '';
       lastWrittenAt.current = 0;
       lastWrittenCoords.current = null;
+      pendingCoords.current = null;
       smoothedCoords.current = null;
       // Clear any active break (keep breaksTakenThisShift — reloaded from Firestore on next startSharing)
       if (breakTimerRef.current) { clearTimeout(breakTimerRef.current); breakTimerRef.current = null; }
@@ -667,8 +654,8 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     }
   };
 
-  // Heartbeat: while sharing, re-send the last position if nothing has been
-  // written recently. Doesn't touch lastActivityAt, so the inactivity auto-stop
+  // Heartbeat: while sharing, write a held fix once the write interval passes,
+  // or re-send the last position if nothing has been written recently. Doesn't touch lastActivityAt, so the inactivity auto-stop
   // still fires for a bus that genuinely hasn't moved in 15 min. writeBusDoc
   // skips while on break, so this never clears onBreak.
   useEffect(() => {
@@ -676,12 +663,17 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
 
     const interval = setInterval(async () => {
       const uid = currentUid.current;
-      const coords = lastWrittenCoords.current;
-      if (!uid || !coords) return;
-      if (Date.now() - lastWrittenAt.current < HEARTBEAT_INTERVAL_MS) return;
+      if (!uid || !lastWrittenCoords.current) return;
+      const action = decideHeartbeatWrite(Date.now(), lastWrittenAt.current, pendingCoords.current !== null);
+      if (!action) return;
+      // Flush the newest held fix (e.g. the bus stopped right after a skipped
+      // fix), or re-send the last position so riders still see it as live.
+      const coords = action === 'pending' ? pendingCoords.current! : lastWrittenCoords.current;
+      pendingCoords.current = null;
       try {
         await writeBusDoc(uid, coords);
         lastWrittenAt.current = Date.now();
+        lastWrittenCoords.current = coords;
       } catch (err) {
         console.error('Heartbeat write failed:', err);
       }

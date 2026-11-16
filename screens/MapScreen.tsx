@@ -1370,8 +1370,29 @@ export default function MapScreen() {
     };
     subscribeBuses();
 
+    // Detach the buses feed while the app is in the background: every bus
+    // write is billed as a read on every attached listener, and nobody is
+    // looking at the map. (Ride alerts come from the stopRequests listener,
+    // which stays attached.) On return the feed re-attaches, and a bus that
+    // moved far in the meantime jumps instead of gliding — see
+    // shouldJumpToPosition. 'inactive' (iOS Control Center, incoming call)
+    // is brief, so only 'background' detaches.
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (!mounted) return;
+      if (state === 'background') {
+        if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+        if (unsubBus) { unsubBus(); unsubBus = undefined; }
+        // Not stalled, just paused: don't let the watchdog read the gap as a hang.
+        lastBusSnapshotMs = null;
+        expectingBusUpdates = false;
+      } else if (state === 'active' && !unsubBus) {
+        subscribeBuses();
+      }
+    });
+
     return () => {
       mounted = false;
+      appStateSub.remove();
       clearInterval(stallTimer);
       if (resubscribeTimer) clearTimeout(resubscribeTimer);
       if (unsubBus) unsubBus();

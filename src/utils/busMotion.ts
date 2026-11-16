@@ -10,7 +10,7 @@ export const HEADING_MIN_MOVE_M = 10;
 /** How far each update turns the marker toward the new direction (0–1). */
 export const HEADING_SMOOTHING = 0.6;
 
-/** Driver phones write about every 4 s (WRITE_MIN_INTERVAL_MS in LocationContext). */
+/** Driver phones write about every 4 s (WRITE_MIN_INTERVAL_MS in gpsWrite.ts). */
 export const DEFAULT_GLIDE_MS = 4000;
 const MIN_GLIDE_MS = 800;
 const MAX_GLIDE_MS = 6000;

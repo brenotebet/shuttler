@@ -2921,6 +2921,60 @@ app.get('/super-admin/overview', requireSuperAdmin, async (_req: Request, res: R
   }
 });
 
+type UsageDay = { boardings: number; requests: number; completed: number };
+
+// The overview panel refreshes every 30 s, and re-reading 30 days of
+// boardingCounts + stopRequests on each refresh cost one read per doc every
+// time. Past days barely change, so they're cached per org; only today's docs
+// are read on each refresh. Keyed by UTC day so the window rolls at midnight.
+const OVERVIEW_HISTORY_TTL_MS = 60 * 60 * 1000;
+const overviewHistoryCache = new Map<string, { dayStartMs: number; expiresAt: number; days: UsageDay[] }>();
+
+function bucketUsage(
+  boardingDocs: admin.firestore.QueryDocumentSnapshot[],
+  requestDocs: admin.firestore.QueryDocumentSnapshot[],
+  sinceMs: number,
+  dayCount: number,
+): UsageDay[] {
+  const days: UsageDay[] = Array.from({ length: dayCount }, () => ({ boardings: 0, requests: 0, completed: 0 }));
+  const dayIdx = (ms: number) => Math.floor((ms - sinceMs) / 86_400_000);
+  boardingDocs.forEach((d) => {
+    const i = dayIdx(d.data().createdAt?.toMillis?.() ?? 0);
+    if (i >= 0 && i < dayCount) days[i].boardings += d.data().count ?? 0;
+  });
+  requestDocs.forEach((d) => {
+    const i = dayIdx(d.data().createdAt?.toMillis?.() ?? 0);
+    if (i < 0 || i >= dayCount) return;
+    days[i].requests += 1;
+    const st = d.data().status;
+    if (st === 'completed' || st === 'awaiting_confirmation') days[i].completed += 1;
+  });
+  return days;
+}
+
+/** Usage for the DAYS-1 full UTC days before today, from cache when fresh. */
+async function overviewHistory(
+  orgRef: admin.firestore.DocumentReference,
+  sinceMs: number,
+  todayMs: number,
+  dayCount: number,
+): Promise<UsageDay[]> {
+  const cached = overviewHistoryCache.get(orgRef.id);
+  if (cached && cached.dayStartMs === todayMs && cached.expiresAt > Date.now()) return cached.days;
+
+  const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
+  const todayTs = admin.firestore.Timestamp.fromMillis(todayMs);
+  const [boardingSnap, requestSnap] = await Promise.all([
+    orgRef.collection('boardingCounts').where('createdAt', '>=', sinceTs).where('createdAt', '<', todayTs)
+      .select('count', 'createdAt').get(),
+    orgRef.collection('stopRequests').where('createdAt', '>=', sinceTs).where('createdAt', '<', todayTs)
+      .select('createdAt', 'status').get(),
+  ]);
+  const days = bucketUsage(boardingSnap.docs, requestSnap.docs, sinceMs, dayCount);
+  overviewHistoryCache.set(orgRef.id, { dayStartMs: todayMs, expiresAt: Date.now() + OVERVIEW_HISTORY_TTL_MS, days });
+  return days;
+}
+
 /** GET /super-admin/orgs/:orgId/overview — live status, 30-day usage,
  *  members, insights, and health flags for one org. */
 app.get('/super-admin/orgs/:orgId/overview', requireSuperAdmin, async (req: Request, res: Response) => {
@@ -2936,14 +2990,16 @@ app.get('/super-admin/orgs/:orgId/overview', requireSuperAdmin, async (req: Requ
     const todayMs = startOfUtcDayMs(now);
     const DAYS = 30;
     const sinceMs = todayMs - (DAYS - 1) * 86_400_000;
-    const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
+    const todayTs = admin.firestore.Timestamp.fromMillis(todayMs);
     const roles = ['student', 'driver', 'admin', 'parent'] as const;
 
-    const [busSnap, openReqCount, boardingSnap, requestSnap, roleCounts, adminSnap, weekly, monthly] = await Promise.all([
+    const [busSnap, openReqCount, history, boardingSnap, requestSnap, roleCounts, adminSnap, weekly, monthly] = await Promise.all([
       orgRef.collection('buses').get(),
       orgRef.collection('stopRequests').where('status', 'in', ['pending', 'accepted']).count().get(),
-      orgRef.collection('boardingCounts').where('createdAt', '>=', sinceTs).select('count', 'createdAt').get(),
-      orgRef.collection('stopRequests').where('createdAt', '>=', sinceTs).select('createdAt', 'status').get(),
+      overviewHistory(orgRef, sinceMs, todayMs, DAYS - 1),
+      // Only today's docs are read on every refresh; past days come from the cache.
+      orgRef.collection('boardingCounts').where('createdAt', '>=', todayTs).select('count', 'createdAt').get(),
+      orgRef.collection('stopRequests').where('createdAt', '>=', todayTs).select('createdAt', 'status').get(),
       Promise.all(roles.map((r) => orgRef.collection('users').where('role', '==', r).count().get())),
       orgRef.collection('users').where('role', '==', 'admin').get(),
       orgRef.collection('insights').doc('weekly').get(),
@@ -2977,24 +3033,11 @@ app.get('/super-admin/orgs/:orgId/overview', requireSuperAdmin, async (req: Requ
     });
 
     // ---- 30-day usage, bucketed by UTC day ----
-    const days = Array.from({ length: DAYS }, (_, i) => ({
+    const [todayUsage] = bucketUsage(boardingSnap.docs, requestSnap.docs, todayMs, 1);
+    const days = [...history, todayUsage].map((u, i) => ({
       date: new Date(sinceMs + i * 86_400_000).toISOString().slice(0, 10),
-      boardings: 0,
-      requests: 0,
-      completed: 0,
+      ...u,
     }));
-    const dayIdx = (ms: number) => Math.floor((ms - sinceMs) / 86_400_000);
-    boardingSnap.docs.forEach((d) => {
-      const i = dayIdx(d.data().createdAt?.toMillis?.() ?? 0);
-      if (i >= 0 && i < DAYS) days[i].boardings += d.data().count ?? 0;
-    });
-    requestSnap.docs.forEach((d) => {
-      const i = dayIdx(d.data().createdAt?.toMillis?.() ?? 0);
-      if (i < 0 || i >= DAYS) return;
-      days[i].requests += 1;
-      const st = d.data().status;
-      if (st === 'completed' || st === 'awaiting_confirmation') days[i].completed += 1;
-    });
     const today = days[DAYS - 1];
 
     // ---- Members ----

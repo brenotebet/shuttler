@@ -110,11 +110,22 @@ function Overview({ org }: { org: OrgSummary }) {
     }
   }, [org.orgId]);
 
-  // Live status refreshes while the panel is open.
+  // Live status refreshes while the panel is open and its browser tab is
+  // visible — each refresh costs Firestore reads, so a tab left open in the
+  // background doesn't poll all day. Refreshes right away on returning.
   useEffect(() => {
     load();
-    const t = setInterval(load, LIVE_REFRESH_MS);
-    return () => clearInterval(t);
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, LIVE_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [load]);
 
   const regenerate = async () => {

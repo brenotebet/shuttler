@@ -570,6 +570,15 @@ export default function DriverScreen() {
 
           setBusOnline(freshBuses.some((bus) => bus.id === driverId));
 
+          // Keep the seats selector in sync with this driver's bus doc (e.g.
+          // after an app restart mid-shift, or when startSharing resets
+          // occupancy to 'open'). Read from this feed rather than a second
+          // listener on the same doc, which billed a read per position write.
+          const ownOccupancy = snapshot.docs.find((d) => d.id === driverId)?.data()?.occupancy;
+          if (ownOccupancy === 'open' || ownOccupancy === 'filling' || ownOccupancy === 'full') {
+            setOccupancy(ownOccupancy);
+          }
+
           const nextLocations: {
             [id: string]: {
               latitude: number;
@@ -672,17 +681,6 @@ export default function DriverScreen() {
       if (!activeIds.has(id)) delete proximityStateRef.current[id];
     });
   }, [activeRequests]);
-
-  // Keep the seats selector in sync with the bus doc (e.g. after an app restart
-  // mid-shift, or when startSharing resets occupancy to 'open').
-  useEffect(() => {
-    if (!driverId || !orgId) return;
-    const unsub = onSnapshot(doc(db, 'orgs', orgId, 'buses', driverId), (snap) => {
-      const value = snap.data()?.occupancy;
-      if (value === 'open' || value === 'filling' || value === 'full') setOccupancy(value);
-    });
-    return () => unsub();
-  }, [driverId, orgId]);
 
   const setBusOccupancy = useCallback((value: 'open' | 'filling' | 'full') => {
     setOccupancy(value);
