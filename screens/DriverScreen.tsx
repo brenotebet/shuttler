@@ -1260,22 +1260,26 @@ export default function DriverScreen() {
                   });
                 }
 
-                // Check route operating hours before going online — before
-                // claiming a vehicle slot, so backing out here holds none.
+                // Service hours are firm: a driver can't go online on a route
+                // outside its hours (checked before claiming a vehicle slot, so
+                // nothing is held). There used to be a "Go Online Anyway"
+                // override, but the schedule auto-stop in LocationContext took
+                // the bus offline again within a minute, and riders can't
+                // request a closed route either. To run outside the usual
+                // hours, an admin extends the route's hours.
                 const routeToCheck = activeRoute;
                 if (routeToCheck?.schedule && !isRouteActive(routeToCheck, new Date(), org?.timezone)) {
                   const todayText = getTodayScheduleText(routeToCheck, new Date(), org?.timezone);
                   const nextOpen = getNextOpenText(routeToCheck, new Date(), org?.timezone);
-                  await new Promise<void>((resolve, reject) => {
-                    Alert.alert(
-                      'Outside Service Hours',
-                      [todayText, nextOpen].filter(Boolean).join('\n') || 'This route is currently closed.',
-                      [
-                        { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
-                        { text: 'Go Online Anyway', onPress: () => resolve() },
-                      ],
-                    );
-                  });
+                  Alert.alert(
+                    'Outside Service Hours',
+                    [
+                      `${routeToCheck.name} isn't running right now, so you can't go online on it.`,
+                      [todayText, nextOpen].filter(Boolean).join(' · '),
+                      'To drive outside these hours, ask your admin to update the route\'s hours.',
+                    ].filter(Boolean).join('\n\n'),
+                  );
+                  return;
                 }
 
                 // Check vehicle limit before going online. The backend's count
