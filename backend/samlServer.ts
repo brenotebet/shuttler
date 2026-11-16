@@ -44,6 +44,7 @@ import {
   TRIAL_DAYS,
   vehicleCap,
 } from './billingPolicy';
+import { shouldNotifyOfStopRequest } from './requestRouting';
 import { buildOrgReport, parseReportRange, type ReportBoarding, type ReportFeedback, type ReportRequest } from './orgReport';
 import {
   carriedOverProfile,
@@ -3664,15 +3665,21 @@ app.post('/notifications/stop-request-created', requireAuth, async (req: Request
       .get();
     if (pending.empty) return res.json({ sent: 0 });
 
-    const usersSnap = await admin.firestore()
-      .collection('orgs').doc(orgId).collection('users')
-      .get();
+    const requestRouteId = pending.docs[0].data()?.routeId ?? null;
+    const [usersSnap, busesSnap] = await Promise.all([
+      admin.firestore().collection('orgs').doc(orgId).collection('users').get(),
+      admin.firestore().collection('orgs').doc(orgId).collection('buses').get(),
+    ]);
+    const busByUid: Record<string, any> = {};
+    busesSnap.forEach((d) => { busByUid[d.id] = d.data(); });
 
+    // Drivers online on another route aren't alerted (see requestRouting.ts).
     const tokens: string[] = [];
     usersSnap.forEach((d) => {
       const data = d.data();
       const newRequestEnabled = data?.notificationPrefs?.newRequest !== false;
-      if ((data.role === 'driver' || data.role === 'admin') && data.expoPushToken && newRequestEnabled) {
+      if (data.expoPushToken && newRequestEnabled
+        && shouldNotifyOfStopRequest(data.role, requestRouteId, busByUid[d.id])) {
         tokens.push(data.expoPushToken as string);
       }
     });

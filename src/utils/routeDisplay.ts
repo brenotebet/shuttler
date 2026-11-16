@@ -123,6 +123,20 @@ export function routeHasServingBus(
 }
 
 /**
+ * Whether a driver's bus should serve a stop request: the request was made on
+ * the route the bus is driving. A request or bus without a route (older app
+ * versions, or an org without routes) matches anything. Without this, any bus
+ * passing a stop shared by several routes (an airport terminal) would mark
+ * other routes' riders as arrived and picked up.
+ */
+export function requestMatchesBusRoute(
+  requestRouteId: string | null | undefined,
+  busRouteId: string | null | undefined,
+): boolean {
+  return !requestRouteId || !busRouteId || requestRouteId === busRouteId;
+}
+
+/**
  * A color for a new route: the first palette color no existing route uses and
  * that differs from the org color, so routes are told apart on the map. When
  * every color is taken, cycles through the palette.

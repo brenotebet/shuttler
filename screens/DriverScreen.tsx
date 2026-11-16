@@ -56,6 +56,7 @@ import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS, STALE_WINDOW_SECONDS 
 import { getPlanLimits, planFor } from '../src/constants/planLimits';
 import { useOrg, Stop, Route } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
+import { requestMatchesBusRoute } from '../src/utils/routeDisplay';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import { hapticDriverOnline } from '../src/utils/haptics';
@@ -347,8 +348,8 @@ export default function DriverScreen() {
     Alert.alert(
       `Switch to ${route.name}?`,
       `Riders will see your bus on ${route.name}.` +
-        (activeRequests.length > 0
-          ? ` You still have ${activeRequests.length} open stop request${activeRequests.length !== 1 ? 's' : ''}.`
+        (myRequests.length > 0
+          ? ` You still have ${myRequests.length} open stop request${myRequests.length !== 1 ? 's' : ''}.`
           : ''),
       [
         { text: 'Cancel', style: 'cancel' },
@@ -461,28 +462,44 @@ export default function DriverScreen() {
   );
 
   // Ref so interval callbacks always see the latest list without restarting every second.
+  // The expiry sweep uses this org-wide list; everything that serves riders
+  // uses myRequests below.
   const activeRequestsRef = useRef(activeRequests);
   useEffect(() => {
     activeRequestsRef.current = activeRequests;
   }, [activeRequests]);
 
+  // Requests this bus serves: made on the route it's driving (or without a
+  // route). At a stop shared by several routes (an airport terminal) another
+  // route's bus must not count, arrive for, or complete a rider who asked for
+  // a different route — see requestMatchesBusRoute.
+  const myRouteId = activeRoute?.id ?? null;
+  const myRequests = useMemo(
+    () => activeRequests.filter((req) => requestMatchesBusRoute(req?.routeId, myRouteId)),
+    [activeRequests, myRouteId],
+  );
+  const myRequestsRef = useRef(myRequests);
+  useEffect(() => {
+    myRequestsRef.current = myRequests;
+  }, [myRequests]);
+
   const countsByStopId = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const stop of orgStops) counts[stop.id] = 0;
 
-    for (const req of activeRequests) {
+    for (const req of myRequests) {
       const stopId = req?.stop?.id ?? req?.stopId;
       if (!stopId) continue;
       counts[stopId] = (counts[stopId] ?? 0) + 1;
     }
 
     return counts;
-  }, [activeRequests]);
+  }, [myRequests]);
 
   // Active requests grouped by stop, newest first — shown inline under Route Progress rows.
   const requestsByStopId = useMemo(() => {
     const byStop: Record<string, any[]> = {};
-    for (const req of activeRequests) {
+    for (const req of myRequests) {
       const stopId = req?.stop?.id ?? req?.stopId;
       if (!stopId) continue;
       (byStop[stopId] = byStop[stopId] ?? []).push(req);
@@ -491,7 +508,7 @@ export default function DriverScreen() {
       list.sort((a, b) => (b?.createdAt?.toMillis?.() ?? 0) - (a?.createdAt?.toMillis?.() ?? 0));
     }
     return byStop;
-  }, [activeRequests]);
+  }, [myRequests]);
 
 
   useEffect(() => {
@@ -788,7 +805,7 @@ export default function DriverScreen() {
       if (!driverLoc) return;
       const nowMs = Date.now();
 
-      activeRequestsRef.current.forEach((req) => {
+      myRequestsRef.current.forEach((req) => {
         if (!req?.id || !isActiveStopStatus(req?.status)) return;
 
         if (isExpiredRequestAt(req, nowMs)) {
@@ -945,7 +962,9 @@ export default function DriverScreen() {
   useEffect(() => {
     if (!isSharing) return;
     const pending = requests.filter((r) => isActiveStopStatus(r?.status) && !isExpiredRequest(r));
-    const newOnes = pending.filter((r) => !seenRequestIdsRef.current.has(r.id));
+    // Only alert for requests this bus serves (its route) — see myRequests.
+    const newOnes = pending.filter((r) => !seenRequestIdsRef.current.has(r.id)
+      && requestMatchesBusRoute(r?.routeId, myRouteId));
     if (newOnes.length > 0) {
       const stopName = newOnes[0].stop?.name ?? 'a stop';
       const body =
@@ -961,6 +980,7 @@ export default function DriverScreen() {
     }
     pending.forEach((r) => seenRequestIdsRef.current.add(r.id));
     requests.forEach((r) => seenRequestIdsRef.current.add(r.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requests, isSharing]);
 
   // ✅ UPDATED: Load names from /publicUsers instead of /users
@@ -1060,7 +1080,7 @@ export default function DriverScreen() {
     // oldest first — so an under-count (bus fills up before everyone boards)
     // leaves the remaining riders' requests untouched instead of silently
     // marking them complete too.
-    const requestsAtStop = activeRequests
+    const requestsAtStop = myRequests
       .filter((req) => {
         const stopId = req?.stop?.id ?? req?.stopId;
         return stopId === nearest.id;
@@ -1198,11 +1218,11 @@ export default function DriverScreen() {
             setIsToggling(true);
             try {
               if (isSharing) {
-                if (activeRequests.length > 0) {
+                if (myRequests.length > 0) {
                   await new Promise<void>((resolve, reject) => {
                     Alert.alert(
                       'Stop sharing your location?',
-                      `${activeRequests.length} rider${activeRequests.length !== 1 ? 's are' : ' is'} waiting on you. Going offline will cancel ${activeRequests.length !== 1 ? 'their requests' : 'their request'}.`,
+                      `${myRequests.length} rider${myRequests.length !== 1 ? 's are' : ' is'} waiting on you. If no other bus is on your route, going offline will cancel ${myRequests.length !== 1 ? 'their requests' : 'their request'}.`,
                       [
                         { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
                         { text: 'Stop Sharing', style: 'destructive', onPress: () => resolve() },

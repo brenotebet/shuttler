@@ -6,6 +6,7 @@ import {
   resolveWatchedRouteIds,
   stopsOnNoRoute,
   routeHasServingBus,
+  requestMatchesBusRoute,
   toggleWatchedRoute,
   watchedRoutesLabel,
 } from '../src/utils/routeDisplay';
@@ -194,5 +195,17 @@ describe('routeHasServingBus', () => {
   it('accepts any bus for a request with no route, and none when nothing is online', () => {
     expect(routeHasServingBus(null, ['b1'], routes)).toBe(true);
     expect(routeHasServingBus('parking', [], routes)).toBe(false);
+  });
+});
+
+describe('requestMatchesBusRoute', () => {
+  it('matches only requests made on the bus route', () => {
+    expect(requestMatchesBusRoute('rental', 'rental')).toBe(true);
+    expect(requestMatchesBusRoute('rental', 'terminal')).toBe(false);
+  });
+  it('matches anything when the request or the bus has no route', () => {
+    expect(requestMatchesBusRoute(null, 'terminal')).toBe(true);
+    expect(requestMatchesBusRoute(undefined, 'terminal')).toBe(true);
+    expect(requestMatchesBusRoute('rental', null)).toBe(true);
   });
 });
