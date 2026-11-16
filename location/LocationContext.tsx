@@ -22,6 +22,7 @@ import { db, auth } from '../firebase/firebaseconfig';
 import { useOrg } from '../src/org/OrgContext';
 import { useAuth } from '../src/auth/AuthProvider';
 import { isRouteActive } from '../src/utils/scheduleUtils';
+import { routeHasServingBus } from '../src/utils/routeDisplay';
 import { notifyStudentRequestCancelled } from '../src/utils/pushNotifications';
 import { showAlert } from '../src/utils/alerts';
 import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
@@ -29,6 +30,8 @@ import { ONLINE_BUS_STALE_SECONDS } from '../src/constants/stops';
 type LocationContextType = {
   isSharing: boolean;
   startSharing: (routeId?: string) => Promise<void>;
+  /** The driver switched routes mid-shift: service-hours checks follow the new route. */
+  setSharingRouteId: (routeId: string | null) => void;
   stopSharing: () => Promise<void>;
   isOnBreak: boolean;
   breakEndsAt: Date | null;
@@ -40,6 +43,7 @@ type LocationContextType = {
 const LocationContext = createContext<LocationContextType>({
   isSharing: false,
   startSharing: async () => {},
+  setSharingRouteId: () => {},
   stopSharing: async () => {},
   isOnBreak: false,
   breakEndsAt: null,
@@ -173,29 +177,38 @@ async function cancelPendingStopRequestsIfNoBusesOnline(excludedUid: string, org
 
   const busesSnap = await getDocs(busCol);
 
-  const hasAnotherOnlineBus = busesSnap.docs.some((snap) => {
-    if (snap.id === excludedUid) return false;
+  // Other buses still online, and the route each is driving.
+  const otherOnline: string[] = [];
+  const otherRouteIds: Record<string, string | null> = {};
+  busesSnap.docs.forEach((snap) => {
+    if (snap.id === excludedUid) return;
     const data: any = snap.data();
-    if (data?.online !== true) return false;
+    if (data?.online !== true) return;
     const tsMs = getTimestampMs(data);
-    if (tsMs === null) return false;
-    return Date.now() - tsMs <= ONLINE_BUS_STALE_SECONDS * 1000;
+    if (tsMs === null || Date.now() - tsMs > ONLINE_BUS_STALE_SECONDS * 1000) return;
+    otherOnline.push(snap.id);
+    otherRouteIds[snap.id] = typeof data.routeId === 'string' ? data.routeId : null;
   });
 
-  if (hasAnotherOnlineBus) return;
-
-  const pendingSnap = await getDocs(query(reqCol, where('status', 'in', ['pending', 'accepted'])));
-  if (pendingSnap.empty) return;
+  const allPending = await getDocs(query(reqCol, where('status', 'in', ['pending', 'accepted'])));
+  // Cancel only requests no remaining bus can serve: with routes, a request
+  // on a route that still has a bus stays; when the last bus on a route goes
+  // offline its riders are told instead of waiting for a bus that won't come.
+  const toCancel = allPending.docs.filter((snap) => {
+    const routeId = (snap.data() as any)?.routeId ?? null;
+    return !routeHasServingBus(routeId, otherOnline, otherRouteIds);
+  });
+  if (toCancel.length === 0) return;
 
   const batch = writeBatch(db);
-  pendingSnap.docs.forEach((snap) => {
+  toCancel.forEach((snap) => {
     batch.set(snap.ref, { driverUid: excludedUid, status: 'cancelled', cancelledAt: serverTimestamp(), cancelledReason: 'no_buses_online' }, { merge: true });
   });
 
   await batch.commit();
 
   // Fire-and-forget: notify each affected student
-  pendingSnap.docs.forEach((snap) => {
+  toCancel.forEach((snap) => {
     const studentUid = (snap.data() as any)?.studentUid as string | undefined;
     if (studentUid) {
       void notifyStudentRequestCancelled(orgId, studentUid, 'no_buses_online');
@@ -386,6 +399,10 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
     } finally {
       startingRef.current = false;
     }
+  };
+
+  const setSharingRouteId = (routeId: string | null) => {
+    currentRouteIdRef.current = routeId;
   };
 
   const beginSharing = async (routeId?: string) => {
@@ -713,7 +730,7 @@ export const LocationProvider = ({ children }: { children: React.ReactNode }) =>
   }, [isSharing]);
 
   return (
-    <LocationContext.Provider value={{ isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak }}>
+    <LocationContext.Provider value={{ isSharing, startSharing, setSharingRouteId, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak }}>
       {children}
     </LocationContext.Provider>
   );

@@ -54,10 +54,12 @@ import {
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { STUDENT_REQUEST_TTL_MS, FRESHNESS_WINDOW_SECONDS, STALE_WINDOW_SECONDS } from '../src/constants/stops';
 import { getPlanLimits, planFor } from '../src/constants/planLimits';
-import { useOrg, Stop } from '../src/org/OrgContext';
+import { useOrg, Stop, Route } from '../src/org/OrgContext';
 import { isRouteActive, getTodayScheduleText, getNextOpenText } from '../src/utils/scheduleUtils';
+import { requestMatchesBusRoute } from '../src/utils/routeDisplay';
 import { useAuth } from '../src/auth/AuthProvider';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
+import { hapticDriverOnline } from '../src/utils/haptics';
 import { STOP_REQUEST_CHANNEL_ID, STOP_REQUEST_SOUND } from '../src/hooks/usePushToken';
 import { borderRadius } from '../src/styles/common';
 
@@ -185,7 +187,7 @@ function nextStopFromNearest(nearestStopId: string | null, stops: Stop[]) {
 export default function DriverScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { isSharing, startSharing, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak } = useLocationSharing();
+  const { isSharing, startSharing, setSharingRouteId, stopSharing, isOnBreak, breakEndsAt, breaksTakenThisShift, startBreak, endBreak } = useLocationSharing();
   const [occupancy, setOccupancy] = useState<'open' | 'filling' | 'full'>('open');
   const { driverId, loading } = useDriver();
   const { org } = useOrg();
@@ -201,6 +203,8 @@ export default function DriverScreen() {
   const [breakCountdown, setBreakCountdown] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const manuallySelectedRoute = useRef(false);
+  // The route an admin assigned this driver (defaultRouteId on their user doc).
+  const [assignedRouteId, setAssignedRouteId] = useState<string | null>(null);
   const [hasLocationPermission, setHasLocationPermission] = useState(true);
   const [busOnline, setBusOnline] = useState(false);
   const [activeBusIds, setActiveBusIds] = useState<string[]>([]);
@@ -278,11 +282,81 @@ export default function DriverScreen() {
     return () => clearInterval(id);
   }, [isOnBreak, breakEndsAt]);
 
-  // Resolve the active route. Auto-selects the first route when routes are available.
+  // "Allow drivers to choose their route" is off: drivers drive the route an
+  // admin assigned them and can't pick another (firestore.rules enforces
+  // this on the bus doc). Admins can always choose.
+  const routeLocked = org?.driversChooseRoute === false && authRole !== 'admin';
+
+  // Resolve the active route. A one-route org uses it automatically. With
+  // several routes: when locked, the assigned route; otherwise the driver's
+  // choice (an admin-assigned default pre-selects it). No routes → null.
   const activeRoute = useMemo(() => {
     if (orgRoutes.length === 0) return null;
-    return orgRoutes.find((r) => r.id === selectedRouteId) ?? orgRoutes[0];
-  }, [orgRoutes, selectedRouteId]);
+    if (orgRoutes.length === 1) return orgRoutes[0];
+    const id = routeLocked ? assignedRouteId : selectedRouteId;
+    return orgRoutes.find((r) => r.id === id) ?? null;
+  }, [orgRoutes, selectedRouteId, assignedRouteId, routeLocked]);
+  // With several routes, a driver can't go online without one.
+  const needsRouteChoice = orgRoutes.length > 1 && !activeRoute;
+
+  // Haptic the moment sharing actually starts (startSharing can return
+  // without going online, e.g. when location permission is denied).
+  const wasSharingRef = useRef(isSharing);
+  useEffect(() => {
+    if (isSharing && !wasSharingRef.current) hapticDriverOnline();
+    wasSharingRef.current = isSharing;
+  }, [isSharing]);
+
+  // While online, service-hours checks follow the route being driven —
+  // whether the driver switched or an admin changed their default.
+  useEffect(() => {
+    if (isSharing) setSharingRouteId(activeRoute?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSharing, activeRoute?.id]);
+
+  // Online and the route being driven goes away — an admin deleted it, or
+  // (with routes assigned) removed this driver's assignment. The bus then has
+  // no route, so tell the driver instead of leaving them on a route-less bus.
+  // When routes are assigned the driver can't pick one, so go offline.
+  const lastDrivenRouteRef = useRef<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!isSharing) { lastDrivenRouteRef.current = null; return; }
+    if (activeRoute) { lastDrivenRouteRef.current = { id: activeRoute.id, name: activeRoute.name }; return; }
+    const lost = lastDrivenRouteRef.current;
+    if (!lost || orgRoutes.length < 2) return;
+    lastDrivenRouteRef.current = null;
+    const deleted = !orgRoutes.some((r) => r.id === lost.id);
+    const what = deleted ? `"${lost.name}" was removed by your admin.` : `Your admin removed your route assignment ("${lost.name}").`;
+    if (routeLocked) {
+      void stopSharing();
+      Alert.alert('Route removed', `${what} You're offline until they assign you a route.`);
+    } else {
+      Alert.alert('Route removed', `${what} Pick the route you're driving under Route Progress — until then riders don't see which route you're on.`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSharing, activeRoute?.id, orgRoutes, routeLocked]);
+
+  // Route chip tapped. While online, confirm first: riders see the bus move
+  // to the new route.
+  const chooseRoute = (route: Route) => {
+    if (routeLocked || route.id === activeRoute?.id) return;
+    const apply = () => {
+      manuallySelectedRoute.current = true;
+      setSelectedRouteId(route.id);
+    };
+    if (!isSharing) { apply(); return; }
+    Alert.alert(
+      `Switch to ${route.name}?`,
+      `Riders will see your bus on ${route.name}.` +
+        (myRequests.length > 0
+          ? ` You still have ${myRequests.length} open stop request${myRequests.length !== 1 ? 's' : ''}.`
+          : ''),
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Switch Route', onPress: apply },
+      ],
+    );
+  };
 
   // Watch the driver's user doc for admin-assigned route changes + write public profile
   // once on mount so students see the driver's name when they tap the bus.
@@ -308,8 +382,10 @@ export default function DriverScreen() {
         }
 
         // Apply admin-assigned default route only when the driver hasn't manually
-        // picked a different route themselves.
+        // picked a different route themselves. (When routes are locked the
+        // assignment is used directly — see activeRoute.)
         const defaultRouteId: string | undefined = snap.data()?.defaultRouteId;
+        setAssignedRouteId(defaultRouteId ?? null);
         if (defaultRouteId && !manuallySelectedRoute.current) {
           setSelectedRouteId(defaultRouteId);
         }
@@ -319,7 +395,7 @@ export default function DriverScreen() {
   }, [driverId, orgId]);
 
   // If the selected route was deleted by an admin, clear the stale ID so the
-  // route picker highlights the correct fallback (orgRoutes[0]).
+  // driver is asked to choose a route again.
   useEffect(() => {
     if (!selectedRouteId) return;
     if (!orgRoutes.find((r) => r.id === selectedRouteId)) {
@@ -386,28 +462,44 @@ export default function DriverScreen() {
   );
 
   // Ref so interval callbacks always see the latest list without restarting every second.
+  // The expiry sweep uses this org-wide list; everything that serves riders
+  // uses myRequests below.
   const activeRequestsRef = useRef(activeRequests);
   useEffect(() => {
     activeRequestsRef.current = activeRequests;
   }, [activeRequests]);
 
+  // Requests this bus serves: made on the route it's driving (or without a
+  // route). At a stop shared by several routes (an airport terminal) another
+  // route's bus must not count, arrive for, or complete a rider who asked for
+  // a different route — see requestMatchesBusRoute.
+  const myRouteId = activeRoute?.id ?? null;
+  const myRequests = useMemo(
+    () => activeRequests.filter((req) => requestMatchesBusRoute(req?.routeId, myRouteId)),
+    [activeRequests, myRouteId],
+  );
+  const myRequestsRef = useRef(myRequests);
+  useEffect(() => {
+    myRequestsRef.current = myRequests;
+  }, [myRequests]);
+
   const countsByStopId = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const stop of orgStops) counts[stop.id] = 0;
 
-    for (const req of activeRequests) {
+    for (const req of myRequests) {
       const stopId = req?.stop?.id ?? req?.stopId;
       if (!stopId) continue;
       counts[stopId] = (counts[stopId] ?? 0) + 1;
     }
 
     return counts;
-  }, [activeRequests]);
+  }, [myRequests]);
 
   // Active requests grouped by stop, newest first — shown inline under Route Progress rows.
   const requestsByStopId = useMemo(() => {
     const byStop: Record<string, any[]> = {};
-    for (const req of activeRequests) {
+    for (const req of myRequests) {
       const stopId = req?.stop?.id ?? req?.stopId;
       if (!stopId) continue;
       (byStop[stopId] = byStop[stopId] ?? []).push(req);
@@ -416,7 +508,7 @@ export default function DriverScreen() {
       list.sort((a, b) => (b?.createdAt?.toMillis?.() ?? 0) - (a?.createdAt?.toMillis?.() ?? 0));
     }
     return byStop;
-  }, [activeRequests]);
+  }, [myRequests]);
 
 
   useEffect(() => {
@@ -713,7 +805,7 @@ export default function DriverScreen() {
       if (!driverLoc) return;
       const nowMs = Date.now();
 
-      activeRequestsRef.current.forEach((req) => {
+      myRequestsRef.current.forEach((req) => {
         if (!req?.id || !isActiveStopStatus(req?.status)) return;
 
         if (isExpiredRequestAt(req, nowMs)) {
@@ -870,7 +962,9 @@ export default function DriverScreen() {
   useEffect(() => {
     if (!isSharing) return;
     const pending = requests.filter((r) => isActiveStopStatus(r?.status) && !isExpiredRequest(r));
-    const newOnes = pending.filter((r) => !seenRequestIdsRef.current.has(r.id));
+    // Only alert for requests this bus serves (its route) — see myRequests.
+    const newOnes = pending.filter((r) => !seenRequestIdsRef.current.has(r.id)
+      && requestMatchesBusRoute(r?.routeId, myRouteId));
     if (newOnes.length > 0) {
       const stopName = newOnes[0].stop?.name ?? 'a stop';
       const body =
@@ -886,6 +980,7 @@ export default function DriverScreen() {
     }
     pending.forEach((r) => seenRequestIdsRef.current.add(r.id));
     requests.forEach((r) => seenRequestIdsRef.current.add(r.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requests, isSharing]);
 
   // ✅ UPDATED: Load names from /publicUsers instead of /users
@@ -985,7 +1080,7 @@ export default function DriverScreen() {
     // oldest first — so an under-count (bus fills up before everyone boards)
     // leaves the remaining riders' requests untouched instead of silently
     // marking them complete too.
-    const requestsAtStop = activeRequests
+    const requestsAtStop = myRequests
       .filter((req) => {
         const stopId = req?.stop?.id ?? req?.stopId;
         return stopId === nearest.id;
@@ -1103,7 +1198,12 @@ export default function DriverScreen() {
             <Text style={styles.headerTitle}>{authRole === 'admin' ? 'Fleet Dashboard' : 'Driver Dashboard'}</Text>
             {activeRoute && (
               <Text style={styles.headerSubtitle}>
-                <Icon name="route" size={12} color={GRAY_500} /> {activeRoute.name} · {routeOrderedStops.length} stop{routeOrderedStops.length !== 1 ? 's' : ''}
+                <Icon name="route" size={12} color={activeRoute.color ?? GRAY_500} /> {isSharing ? 'Driving: ' : ''}{activeRoute.name} · {routeOrderedStops.length} stop{routeOrderedStops.length !== 1 ? 's' : ''}
+              </Text>
+            )}
+            {needsRouteChoice && (
+              <Text style={[styles.headerSubtitle, styles.headerSubtitleWarn]}>
+                <Icon name="route" size={12} color="#b45309" /> {routeLocked ? 'No route assigned yet' : isSharing ? 'Pick the route you\'re driving' : 'Choose your route to go online'}
               </Text>
             )}
           </View>
@@ -1118,11 +1218,11 @@ export default function DriverScreen() {
             setIsToggling(true);
             try {
               if (isSharing) {
-                if (activeRequests.length > 0) {
+                if (myRequests.length > 0) {
                   await new Promise<void>((resolve, reject) => {
                     Alert.alert(
                       'Stop sharing your location?',
-                      `${activeRequests.length} rider${activeRequests.length !== 1 ? 's are' : ' is'} waiting on you. Going offline will cancel ${activeRequests.length !== 1 ? 'their requests' : 'their request'}.`,
+                      `${myRequests.length} rider${myRequests.length !== 1 ? 's are' : ' is'} waiting on you. If no other bus is on your route, going offline will cancel ${myRequests.length !== 1 ? 'their requests' : 'their request'}.`,
                       [
                         { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
                         { text: 'Stop Sharing', style: 'destructive', onPress: () => resolve() },
@@ -1132,22 +1232,54 @@ export default function DriverScreen() {
                 }
                 await stopSharing();
               } else {
-                // Check route operating hours before going online — before
-                // claiming a vehicle slot, so backing out here holds none.
-                const routeToCheck = orgRoutes.find((r) => r.id === (selectedRouteId ?? orgRoutes[0]?.id)) ?? orgRoutes[0] ?? null;
-                if (routeToCheck?.schedule && !isRouteActive(routeToCheck, new Date(), org?.timezone)) {
-                  const todayText = getTodayScheduleText(routeToCheck, new Date(), org?.timezone);
-                  const nextOpen = getNextOpenText(routeToCheck, new Date(), org?.timezone);
+                // A route is required whenever the org has routes.
+                if (needsRouteChoice) {
+                  if (routeLocked) {
+                    Alert.alert(
+                      'No route assigned',
+                      'Your admin assigns routes for your organization. Ask them to assign you one in Org Setup → Users, then tap Start Sharing.',
+                    );
+                  } else {
+                    Alert.alert(
+                      'Choose your route',
+                      'Pick the route you\'re driving under Route Progress, then tap Start Sharing.',
+                    );
+                  }
+                  return;
+                }
+                if (orgRoutes.length > 1 && activeRoute && !routeLocked) {
                   await new Promise<void>((resolve, reject) => {
                     Alert.alert(
-                      'Outside Service Hours',
-                      [todayText, nextOpen].filter(Boolean).join('\n') || 'This route is currently closed.',
+                      `Go online on ${activeRoute.name}?`,
+                      'Riders will see your bus on this route. You can switch routes later.',
                       [
-                        { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
-                        { text: 'Go Online Anyway', onPress: () => resolve() },
+                        { text: 'Change Route', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
+                        { text: 'Go Online', onPress: () => resolve() },
                       ],
                     );
                   });
+                }
+
+                // Service hours are firm: a driver can't go online on a route
+                // outside its hours (checked before claiming a vehicle slot, so
+                // nothing is held). There used to be a "Go Online Anyway"
+                // override, but the schedule auto-stop in LocationContext took
+                // the bus offline again within a minute, and riders can't
+                // request a closed route either. To run outside the usual
+                // hours, an admin extends the route's hours.
+                const routeToCheck = activeRoute;
+                if (routeToCheck?.schedule && !isRouteActive(routeToCheck, new Date(), org?.timezone)) {
+                  const todayText = getTodayScheduleText(routeToCheck, new Date(), org?.timezone);
+                  const nextOpen = getNextOpenText(routeToCheck, new Date(), org?.timezone);
+                  Alert.alert(
+                    'Outside Service Hours',
+                    [
+                      `${routeToCheck.name} isn't running right now, so you can't go online on it.`,
+                      [todayText, nextOpen].filter(Boolean).join(' · '),
+                      'To drive outside these hours, ask your admin to update the route\'s hours.',
+                    ].filter(Boolean).join('\n\n'),
+                  );
+                  return;
                 }
 
                 // Check vehicle limit before going online. The backend's count
@@ -1194,7 +1326,7 @@ export default function DriverScreen() {
                   );
                   return;
                 }
-                await startSharing(selectedRouteId ?? undefined);
+                await startSharing(activeRoute?.id);
               }
             } catch (err: any) {
               if (err?.message !== 'cancelled') {
@@ -1365,7 +1497,17 @@ export default function DriverScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Route Progress</Text>
 
-          {orgRoutes.length > 1 && (
+          {needsRouteChoice && (
+            <Text style={styles.emptyText}>
+              {routeLocked
+                ? 'Your admin assigns routes. Ask them to assign you one to go online.'
+                : isSharing
+                  ? 'Pick the route you\'re driving so riders see your bus on it.'
+                  : 'Choose the route you\'re driving to go online.'}
+            </Text>
+          )}
+
+          {orgRoutes.length > 1 && !routeLocked && (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -1373,14 +1515,17 @@ export default function DriverScreen() {
               contentContainerStyle={styles.routePickerContent}
             >
               {orgRoutes.map((route) => {
-                const isSelected = (selectedRouteId ?? orgRoutes[0]?.id) === route.id;
+                const isSelected = activeRoute?.id === route.id;
+                const chipColor = route.color ?? primaryColor;
                 return (
                   <TouchableOpacity
                     key={route.id}
-                    style={[styles.routeChip, { borderColor: primaryColor }, isSelected && { backgroundColor: primaryColor }]}
-                    onPress={() => { manuallySelectedRoute.current = true; setSelectedRouteId(route.id); }}
+                    style={[styles.routeChip, { borderColor: chipColor }, isSelected && { backgroundColor: chipColor }]}
+                    onPress={() => chooseRoute(route)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isSelected }}
                   >
-                    <Text style={[styles.routeChipText, { color: primaryColor }, isSelected && styles.routeChipTextSelected]}>
+                    <Text style={[styles.routeChipText, { color: chipColor }, isSelected && styles.routeChipTextSelected]}>
                       {route.name}
                     </Text>
                   </TouchableOpacity>
@@ -1391,6 +1536,15 @@ export default function DriverScreen() {
 
           {activeRoute && orgRoutes.length === 1 && (
             <Text style={styles.routeSingleName}>{activeRoute.name}</Text>
+          )}
+
+          {activeRoute && orgRoutes.length > 1 && routeLocked && (
+            <View style={styles.routeLockedRow}>
+              <View style={[styles.routeLockedDot, { backgroundColor: activeRoute.color ?? primaryColor }]} />
+              <Text style={styles.routeSingleName}>{activeRoute.name}</Text>
+              <Icon name="lock" size={13} color={GRAY_500} style={{ marginBottom: 8 }} />
+              <Text style={styles.routeLockedHint}>Assigned by your admin</Text>
+            </View>
           )}
 
           {routeOrderedStops.length === 0 && (
@@ -1636,6 +1790,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 22, fontWeight: '700', color: GRAY_900 },
   headerSubtitle: { fontSize: 12, color: GRAY_500, marginTop: 2 },
+  headerSubtitleWarn: { color: '#b45309', fontWeight: '600' },
   scrollContent: {
     paddingHorizontal: 14,
     gap: 12,
@@ -1733,6 +1888,9 @@ const styles = StyleSheet.create({
   routeChipText: { fontSize: 13, fontWeight: '600' },
   routeChipTextSelected: { color: WHITE },
   routeSingleName: { fontSize: 13, fontWeight: '600', color: GRAY_700, marginBottom: 8 },
+  routeLockedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  routeLockedDot: { width: 10, height: 10, borderRadius: 5, marginBottom: 8 },
+  routeLockedHint: { fontSize: 12, color: GRAY_500, marginBottom: 8 },
   routeRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   routeIndex: { fontSize: 13, fontWeight: '700', color: GRAY_400, minWidth: 20, textAlign: 'center' },
   routeRow: {

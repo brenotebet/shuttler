@@ -5,6 +5,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useOrgTheme } from '../src/org/useOrgTheme';
 import { WHITE, BLACK, GRAY_900 } from '../src/constants/theme';
 import { borderRadius } from '../src/styles/common';
+import { MAX_STOP_DOTS } from '../src/utils/routeDisplay';
 
 type Props = {
   icon?: string;
@@ -12,17 +13,30 @@ type Props = {
   color?: string;
   /** Fade the name label out (kept in layout so the marker isn't re-laid-out). */
   labelHidden?: boolean;
+  /** Route colors for a stop on several routes, shown as small dots above the pin. */
+  dots?: string[];
 };
 
-function MapMarker({ icon, label, color: colorProp, labelHidden }: Props) {
+function MapMarker({ icon, label, color: colorProp, labelHidden, dots }: Props) {
   const { primaryColor } = useOrgTheme();
   const color = colorProp ?? primaryColor;
+  const shownDots = dots ? dots.slice(0, MAX_STOP_DOTS) : [];
+  const extraDots = dots ? dots.length - shownDots.length : 0;
   return (
     <View style={styles.wrapper}>
       {label ? (
         <View style={[styles.chip, labelHidden && { opacity: 0 }]}>
           <View style={[styles.chipAccent, { backgroundColor: color }]} />
           <Text style={styles.chipText} numberOfLines={1}>{label}</Text>
+        </View>
+      ) : null}
+
+      {shownDots.length > 0 ? (
+        <View style={styles.dotRow}>
+          {shownDots.map((c, i) => (
+            <View key={`${c}-${i}`} style={[styles.dot, { backgroundColor: c }]} />
+          ))}
+          {extraDots > 0 ? <Text style={styles.dotMore}>+{extraDots}</Text> : null}
         </View>
       ) : null}
 
@@ -106,6 +120,31 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5,
+  },
+  dotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: WHITE,
+    borderRadius: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    marginBottom: 3,
+    shadowColor: BLACK,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  dotMore: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: GRAY_900,
   },
   stem: {
     width: 2,

@@ -19,6 +19,8 @@ import { useAuth } from '../src/auth/AuthProvider';
 import { spacing, borderRadius, cardShadow } from '../src/styles/common';
 import {
   isRouteActive,
+  isAllDay,
+  END_OF_DAY,
   getTodayKey,
   getRunsUntilText,
   getNextOpenText,
@@ -50,6 +52,7 @@ const DAY_LABELS: Record<keyof WeekSchedule, string> = {
 };
 
 function fmt12h(hhmm: string): string {
+  if (hhmm === END_OF_DAY) return 'Midnight';
   const [h, m] = hhmm.split(':').map(Number);
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hour = h % 12 || 12;
@@ -274,7 +277,20 @@ export default function RoutesScreen() {
               toolbarEnabled={false}
             >
               {roadPath.length >= 2 && (
-                <Polyline coordinates={roadPath} strokeColor={selectedRoute.color ?? primaryColor} strokeWidth={4} />
+                <>
+                  {/* White outline under the line, matching the rider map.
+                      strokeColors too: on iOS with the Google provider
+                      strokeColor alone can render blue (see MapScreen). */}
+                  <Polyline coordinates={roadPath} strokeColor="#ffffffe6" strokeColors={['#ffffffe6']} strokeWidth={7} lineCap="round" lineJoin="round" />
+                  <Polyline
+                    coordinates={roadPath}
+                    strokeColor={selectedRoute.color ?? primaryColor}
+                    strokeColors={[selectedRoute.color ?? primaryColor]}
+                    strokeWidth={4}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                </>
               )}
               {routeStops.map((s, i) => (
                 <Marker
@@ -354,7 +370,7 @@ export default function RoutesScreen() {
                       {DAY_LABELS[key]}{isToday ? ' (today)' : ''}
                     </Text>
                     <Text style={[styles.hoursTime, !day.isOpen && { color: GRAY_400, fontStyle: 'italic' }]}>
-                      {day.isOpen ? `${fmt12h(day.open)} – ${fmt12h(day.close)}` : 'Closed'}
+                      {!day.isOpen ? 'Closed' : isAllDay(day) ? 'Open 24 hours' : `${fmt12h(day.open)} – ${fmt12h(day.close)}`}
                     </Text>
                   </View>
                 );

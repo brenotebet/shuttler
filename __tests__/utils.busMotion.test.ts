@@ -3,6 +3,7 @@ import {
   glideDurationMs,
   shortestAngleDelta,
   DEFAULT_GLIDE_MS,
+  shouldJumpToPosition,
 } from '../src/utils/busMotion';
 
 const origin = { latitude: 38.6, longitude: -89.8 };
@@ -63,5 +64,27 @@ describe('glideDurationMs', () => {
   it('falls back to the default when there is no usable previous update', () => {
     expect(glideDurationMs(null, 5000)).toBe(DEFAULT_GLIDE_MS);
     expect(glideDurationMs(5000, 5000)).toBe(DEFAULT_GLIDE_MS);
+  });
+});
+
+describe('shouldJumpToPosition', () => {
+  const t0 = 1_700_000_000_000;
+  // ~111 m apart
+  const far = north;
+
+  it('glides between regular updates, however far the bus went', () => {
+    expect(shouldJumpToPosition(t0, t0 + 4_000, origin, far)).toBe(false);
+  });
+
+  it('jumps when catching up after a long gap', () => {
+    expect(shouldJumpToPosition(t0, t0 + 5 * 60_000, origin, far)).toBe(true);
+  });
+
+  it('still glides after a long gap when the bus barely moved (pulling away after parking)', () => {
+    expect(shouldJumpToPosition(t0, t0 + 5 * 60_000, origin, jitter)).toBe(false);
+  });
+
+  it('never jumps on the first fix', () => {
+    expect(shouldJumpToPosition(null, t0, null, far)).toBe(false);
   });
 });

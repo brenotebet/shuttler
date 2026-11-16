@@ -115,6 +115,10 @@ export type OrgConfig = {
   reviewStatus?: 'pending' | 'approved' | 'rejected';
   rejectionReason?: string | null;
   breakSettings?: BreakSettings;
+  // When false, drivers always drive the route an admin assigned them
+  // (defaultRouteId on their user doc) and can't pick another. Defaults to
+  // true. Enforced by firestore.rules on the bus doc's routeId.
+  driversChooseRoute?: boolean;
 };
 
 type OrgContextType = {
@@ -285,6 +289,7 @@ export const OrgProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               reviewStatus: data.reviewStatus ?? prev.reviewStatus,
               rejectionReason: data.rejectionReason ?? prev.rejectionReason ?? null,
               breakSettings: data.breakSettings ?? prev.breakSettings,
+              driversChooseRoute: typeof data.driversChooseRoute === 'boolean' ? data.driversChooseRoute : undefined,
               entitlements: data.entitlements ?? prev.entitlements,
             };
             writeCachedOrg(updated);

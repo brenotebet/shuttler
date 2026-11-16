@@ -240,6 +240,54 @@ describe('plan limits on stops and routes', () => {
   });
 });
 
+describe('driver route lock', () => {
+  const routes = [{ id: 'north', name: 'North', stopIds: [] }, { id: 'south', name: 'South', stopIds: [] }];
+  async function setup(org: Record<string, unknown>, driverFields: Record<string, unknown> = {}) {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'orgs/emailOrg'), org, { merge: true });
+      await setDoc(doc(db, 'orgs/emailOrg/users/driver'), driverFields, { merge: true });
+      await setDoc(doc(db, 'orgs/emailOrg/buses/driver'), { online: false, routeId: null });
+    });
+  }
+  const setRoute = (uid: string, routeId: string | null) =>
+    setDoc(doc(as(uid), `orgs/emailOrg/buses/${uid}`), { routeId }, { merge: true });
+
+  it('lets drivers pick any route when choosing is allowed (the default)', async () => {
+    await setup({ routes });
+    await assertSucceeds(setRoute('driver', 'south'));
+  });
+
+  it('keeps a driver on their assigned route when choosing is off', async () => {
+    await setup({ routes, driversChooseRoute: false }, { defaultRouteId: 'north' });
+    await assertSucceeds(setRoute('driver', 'north'));
+    await assertFails(setRoute('driver', 'south'));
+  });
+
+  it('blocks a driver with no assigned route from picking one, but allows clearing it', async () => {
+    await setup({ routes, driversChooseRoute: false });
+    await assertFails(setRoute('driver', 'north'));
+    await assertSucceeds(setRoute('driver', null));
+  });
+
+  it("allows the org's only route without an assignment", async () => {
+    await setup({ routes: [routes[0]], driversChooseRoute: false });
+    await assertSucceeds(setRoute('driver', 'north'));
+  });
+
+  it('still allows GPS updates that leave the route unchanged', async () => {
+    await setup({ routes, driversChooseRoute: false }, { defaultRouteId: 'north' });
+    await env.withSecurityRulesDisabled((ctx) =>
+      setDoc(doc(ctx.firestore(), 'orgs/emailOrg/buses/driver'), { routeId: 'south' }, { merge: true }));
+    await assertSucceeds(setDoc(doc(as('driver'), 'orgs/emailOrg/buses/driver'), { latitude: 38.6, longitude: -89.8 }, { merge: true }));
+  });
+
+  it('lets admins choose any route', async () => {
+    await setup({ routes, driversChooseRoute: false });
+    await assertSucceeds(setRoute('admin', 'south'));
+  });
+});
+
 describe('trial expiry', () => {
   const DAY = 86_400_000;
   async function setOrg(fields: Record<string, unknown>) {

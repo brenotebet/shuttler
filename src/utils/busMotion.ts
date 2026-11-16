@@ -60,6 +60,30 @@ export function nextHeading(prevHeading: number | null, from: LatLng | null, to:
   return (turned % 360 + 360) % 360;
 }
 
+/** Updates further apart than this are a "catch-up" (see shouldJumpToPosition). */
+export const MAX_GLIDE_GAP_MS = 12_000;
+/** A catch-up that moved at least this far jumps instead of gliding. */
+export const JUMP_MIN_DISTANCE_M = 50;
+
+/**
+ * Whether the marker should jump to the new position instead of gliding.
+ * Glides are straight lines, which is fine between regular updates (a few
+ * seconds and tens of meters apart). But after a long gap — the rider's app
+ * was in the background, or their connection dropped — the last known
+ * position can be minutes old, and a straight glide to the current one cuts
+ * across buildings and lawns. A bus that barely moved (e.g. pulling away
+ * after being parked, when no updates were written) still glides.
+ */
+export function shouldJumpToPosition(
+  prevUpdateMs: number | null,
+  nextUpdateMs: number,
+  from: LatLng | null,
+  to: LatLng,
+): boolean {
+  if (prevUpdateMs === null || !from) return false;
+  return nextUpdateMs - prevUpdateMs > MAX_GLIDE_GAP_MS && distanceMeters(from, to) >= JUMP_MIN_DISTANCE_M;
+}
+
 /**
  * How long to glide to a new position: the real gap between this update and
  * the last one, so the bus arrives just as the next update lands and never
