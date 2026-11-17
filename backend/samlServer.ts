@@ -45,6 +45,7 @@ import {
   vehicleCap,
 } from './billingPolicy';
 import { shouldNotifyOfStopRequest } from './requestRouting';
+import { generateJoinCode, normalizeJoinCode, isOrgListed } from './joinCode';
 import { buildOrgReport, parseReportRange, type ReportBoarding, type ReportFeedback, type ReportRequest } from './orgReport';
 import {
   carriedOverProfile,
@@ -270,6 +271,8 @@ const orgCreateLimit = createRateLimiter(60_000, 3);
 const waitlistLimit = createRateLimiter(60_000, 3);
 const announcementLimit = createRateLimiter(60_000, 5);
 const superAdminLimit = createRateLimiter(60_000, 30);
+// Join-code lookups: low enough that guessing a code is hopeless (31^6 codes).
+const joinCodeLimit = createRateLimiter(60_000, 10);
 // Keyed by uid, not IP — every rider on a campus network can share one IP.
 const stopRequestPushLimit = createRateLimiter(60_000, 3);
 // Shared by the four driver-triggered rider notifications (stop-arrived,
@@ -592,6 +595,19 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // ---- Public org listing ----
 
+/**
+ * An org doc minus fields clients must never see. The join code is stripped
+ * too: these endpoints are public, and the code is what keeps an unlisted org
+ * from being found (admins get it from GET /orgs/:orgId/join-code).
+ */
+function publicOrgFields(data: admin.firestore.DocumentData): Record<string, any> {
+  const {
+    samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, dataAddonSubscriptionId: _das,
+    adminUids: _au, founderEmail: _fe, ownerUid: _ou, joinCode: _jc, ...safe
+  } = data;
+  return safe;
+}
+
 app.get('/orgs', async (_req: Request, res: Response) => {
   try {
     const snap = await admin.firestore().collection('orgSlugs').get();
@@ -618,12 +634,13 @@ app.get('/orgs', async (_req: Request, res: Response) => {
           logoUrl: extra?.logoUrl ?? null,
           primaryColor: extra?.primaryColor ?? null,
           approved: extra?.approved ?? false,
+          listed: isOrgListed(extra),
         };
       })
       // Unreviewed self-serve applications shouldn't be selectable — keeps the
       // picker from listing an org before /auth/email/register would even let
-      // anyone into it.
-      .filter((o) => o.approved === true);
+      // anyone into it. Unlisted orgs are found by join code instead.
+      .filter((o) => o.approved === true && o.listed);
     return res.json(orgs);
   } catch (e) {
     return res.status(500).json({ error: 'Failed to list orgs' });
@@ -634,10 +651,7 @@ app.get('/orgs/by-id/:orgId', async (req: Request, res: Response) => {
   try {
     const orgDoc = await admin.firestore().collection('orgs').doc(req.params.orgId as string).get();
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org not found' });
-    const data = orgDoc.data()!;
-    // Strip sensitive fields before returning to clients
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, dataAddonSubscriptionId: _das, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
-    return res.json(safe);
+    return res.json(publicOrgFields(orgDoc.data()!));
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
   }
@@ -651,10 +665,91 @@ app.get('/orgs/:slug', async (req: Request, res: Response) => {
     const orgDoc = await admin.firestore().collection('orgs').doc(orgId).get();
     if (!orgDoc.exists) return res.status(404).json({ error: 'Org document missing' });
     const data = orgDoc.data()!;
-    const { samlConfig: _saml, stripeCustomerId: _sc, stripeSubscriptionId: _ss, dataAddonSubscriptionId: _das, adminUids: _au, founderEmail: _fe, ownerUid: _ou, ...safe } = data;
-    return res.json(safe);
+    // Slugs come from the org's name, so anyone can guess one. An unlisted
+    // org must only be findable by its join code.
+    if (!isOrgListed(data)) return res.status(404).json({ error: 'Org not found' });
+    return res.json(publicOrgFields(data));
   } catch {
     return res.status(500).json({ error: 'Failed to fetch org' });
+  }
+});
+
+// ---- Join codes (find an unlisted org) ----
+
+/** GET /orgs/join/:code — the org a join code belongs to (public, rate limited). */
+app.get('/orgs/join/:code', async (req: Request, res: Response) => {
+  if (joinCodeLimit(req.ip ?? 'unknown')) {
+    return res.status(429).json({ error: 'Too many tries. Wait a minute and try again.' });
+  }
+  const code = normalizeJoinCode(req.params.code);
+  if (!code) return res.status(404).json({ error: 'No organization uses that code.' });
+  try {
+    const codeDoc = await admin.firestore().collection('orgJoinCodes').doc(code).get();
+    const orgId = codeDoc.exists ? (codeDoc.data()!.orgId as string | undefined) : undefined;
+    const orgDoc = orgId ? await admin.firestore().collection('orgs').doc(orgId).get() : null;
+    const data = orgDoc?.exists ? orgDoc.data()! : null;
+    // Same rule as the public list: unreviewed applications can't be joined.
+    // A replaced code no longer matches the org's current one.
+    if (!data || data.approved !== true || data.joinCode !== code) {
+      return res.status(404).json({ error: 'No organization uses that code.' });
+    }
+    return res.json(publicOrgFields(data));
+  } catch (e) {
+    console.error('[orgs/join] error:', e);
+    return res.status(500).json({ error: 'Failed to look up code' });
+  }
+});
+
+/**
+ * Gives an org a new join code (replacing the old one, which stops working).
+ * Codes live in orgJoinCodes/{code} → { orgId } so lookups are one read;
+ * `create` fails on a collision, so we just try another code.
+ */
+async function assignNewJoinCode(orgId: string): Promise<string> {
+  const db = admin.firestore();
+  const orgRef = db.collection('orgs').doc(orgId);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateJoinCode((n) => crypto.randomBytes(n));
+    try {
+      await db.runTransaction(async (tx) => {
+        const org = await tx.get(orgRef);
+        if (!org.exists) throw new Error('org_missing');
+        const codeRef = db.collection('orgJoinCodes').doc(code);
+        if ((await tx.get(codeRef)).exists) throw new Error('collision');
+        const old = org.data()!.joinCode as string | undefined;
+        if (old) tx.delete(db.collection('orgJoinCodes').doc(old));
+        tx.create(codeRef, { orgId, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+        tx.update(orgRef, { joinCode: code, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+      });
+      return code;
+    } catch (e: any) {
+      if (e?.message !== 'collision') throw e;
+    }
+  }
+  throw new Error('Could not generate a unique join code');
+}
+
+/** GET /orgs/:orgId/join-code — the org's code for its admins (created on first use). */
+app.get('/orgs/:orgId/join-code', requireAuth, requireOrgAdmin, async (req: Request, res: Response) => {
+  const orgId = req.params.orgId as string;
+  try {
+    const org = await admin.firestore().collection('orgs').doc(orgId).get();
+    const existing = org.data()?.joinCode as string | undefined;
+    const code = existing ?? await assignNewJoinCode(orgId);
+    return res.json({ joinCode: code, listed: isOrgListed(org.data()) });
+  } catch (e) {
+    console.error('[orgs/join-code] error:', e);
+    return res.status(500).json({ error: 'Failed to load join code' });
+  }
+});
+
+/** POST /orgs/:orgId/join-code — replace the code (e.g. it was posted publicly). */
+app.post('/orgs/:orgId/join-code', requireAuth, requireOrgAdmin, async (req: Request, res: Response) => {
+  try {
+    return res.json({ joinCode: await assignNewJoinCode(req.params.orgId as string) });
+  } catch (e) {
+    console.error('[orgs/join-code] regenerate error:', e);
+    return res.status(500).json({ error: 'Failed to create a new join code' });
   }
 });
 
@@ -1752,6 +1847,9 @@ app.delete('/admin/orgs/:orgId', requireAuth, async (req: Request, res: Response
     if (org.slug) {
       await admin.firestore().collection('orgSlugs').doc(org.slug).delete();
     }
+    if (org.joinCode) {
+      await admin.firestore().collection('orgJoinCodes').doc(org.joinCode).delete().catch(() => {});
+    }
     const invites = await admin.firestore().collection('orgInvites').where('orgId', '==', orgId).get();
     const inviteBatch = admin.firestore().batch();
     invites.docs.forEach((d) => inviteBatch.delete(d.ref));
@@ -1936,9 +2034,10 @@ app.patch(
   requireOrgAdmin,
   async (req: Request, res: Response) => {
     const orgId = req.params.orgId as string;
-    const { breakSettings, driversChooseRoute } = req.body as {
+    const { breakSettings, driversChooseRoute, listed } = req.body as {
       breakSettings?: Record<string, any>;
       driversChooseRoute?: unknown;
+      listed?: unknown;
     };
 
     const update: Record<string, any> = {
@@ -1958,6 +2057,15 @@ app.patch(
         return res.status(400).json({ error: 'driversChooseRoute must be true or false.' });
       }
       update.driversChooseRoute = driversChooseRoute;
+    }
+
+    // "List publicly" — off hides the org from the public picker and the
+    // shuttler.net search; riders then find it by join code.
+    if (listed !== undefined) {
+      if (typeof listed !== 'boolean') {
+        return res.status(400).json({ error: 'listed must be true or false.' });
+      }
+      update.listed = listed;
     }
 
     await admin.firestore().collection('orgs').doc(orgId).update(update);

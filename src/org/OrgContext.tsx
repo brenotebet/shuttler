@@ -119,6 +119,9 @@ export type OrgConfig = {
   // (defaultRouteId on their user doc) and can't pick another. Defaults to
   // true. Enforced by firestore.rules on the bus doc's routeId.
   driversChooseRoute?: boolean;
+  // False hides the org from the public picker; riders find it by join
+  // code instead (see backend/joinCode.ts). Defaults to listed.
+  listed?: boolean;
 };
 
 type OrgContextType = {
