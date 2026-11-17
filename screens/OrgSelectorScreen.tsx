@@ -109,6 +109,43 @@ export default function OrgSelectorScreen() {
     [navigation, selectOrg],
   );
 
+  // Organization code: how riders find an org that isn't listed publicly
+  // (e.g. a K-12 school). The code only finds the org — signing in still
+  // needs an account, same as picking it from the list.
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
+  const [code, setCode] = useState('');
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [isFindingCode, setIsFindingCode] = useState(false);
+
+  const handleFindCode = useCallback(async () => {
+    const cleaned = code.toUpperCase().replace(/[\s-]/g, '');
+    if (cleaned.length !== 6) {
+      setCodeError('Codes are 6 letters and numbers.');
+      return;
+    }
+    setIsFindingCode(true);
+    setCodeError(null);
+    try {
+      const res = await fetch(`${SHUTTLER_API_URL}/orgs/join/${encodeURIComponent(cleaned)}`);
+      if (res.status === 429) {
+        setCodeError('Too many tries. Wait a minute and try again.');
+        return;
+      }
+      if (!res.ok) {
+        setCodeError('No organization uses that code. Check it with your organization.');
+        return;
+      }
+      const org: OrgConfig = await res.json();
+      setShowCodeEntry(false);
+      setCode('');
+      await handleSelect(org);
+    } catch {
+      setCodeError('Could not check the code. Check your connection.');
+    } finally {
+      setIsFindingCode(false);
+    }
+  }, [code, handleSelect]);
+
   return (
     <ScreenContainer>
       <View style={styles.hero}>
@@ -131,6 +168,54 @@ export default function OrgSelectorScreen() {
           autoCapitalize="none"
         />
       </View>
+
+      {showCodeEntry ? (
+        <View style={styles.codeBox}>
+          <Text style={styles.codeLabel}>Enter the code your organization gave you</Text>
+          <View style={styles.codeRow}>
+            <TextInput
+              style={styles.codeInput}
+              placeholder="e.g. K7Q4MX"
+              placeholderTextColor={GRAY_400}
+              value={code}
+              onChangeText={(t) => { setCode(t.toUpperCase()); setCodeError(null); }}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              autoFocus
+              maxLength={8}
+              returnKeyType="go"
+              onSubmitEditing={handleFindCode}
+              accessibilityLabel="Organization code"
+            />
+            <TouchableOpacity
+              style={[styles.codeBtn, isFindingCode && { opacity: 0.6 }]}
+              onPress={handleFindCode}
+              disabled={isFindingCode}
+              accessibilityRole="button"
+            >
+              {isFindingCode
+                ? <ActivityIndicator size="small" color={WHITE} />
+                : <Text style={styles.codeBtnText}>Find</Text>}
+            </TouchableOpacity>
+          </View>
+          {codeError ? <Text style={styles.codeError}>{codeError}</Text> : null}
+          <TouchableOpacity
+            onPress={() => { setShowCodeEntry(false); setCode(''); setCodeError(null); }}
+            accessibilityRole="button"
+          >
+            <Text style={styles.codeCancel}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={styles.codeLink}
+          onPress={() => setShowCodeEntry(true)}
+          accessibilityRole="button"
+        >
+          <Icon name="vpn-key" size={16} color={PRIMARY_COLOR} />
+          <Text style={styles.codeLinkText}>Have an organization code?</Text>
+        </TouchableOpacity>
+      )}
 
       {isLoading ? (
         <ActivityIndicator style={styles.centered} size="large" color={PRIMARY_COLOR} />
@@ -247,6 +332,52 @@ const styles = StyleSheet.create({
   searchIcon: {
     marginRight: 8,
   },
+  codeLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginHorizontal: spacing.section,
+    marginBottom: spacing.item,
+    paddingVertical: 4,
+  },
+  codeLinkText: { fontSize: 14, fontWeight: '600', color: PRIMARY_COLOR },
+  codeBox: {
+    backgroundColor: WHITE,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: GRAY_200,
+    marginHorizontal: spacing.section,
+    marginBottom: spacing.item,
+    padding: spacing.item,
+    gap: 10,
+  },
+  codeLabel: { fontSize: 14, fontWeight: '600', color: GRAY_900 },
+  codeRow: { flexDirection: 'row', gap: 8 },
+  codeInput: {
+    flex: 1,
+    height: 46,
+    borderWidth: 1,
+    borderColor: GRAY_300,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: 12,
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 3,
+    color: GRAY_900,
+  },
+  codeBtn: {
+    minWidth: 76,
+    height: 46,
+    borderRadius: borderRadius.md,
+    backgroundColor: PRIMARY_COLOR,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  codeBtnText: { color: WHITE, fontSize: 15, fontWeight: '700' },
+  codeError: { fontSize: 13, color: '#b91c1c' },
+  codeCancel: { fontSize: 13, color: GRAY_500, alignSelf: 'flex-start' },
   searchInput: {
     flex: 1,
     fontSize: 15,

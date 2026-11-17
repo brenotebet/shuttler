@@ -337,9 +337,195 @@ function ProfileTab() {
         style={styles.actionButton}
         color={activeColor}
       />
+
+      <OrgVisibilitySection />
     </ScrollView>
   );
 }
+
+// "Finding your organization": whether the org is listed in the public
+// picker, and its join code (how riders find it when it isn't). Saves right
+// away through the backend — admins can't write these fields to Firestore.
+function OrgVisibilitySection() {
+  const { org, refreshOrg } = useOrg();
+  const { primaryColor } = useOrgTheme();
+  const [joinCode, setJoinCode] = useState<string | null>(null);
+  const [listed, setListed] = useState(org?.listed !== false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    if (!org) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getBearerToken();
+        const res = await fetch(`${SHUTTLER_API_URL}/orgs/${org.orgId}/join-code`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        if (!cancelled) { setJoinCode(data.joinCode); setListed(data.listed !== false); }
+      } catch {
+        if (!cancelled) setLoadError(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [org?.orgId]);
+
+  const saveListed = async (value: boolean) => {
+    if (!org) return;
+    setListed(value);
+    setIsBusy(true);
+    try {
+      const token = await getBearerToken();
+      const res = await fetch(`${SHUTTLER_API_URL}/orgs/${org.orgId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ listed: value }),
+      });
+      if (!res.ok) throw new Error();
+      await refreshOrg();
+      showToast(value ? 'Your organization is listed publicly.' : 'Your organization is now unlisted.', 'success');
+    } catch {
+      setListed(!value);
+      showToast('Could not save. Check your connection and try again.', 'error');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const confirmListed = (value: boolean) => {
+    if (value) { saveListed(true); return; }
+    Alert.alert(
+      'Unlist your organization?',
+      'It will no longer appear in the Shuttler app or on shuttler.net. New riders will need your organization code to find it. People already signed in are not affected.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Unlist', onPress: () => saveListed(false) },
+      ],
+    );
+  };
+
+  const replaceCode = () => {
+    if (!org) return;
+    Alert.alert(
+      'Create a new code?',
+      'The current code will stop working. Anyone who hasn\'t joined yet will need the new one.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'New Code',
+          style: 'destructive',
+          onPress: async () => {
+            setIsBusy(true);
+            try {
+              const token = await getBearerToken();
+              const res = await fetch(`${SHUTTLER_API_URL}/orgs/${org.orgId}/join-code`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (!res.ok) throw new Error();
+              setJoinCode((await res.json()).joinCode);
+              showToast('New code created. The old one no longer works.', 'success');
+            } catch {
+              showToast('Could not create a new code. Try again.', 'error');
+            } finally {
+              setIsBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const shareCode = () => {
+    if (!joinCode || !org) return;
+    Share.share({
+      message: `Join ${org.name} on Shuttler: open the Shuttler app, tap "Have an organization code?" and enter ${joinCode}.`,
+    }).catch(() => {});
+  };
+
+  return (
+    <View style={visibilityStyles.wrap}>
+      <Text style={styles.sectionLabel}>Finding Your Organization</Text>
+
+      <View style={visibilityStyles.row}>
+        <View style={{ flex: 1 }}>
+          <Text style={visibilityStyles.rowTitle}>List publicly</Text>
+          <Text style={styles.hint}>
+            {listed
+              ? 'Anyone can find your organization by name in the Shuttler app and on shuttler.net.'
+              : 'Hidden from the public list. Riders find your organization with its code.'}
+          </Text>
+        </View>
+        <Switch
+          value={listed}
+          onValueChange={confirmListed}
+          disabled={isBusy}
+          trackColor={{ false: GRAY_200, true: primaryColor }}
+          thumbColor={WHITE}
+          accessibilityLabel="List publicly"
+        />
+      </View>
+
+      <Text style={visibilityStyles.rowTitle}>Organization code</Text>
+      <Text style={styles.hint}>
+        Riders enter this under "Have an organization code?" on the first screen. It only helps them find you — they still need an account to sign in.
+      </Text>
+      {loadError ? (
+        <Text style={styles.hint}>Couldn't load the code. Check your connection and reopen this tab.</Text>
+      ) : !joinCode ? (
+        <ActivityIndicator style={{ marginVertical: 12 }} color={primaryColor} />
+      ) : (
+        <>
+          <View style={visibilityStyles.codeBox}>
+            <Text style={visibilityStyles.codeText} selectable accessibilityLabel={`Code ${joinCode.split('').join(' ')}`}>
+              {joinCode}
+            </Text>
+          </View>
+          <View style={visibilityStyles.actions}>
+            <TouchableOpacity style={[visibilityStyles.actionBtn, { backgroundColor: primaryColor }]} onPress={shareCode} accessibilityRole="button">
+              <Icon name="ios-share" size={16} color={WHITE} />
+              <Text style={visibilityStyles.actionBtnText}>Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={visibilityStyles.secondaryBtn} onPress={replaceCode} disabled={isBusy} accessibilityRole="button">
+              <Icon name="autorenew" size={16} color={GRAY_700} />
+              <Text style={visibilityStyles.secondaryBtnText}>New code</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+const visibilityStyles = StyleSheet.create({
+  wrap: { marginTop: 28, paddingTop: 20, borderTopWidth: 1, borderTopColor: GRAY_200 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  rowTitle: { fontSize: 15, fontWeight: '600', color: GRAY_900, marginBottom: 2 },
+  codeBox: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: borderRadius.md,
+    backgroundColor: GRAY_50,
+    borderWidth: 1,
+    borderColor: GRAY_200,
+    marginTop: 8,
+  },
+  codeText: { fontSize: 28, fontWeight: '800', letterSpacing: 6, color: GRAY_900 },
+  actions: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  actionBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 11, borderRadius: borderRadius.md,
+  },
+  actionBtnText: { color: WHITE, fontSize: 14, fontWeight: '700' },
+  secondaryBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 11, borderRadius: borderRadius.md, borderWidth: 1, borderColor: GRAY_200, backgroundColor: WHITE,
+  },
+  secondaryBtnText: { color: GRAY_700, fontSize: 14, fontWeight: '600' },
+});
 
 const profileStyles = StyleSheet.create({
   logoBox: {
