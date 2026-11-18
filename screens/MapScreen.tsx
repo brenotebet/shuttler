@@ -76,6 +76,13 @@ import { loadChildProfiles, type ChildProfile } from './ParentChildLinkScreen';
 import { isRouteActive, getNextOpenText, getTodayScheduleText, getRunsUntilText } from '../src/utils/scheduleUtils';
 import { getBusProgress, AT_STOP_METERS } from '../src/utils/busRoute';
 import { nextHeading, glideDurationMs, shouldJumpToPosition } from '../src/utils/busMotion';
+import {
+  cameraFollowTarget,
+  cameraModeAfterBusCardClosed,
+  followAnimationMs,
+  FOLLOW_RETARGET_MS,
+  type CameraMode,
+} from '../src/utils/followCamera';
 import { pickVisibleStopLabels, sameIdSet } from '../src/utils/stopLabels';
 import { groupOverlappingBuses, sameGroups, type BusGroups } from '../src/utils/busClusters';
 import { decodePath, snapToPath } from '../src/utils/routePath';
@@ -247,8 +254,6 @@ function smoothHull(
   }
   return result;
 }
-
-type CameraMode = 'free' | 'followUser' | 'overview';
 
 type BusPopup = {
   etaToYou: string | null;
@@ -638,6 +643,9 @@ export default function MapScreen() {
   const headings = useRef<{ [id: string]: number }>({});
   // Server timestamp of each bus's last position, to time the glide to the next one.
   const lastUpdateMs = useRef<{ [id: string]: number }>({});
+  // Each bus's latest marker glide (0 after a jump), so a following camera
+  // can move in step with it.
+  const lastGlideMs = useRef<{ [id: string]: number }>({});
   // Buses whose heading came from real movement (not the 0° placeholder) —
   // only those headings are trusted to tell direction on shared roads.
   const headingKnown = useRef<Set<string>>(new Set());
@@ -964,8 +972,9 @@ export default function MapScreen() {
 
   const fitToPoints = (
     points: { latitude: number; longitude: number }[],
-    mode: 'followUser' | 'overview' = 'overview',
+    mode: CameraMode = 'overview',
     minDelta = 0.01,
+    durationMs = FOLLOW_RETARGET_MS,
   ) => {
     if (!points.length) return;
     const lats = points.map((p) => p.latitude);
@@ -985,7 +994,7 @@ export default function MapScreen() {
         latitudeDelta: latDelta,
         longitudeDelta: lngDelta,
       },
-      600,
+      durationMs,
     );
   };
 
@@ -995,7 +1004,10 @@ export default function MapScreen() {
     fitToPoints(points, 'followUser', 0.01);
   };
 
-  const fitActiveRide = () => {
+  // Tighter once the bus is close (the driver's app stamps approachingAt).
+  const rideFitMinDelta = () => ((request as any)?.approachingAt ? 0.004 : 0.012);
+
+  const fitActiveRide = (durationMs = FOLLOW_RETARGET_MS) => {
     if (!request || !request.stop) return;
 
     const points: { latitude: number; longitude: number }[] = [
@@ -1010,7 +1022,7 @@ export default function MapScreen() {
 
     if (points.length < 2) return;
 
-    fitToPoints(points, 'overview', 0.012);
+    fitToPoints(points, 'followRide', rideFitMinDelta(), durationMs);
   };
 
   useEffect(() => {
@@ -1263,6 +1275,7 @@ export default function MapScreen() {
           // arrives as the next one lands, instead of moving then pausing.
           const glideMs = glideDurationMs(lastUpdateMs.current[id] ?? null, updateMs);
           if (positionChanged) lastUpdateMs.current[id] = updateMs;
+          if (positionChanged) lastGlideMs.current[id] = jump ? 0 : glideMs;
 
           lastCoords.current[id] = { latitude, longitude };
           newLocations[id] = {
@@ -1669,10 +1682,67 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (!rideActive) return;
-    if (cameraMode === 'free' || recentlyInteracted(2500)) return;
+    if (cameraMode !== 'followRide' || recentlyInteracted(2500)) return;
     fitActiveRide();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.status, driverId, bottomCardHeight]);
+
+  // Follow the bus from the moment a ride is requested (or the app reopens
+  // on one). Once per ride: if the rider then moves the map, it stays put
+  // until they tap Fit.
+  const followedRideIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!rideActive || !requestId || followedRideIdRef.current === requestId) return;
+    followedRideIdRef.current = requestId;
+    setCameraMode('followRide');
+  }, [rideActive, requestId]);
+
+  // Closing the bus card stops following that bus — and goes back to the
+  // ride, if there is one.
+  useEffect(() => {
+    if (selectedBusId) return;
+    setCameraMode((mode) => cameraModeAfterBusCardClosed(mode, rideActive));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBusId]);
+
+  // Keep the followed bus in view as it moves: a tapped bus stays centered
+  // (at the rider's zoom), a ride keeps its bus and stop in frame. The camera
+  // moves over the marker's glide, so the bus stays steady on screen.
+  const followTarget = cameraFollowTarget({
+    mode: cameraMode,
+    selectedBusId,
+    rideActive,
+    rideBusId: resolvedDriverId,
+  });
+  const followedBusLoc = followTarget ? busLocations[followTarget.busId] : undefined;
+  const lastFollowRef = useRef<{ target: string; latitude: number; longitude: number } | null>(null);
+  useEffect(() => {
+    // Forget the last target when following stops, so picking it up again
+    // (Fit, closing the bus card) reframes quickly instead of over a glide.
+    if (!followTarget) { lastFollowRef.current = null; return; }
+    if (!followedBusLoc) return;
+    const target = `${followTarget.kind}:${followTarget.busId}`;
+    const prev = lastFollowRef.current;
+    const retarget = prev?.target !== target;
+    if (!retarget && prev.latitude === followedBusLoc.latitude && prev.longitude === followedBusLoc.longitude) return;
+    lastFollowRef.current = { target, latitude: followedBusLoc.latitude, longitude: followedBusLoc.longitude };
+    // A tapped bus is framed by handleBusPress; only its later moves land here.
+    if (retarget && followTarget.kind === 'bus') return;
+    // Don't fight a rider mid-gesture; the next update catches up.
+    if (recentlyInteracted(2500)) return;
+
+    const durationMs = retarget ? FOLLOW_RETARGET_MS : followAnimationMs(lastGlideMs.current[followTarget.busId]);
+    if (followTarget.kind === 'ride') {
+      fitActiveRide(durationMs);
+      return;
+    }
+    markProgrammaticMove();
+    mapRef.current?.animateCamera(
+      { center: { latitude: followedBusLoc.latitude, longitude: followedBusLoc.longitude } },
+      { duration: durationMs },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followTarget?.kind, followTarget?.busId, followedBusLoc?.latitude, followedBusLoc?.longitude]);
 
   // Zoom in once when the bus gets close — the same moment the driver's app
   // marks the request approachingAt and sends the "Bus On The Way!" push.
@@ -1686,13 +1756,15 @@ export default function MapScreen() {
     if (!rideActive || !approachingMs || !requestId || !request?.stop || !rideBusLoc) return;
     if (zoomedForRequestRef.current === requestId) return;
     if (recentlyInteracted(2000)) return; // retried on the next bus update
+    if (selectedBusId) return; // the rider is looking at a bus; retried after
     zoomedForRequestRef.current = requestId;
+    // Also resumes following the ride if the rider had moved the map.
     fitToPoints(
       [
         { latitude: request.stop.latitude, longitude: request.stop.longitude },
         { latitude: rideBusLoc.latitude, longitude: rideBusLoc.longitude },
       ],
-      'overview',
+      'followRide',
       0.004,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1997,6 +2069,27 @@ export default function MapScreen() {
     setSelectedStopCardId(null);
     setShowLocationList(false);
 
+    // Zoom in on the bus now, then follow it while its card is open (see
+    // the follow effect) — a live bus otherwise drives out of view.
+    lastFollowRef.current = { target: `bus:${id}`, latitude: loc.latitude, longitude: loc.longitude };
+    setCameraMode('followBus');
+    const latDelta = regionRef.current ? regionRef.current.latitudeDelta / 1.5 : 0.008;
+    const lonDelta = regionRef.current ? regionRef.current.longitudeDelta / 1.5 : 0.008;
+
+    markProgrammaticMove();
+    mapRef.current?.animateToRegion(
+      clampToBounds(
+        {
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          latitudeDelta: latDelta,
+          longitudeDelta: lonDelta,
+        },
+        CLAMP_BOUNDS,
+      ),
+      FOLLOW_RETARGET_MS,
+    );
+
     const driverName = await getDriverFirstName(id);
 
     setSelectedBusPopup({
@@ -2013,23 +2106,6 @@ export default function MapScreen() {
         userLocRef.current = { latitude: userLoc.coords.latitude, longitude: userLoc.coords.longitude };
       }
     } catch {}
-
-    const latDelta = regionRef.current ? regionRef.current.latitudeDelta / 1.5 : 0.008;
-    const lonDelta = regionRef.current ? regionRef.current.longitudeDelta / 1.5 : 0.008;
-
-    markProgrammaticMove();
-    mapRef.current?.animateToRegion(
-      clampToBounds(
-        {
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-          latitudeDelta: latDelta,
-          longitudeDelta: lonDelta,
-        },
-        CLAMP_BOUNDS,
-      ),
-      600,
-    );
   };
 
 const handleRequest = async (entry: RequestableStop) => {
@@ -2437,12 +2513,15 @@ const handleConfirmSheetConfirm = async () => {
             userInteractingRef.current = false;
           }, 250);
         }}
-        onRegionChangeComplete={(newRegion) => {
+        onRegionChangeComplete={(newRegion, details) => {
           regionRef.current = newRegion;
           updateStopLabels(newRegion);
           // Zoom changes which buses overlap on screen; regroup them.
           updateBusGroups(newRegion);
-          if (!isProgrammaticMove() && userInteractingRef.current) {
+          // A drag or pinch stops any following. isGesture (Google provider)
+          // also catches gestures made while a follow animation is running,
+          // which the programmatic-move window would otherwise swallow.
+          if (details?.isGesture || (!isProgrammaticMove() && userInteractingRef.current)) {
             setCameraMode('free');
           }
         }}
@@ -2736,7 +2815,7 @@ const handleConfirmSheetConfirm = async () => {
         {rideActive && (
           <TouchableOpacity
             style={[styles.fabPrimary, { backgroundColor: primaryColor }]}
-            onPress={fitActiveRide}
+            onPress={() => fitActiveRide()}
             activeOpacity={0.9}
             accessibilityRole="button"
             accessibilityLabel="Fit map to active ride"
