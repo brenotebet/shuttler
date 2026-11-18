@@ -43,6 +43,12 @@ yarn-error.*
 keys
 
 asc-api-key.json
+play-service-account.json
+google-services.json
+
+# Android native project is generated from app.config.ts by `expo prebuild`
+# (EAS runs it on every build) — edit app.config.ts, not android/.
+/android
 
 serviceAccount.json
 scripts/serviceAccountKey.json
