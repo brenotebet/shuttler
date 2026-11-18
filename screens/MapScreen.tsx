@@ -1744,6 +1744,19 @@ export default function MapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followTarget?.kind, followTarget?.busId, followedBusLoc?.latitude, followedBusLoc?.longitude]);
 
+  // The ride button stays visible: quiet ("Fit") while the map follows the
+  // ride, filled ("Re-center") once the rider has moved it away. Treated as
+  // following until the effect above starts following a new ride, so the
+  // button doesn't flash filled for a frame when the ride begins.
+  const rideFollowing = cameraMode === 'followRide'
+    || (!!requestId && followedRideIdRef.current !== requestId);
+  // A small pop when it switches, so the change is noticed.
+  const rideButtonPop = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    rideButtonPop.setValue(0.88);
+    Animated.spring(rideButtonPop, { toValue: 1, useNativeDriver: true, speed: 16, bounciness: 8 }).start();
+  }, [rideFollowing, rideButtonPop]);
+
   // Zoom in once when the bus gets close — the same moment the driver's app
   // marks the request approachingAt and sends the "Bus On The Way!" push.
   // Keyed off the request doc (not the push) so it also works with push
@@ -2813,16 +2826,23 @@ const handleConfirmSheetConfirm = async () => {
         )}
 
         {rideActive && (
-          <TouchableOpacity
-            style={[styles.fabPrimary, { backgroundColor: primaryColor }]}
-            onPress={() => fitActiveRide()}
-            activeOpacity={0.9}
-            accessibilityRole="button"
-            accessibilityLabel="Fit map to active ride"
-          >
-            <Icon name="alt-route" size={22} color={WHITE} />
-            <Text style={styles.fabPrimaryText}>Fit</Text>
-          </TouchableOpacity>
+          <Animated.View style={{ transform: [{ scale: rideButtonPop }] }}>
+            <TouchableOpacity
+              style={rideFollowing
+                ? [styles.fabPrimary, styles.fabPrimaryQuiet, { borderColor: primaryColor + '55' }]
+                : [styles.fabPrimary, { backgroundColor: primaryColor }]}
+              onPress={() => fitActiveRide()}
+              activeOpacity={0.9}
+              accessibilityRole="button"
+              accessibilityLabel={rideFollowing ? 'Fit map to active ride' : 'Re-center map on your ride'}
+              accessibilityHint={rideFollowing ? 'The map is following your ride' : 'The map stopped following your ride when you moved it'}
+            >
+              <Icon name={rideFollowing ? 'alt-route' : 'navigation'} size={22} color={rideFollowing ? primaryColor : WHITE} />
+              <Text style={[styles.fabPrimaryText, rideFollowing && styles.fabPrimaryQuietText]}>
+                {rideFollowing ? 'Fit' : 'Re-center'}
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
         )}
       </Animated.View>
 
@@ -3603,6 +3623,9 @@ const styles = StyleSheet.create({
     elevation: 7,
   },
   fabPrimaryText: { color: WHITE, fontWeight: '700', fontSize: 14 },
+  // Ride button while the map is following the ride (see rideFollowing).
+  fabPrimaryQuiet: { backgroundColor: WHITE, borderWidth: 1.5, shadowOpacity: 0.12, elevation: 6 },
+  fabPrimaryQuietText: { color: GRAY_900 },
 
   bottomCard: {
     position: 'absolute',
