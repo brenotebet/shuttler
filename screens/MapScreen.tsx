@@ -1,7 +1,7 @@
 // src/screens/MapScreen.tsx
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, FlatList, TouchableWithoutFeedback, Dimensions, Modal, Linking, ScrollView, AppState } from 'react-native'
+import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Animated, Easing, FlatList, TouchableWithoutFeedback, Dimensions, Linking, ScrollView, AppState } from 'react-native'
 import { Text } from '../components/Text';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -97,9 +97,14 @@ import {
   type StopMarkerStyle,
 } from '../src/utils/routeDisplay';
 import { useOrgTheme } from '../src/org/useOrgTheme';
+import { usePresence, presenceStyle } from '../src/hooks/usePresence';
+import { useFadeOnChange } from '../src/hooks/useFadeOnChange';
+import { MOTION } from '../src/constants/motion';
+import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { useFirstLoginOnboarding } from '../src/hooks/useFirstLoginOnboarding';
 import PickupConfirmModal from '../src/components/PickupConfirmModal';
 import ConfirmSheet from '../components/ConfirmSheet';
+import BottomSheet from '../components/BottomSheet';
 import { borderRadius } from '../src/styles/common';
 
 // A bus marker is shown only while a rider could request a stop: the bus is
@@ -627,6 +632,12 @@ export default function MapScreen() {
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [selectedBusPopup, setSelectedBusPopup] = useState<BusPopup | null>(null);
   const [driverFirstNames, setDriverFirstNames] = useState<Record<string, string>>({});
+  // The bus card pops in on tap and animates out on close. cardBusId is the
+  // tapped bus, or the last one while its card animates out.
+  const busCard = usePresence(selectedBusId);
+  const cardBusId = busCard.value;
+  // The bus last tapped, so a slow driver-name lookup can't land on another bus's card.
+  const pressedBusIdRef = useRef<string | null>(null);
 
   const mapRef = useRef<MapView | null>(null);
   const regionRef = useRef<Region | null>(null);
@@ -686,7 +697,6 @@ export default function MapScreen() {
   const expiryInFlightRef = useRef(false);
   const confirmInFlightRef = useRef(false);
 
-  const slideAnim = useRef(new Animated.Value(0)).current;
   const [bottomCardHeight, setBottomCardHeight] = useState(0);
 
   const [cameraMode, setCameraMode] = useState<CameraMode>('followUser');
@@ -744,20 +754,10 @@ export default function MapScreen() {
     if (groupChooser && groupChooser.filter((id) => shownBusIds.includes(id)).length < 2) setGroupChooser(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownBusIds.join(','), groupChooser]);
-  // Same pop-in as the bus card (fade + slight rise + scale), replayed for
-  // each new stop so switching stops reads as a new card.
-  const stopCardAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!selectedStopCardId) return;
-    stopCardAnim.stopAnimation();
-    stopCardAnim.setValue(0);
-    Animated.spring(stopCardAnim, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 6 }).start();
-  }, [selectedStopCardId, stopCardAnim]);
-  const closeStopCard = () => {
-    stopCardAnim.stopAnimation();
-    Animated.timing(stopCardAnim, { toValue: 0, duration: 140, useNativeDriver: true })
-      .start(() => setSelectedStopCardId(null));
-  };
+  // Same pop-in as the bus card, replayed for each new stop so switching
+  // stops reads as a new card. Every way of closing it animates out.
+  const stopCard = usePresence(selectedStopCardId && !selectedBusId ? selectedStopCardId : null, { replayOnChange: true });
+  const closeStopCard = () => setSelectedStopCardId(null);
   useEffect(() => {
     const r = regionRef.current ?? region ?? INITIAL_REGION;
     if (r) updateStopLabels(r as any);
@@ -767,8 +767,6 @@ export default function MapScreen() {
   // Pin colors / route filter changed: redraw the stop marker snapshots.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { bumpStopTracks(); }, [stopStylesKey]);
-
-  const cloudAnim = useRef(new Animated.Value(0)).current;
 
   const markUserInteraction = () => {
     lastUserInteractionRef.current = Date.now();
@@ -781,29 +779,10 @@ export default function MapScreen() {
   };
   const isProgrammaticMove = () => Date.now() - lastProgrammaticMoveRef.current < 1200;
 
-  const showCloud = () => {
-    cloudAnim.stopAnimation();
-    Animated.spring(cloudAnim, {
-      toValue: 1,
-      useNativeDriver: true,
-      speed: 18,
-      bounciness: 6,
-    }).start();
-  };
-
-  const hideCloud = () => {
-    cloudAnim.stopAnimation();
-    Animated.timing(cloudAnim, {
-      toValue: 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start();
-  };
-
+  // The card's details stay put while it animates out (see busCard);
+  // handleBusPress replaces them for the next bus.
   const closeSelectedBus = () => {
     setSelectedBusId(null);
-    setSelectedBusPopup(null);
-    hideCloud();
   };
 
   const formatLastSeen = (seconds: number) => {
@@ -865,11 +844,30 @@ export default function MapScreen() {
 
   // Suppress the bottom card for a dismissed expired/completed request
   const visibleRequest = request && request.id === dismissedRequestId ? null : request;
+  // The ride card springs up like a bottom sheet and keeps showing the ride
+  // while it slides away (it used to flip to "No active stop" mid-slide).
+  // Its animation also lifts the map buttons (buttonsLift).
+  const rideCard = usePresence(visibleRequest, { enter: 'sheet' });
+  const rideCardRequest = rideCard.value;
+  // A ride's status line and badge ease in when the status changes.
+  const rideStatusFade = useFadeOnChange(rideCardRequest?.status ?? null);
   const rideActive = !!visibleRequest && (
     visibleRequest.status === 'pending' ||
     visibleRequest.status === 'accepted' ||
     visibleRequest.status === 'awaiting_confirmation'
   );
+
+  // "N buses here" and the stop list animate in and out like the cards.
+  const chooser = usePresence(groupChooser && !selectedBusId ? groupChooser : null);
+  const stopList = usePresence(!rideActive && showLocationList && !selectedBusId, { enter: 'fade' });
+  // Top-of-map controls fade out when a card or ride takes over, and back in.
+  const searchBar = usePresence(
+    (role !== 'parent' || childProfiles.length > 0) && !rideActive && !selectedBusId && !selectedStopCardId,
+    { enter: 'fade' },
+  );
+  const parentCta = usePresence(role === 'parent' && childProfiles.length === 0 && !rideActive && !selectedBusId, { enter: 'fade' });
+  const childPill = usePresence(role === 'parent' && selectedChild && !rideActive && !selectedBusId ? selectedChild : null, { enter: 'fade' });
+  const mapTips = usePresence(!rideActive && !showLocationList && !selectedBusId && !selectedStopCardId, { enter: 'fade' });
 
   const resolvedDriverId = useMemo(() => {
     if (!request?.stop) return driverId;
@@ -1752,10 +1750,12 @@ export default function MapScreen() {
     || (!!requestId && followedRideIdRef.current !== requestId);
   // A small pop when it switches, so the change is noticed.
   const rideButtonPop = useRef(new Animated.Value(1)).current;
+  const { motionReduced } = useAccessibility();
   useEffect(() => {
+    if (motionReduced) return;
     rideButtonPop.setValue(0.88);
-    Animated.spring(rideButtonPop, { toValue: 1, useNativeDriver: true, speed: 16, bounciness: 8 }).start();
-  }, [rideFollowing, rideButtonPop]);
+    Animated.spring(rideButtonPop, { toValue: 1, ...MOTION.pop, useNativeDriver: true }).start();
+  }, [rideFollowing, rideButtonPop, motionReduced]);
 
   // Zoom in once when the bus gets close — the same moment the driver's app
   // marks the request approachingAt and sends the "Bus On The Way!" push.
@@ -1828,14 +1828,6 @@ export default function MapScreen() {
   }, [request, driverId, activeBusIds]);
 
   useEffect(() => {
-    if (visibleRequest) {
-      Animated.timing(slideAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-    } else {
-      Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
-    }
-  }, [visibleRequest, slideAnim]);
-
-  useEffect(() => {
     if (!selectedBusId) return;
     const loc = busLocations[selectedBusId];
     if (!loc) return;
@@ -1849,10 +1841,10 @@ export default function MapScreen() {
 
   // Route details for the tapped bus. Recomputed only when the selected bus
   // moves (not on every other bus's update) — a few stops of cheap math.
-  const selectedLoc = selectedBusId ? busLocations[selectedBusId] : undefined;
+  const selectedLoc = cardBusId ? busLocations[cardBusId] : undefined;
   const selectedBusRoute = useMemo(() => {
-    if (!selectedBusId || !selectedLoc) return null;
-    const routeId = busRouteIds[selectedBusId] ?? null;
+    if (!cardBusId || !selectedLoc) return null;
+    const routeId = busRouteIds[cardBusId] ?? null;
     const route = routeId ? (org?.routes ?? []).find((r) => r.id === routeId) ?? null : null;
     const routeStops = route
       ? route.stopIds
@@ -1864,7 +1856,7 @@ export default function MapScreen() {
           routeStops,
           routePaths[route.id],
           selectedLoc,
-          headingKnown.current.has(selectedBusId) ? selectedLoc.heading : null,
+          headingKnown.current.has(cardBusId) ? selectedLoc.heading : null,
         )
       : null;
 
@@ -1888,7 +1880,7 @@ export default function MapScreen() {
       runsUntil: getRunsUntilText(route, new Date(), org?.timezone),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBusId, selectedLoc?.latitude, selectedLoc?.longitude, selectedLoc?.heading, busRouteIds, routePaths, org?.routes, org?.stops, org?.timezone]);
+  }, [cardBusId, selectedLoc?.latitude, selectedLoc?.longitude, selectedLoc?.heading, busRouteIds, routePaths, org?.routes, org?.stops, org?.timezone]);
 
   // "Next bus is 2 stops away" for the stop card: the closest live bus, on
   // any route serving the stop, counted in stops along that route's loop.
@@ -2103,14 +2095,21 @@ export default function MapScreen() {
       FOLLOW_RETARGET_MS,
     );
 
-    const driverName = await getDriverFirstName(id);
-
+    // Show the card now; the driver's name fills in once it's loaded.
+    pressedBusIdRef.current = id;
     setSelectedBusPopup({
       etaToYou: null,
       lastSeenText: formatLastSeen(loc.secondsAgo),
-      driverName,
+      driverName: driverFirstNames[id] ?? null,
     });
-    showCloud();
+
+    const driverName = await getDriverFirstName(id);
+    if (pressedBusIdRef.current !== id) return;
+    setSelectedBusPopup((prev) => ({
+      etaToYou: prev?.etaToYou ?? null,
+      lastSeenText: prev?.lastSeenText ?? formatLastSeen(loc.secondsAgo),
+      driverName,
+    }));
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -2326,148 +2325,173 @@ const handleConfirmSheetConfirm = async () => {
   }
 
   const cardLift = Math.min(bottomCardHeight, 260) + 10;
-  const buttonsLift = slideAnim.interpolate({
+  const buttonsLift = rideCard.anim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, cardLift],
   });
   const topOverlay = insets.top + 12;
 
-  const cloudScale = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] });
-  const cloudOpacity = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-  const cloudTranslateY = cloudAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
 
   const fabBottom = insets.bottom + 18;
 
   return (
     <SafeAreaView edges={['left', 'right']} style={{ flex: 1, backgroundColor: BACKGROUND_COLOR }}>
-      {(role !== 'parent' || childProfiles.length > 0) && !rideActive && !selectedBusId && !selectedStopCardId && (
-        <TouchableOpacity
-          style={[styles.searchContainer, { top: role === 'parent' ? topOverlay + 46 : topOverlay, borderColor: primaryColor + '30', shadowColor: primaryColor }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
-          onPress={() => {
-            if (!serviceIsOpen) {
-              showAlert('Service is currently closed. Check the hours shown on the map.');
-              return;
-            }
-            if (!busOnline) {
-              showAlert('No buses are currently online. Please try again later.');
-              return;
-            }
-            setShowLocationList((prev) => !prev);
-          }}
-          activeOpacity={0.8}
+      {searchBar.value && (
+        <Animated.View
+          pointerEvents={searchBar.exiting ? 'none' : 'box-none'}
+          style={[styles.chromeLayer, { zIndex: 100, elevation: 5 }, presenceStyle(searchBar.anim, { rise: -6, scale: 1 })]}
         >
-          <Icon name="place" size={18} color={busOnline && serviceIsOpen ? primaryColor : GRAY_400} style={{ marginRight: 6 }} />
-          <Text style={[styles.searchText, (!busOnline || !serviceIsOpen) && styles.searchTextOffline]}>
-            {!serviceIsOpen ? 'Service closed' : !busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
-          </Text>
-          <Icon name="keyboard-arrow-down" size={24} color={busOnline && serviceIsOpen ? primaryColor : GRAY_400} />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.searchContainer, { top: role === 'parent' ? topOverlay + 46 : topOverlay, borderColor: primaryColor + '30', shadowColor: primaryColor }, (!busOnline || !serviceIsOpen) && styles.searchContainerOffline]}
+            onPress={() => {
+              if (!serviceIsOpen) {
+                showAlert('Service is currently closed. Check the hours shown on the map.');
+                return;
+              }
+              if (!busOnline) {
+                showAlert('No buses are currently online. Please try again later.');
+                return;
+              }
+              setShowLocationList((prev) => !prev);
+            }}
+            activeOpacity={0.8}
+          >
+            <Icon name="place" size={18} color={busOnline && serviceIsOpen ? primaryColor : GRAY_400} style={{ marginRight: 6 }} />
+            <Text style={[styles.searchText, (!busOnline || !serviceIsOpen) && styles.searchTextOffline]}>
+              {!serviceIsOpen ? 'Service closed' : !busOnline ? 'No buses online' : selectedStopKey === null ? 'Request a stop' : requestableStops.find((e) => e.key === selectedStopKey)?.stop.name ?? 'Request a stop'}
+            </Text>
+            <Icon name="keyboard-arrow-down" size={24} color={busOnline && serviceIsOpen ? primaryColor : GRAY_400} />
+          </TouchableOpacity>
+        </Animated.View>
       )}
 
       {/* Parent: "Link a child" CTA when no children are linked yet */}
-      {role === 'parent' && childProfiles.length === 0 && !rideActive && !selectedBusId && (
-        <TouchableOpacity
-          style={[styles.parentCtaCard, { top: topOverlay }]}
-          onPress={() => navigation.navigate('ParentChildLink')}
-          activeOpacity={0.85}
+      {parentCta.value && (
+        <Animated.View
+          pointerEvents={parentCta.exiting ? 'none' : 'box-none'}
+          style={[styles.chromeLayer, { zIndex: 90, elevation: 4 }, presenceStyle(parentCta.anim, { rise: -6, scale: 1 })]}
         >
-          <Icon name="child-care" size={22} color={primaryColor} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.parentCtaTitle}>Link a child to get started</Text>
-            <Text style={styles.parentCtaBody}>Tap here to add your child's account so you can track their shuttle.</Text>
-          </View>
-          <Icon name="chevron-right" size={20} color={primaryColor} />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.parentCtaCard, { top: topOverlay }]}
+            onPress={() => navigation.navigate('ParentChildLink')}
+            activeOpacity={0.85}
+          >
+            <Icon name="child-care" size={22} color={primaryColor} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.parentCtaTitle}>Link a child to get started</Text>
+              <Text style={styles.parentCtaBody}>Tap here to add your child's account so you can track their shuttle.</Text>
+            </View>
+            <Icon name="chevron-right" size={20} color={primaryColor} />
+          </TouchableOpacity>
+        </Animated.View>
       )}
 
       {/* Parent: active child indicator pill */}
-      {role === 'parent' && selectedChild && !rideActive && !selectedBusId && (
-        <TouchableOpacity
-          style={[styles.activeChildPill, { top: topOverlay, borderColor: primaryColor + '40' }]}
-          onPress={() => childProfiles.length > 1 && setShowChildPicker(true)}
-          activeOpacity={childProfiles.length > 1 ? 0.7 : 1}
+      {childPill.value && (
+        <Animated.View
+          pointerEvents={childPill.exiting ? 'none' : 'box-none'}
+          style={[styles.chromeLayer, { zIndex: 90, elevation: 3 }, presenceStyle(childPill.anim, { rise: -6, scale: 1 })]}
         >
-          <View style={[styles.activeChildDot, { backgroundColor: primaryColor }]} />
-          <Text style={[styles.activeChildText, { color: primaryColor }]}>
-            Tracking {selectedChild.name.split(' ')[0]}
-          </Text>
-          {childProfiles.length > 1 && (
-            <Icon name="swap-horiz" size={16} color={primaryColor} style={{ marginLeft: 2 }} />
-          )}
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.activeChildPill, { top: topOverlay, borderColor: primaryColor + '40' }]}
+            onPress={() => childProfiles.length > 1 && setShowChildPicker(true)}
+            activeOpacity={childProfiles.length > 1 ? 0.7 : 1}
+          >
+            <View style={[styles.activeChildDot, { backgroundColor: primaryColor }]} />
+            <Text style={[styles.activeChildText, { color: primaryColor }]}>
+              Tracking {childPill.value.name.split(' ')[0]}
+            </Text>
+            {childProfiles.length > 1 && (
+              <Icon name="swap-horiz" size={16} color={primaryColor} style={{ marginLeft: 2 }} />
+            )}
+          </TouchableOpacity>
+        </Animated.View>
       )}
 
-      {!rideActive && !showLocationList && !selectedBusId && !selectedStopCardId && (
-        <View style={[styles.tipContainer, {
-          top: role === 'parent' && childProfiles.length === 0
-            ? topOverlay + 96    // CTA card (~82px) + 14 gap
-            : role === 'parent' && childProfiles.length > 0
-              ? topOverlay + 116  // pill (36) + gap (10) + search bar (50) + gap (20)
-              : topOverlay + 60,  // search bar (50) + gap (10)
-        }]}>
-          <AnnouncementBanner orgId={org?.orgId} style={{ marginBottom: 10 }} />
-          {/* One compact status pill instead of large cards covering the map. */}
-          {!serviceIsOpen ? (
-            <TouchableOpacity
-              style={styles.statusPill}
-              onPress={() => (navigation as any).navigate('Routes')}
-              accessibilityRole="button"
-              accessibilityHint="Opens route hours"
-            >
-              <Icon name="schedule" size={15} color={GRAY_700} />
-              <Text style={styles.statusPillText} numberOfLines={1}>
-                Closed{closedNextOpenText ? ` · ${closedNextOpenText}` : ''}
-              </Text>
-              <Icon name="chevron-right" size={16} color={GRAY_400} />
-            </TouchableOpacity>
-          ) : !busOnline ? (
-            <View style={styles.statusPill}>
-              <Icon name="directions-bus" size={15} color={GRAY_500} />
-              <Text style={styles.statusPillText} numberOfLines={1}>No buses online yet · check back shortly</Text>
-            </View>
-          ) : shownBusIds.length === 0 ? (
-            // Buses are running, just not on the routes the rider is watching.
-            <View style={styles.statusPill}>
-              <Icon name="directions-bus" size={15} color={GRAY_500} />
-              <Text style={styles.statusPillText} numberOfLines={1}>No buses on your routes right now</Text>
-            </View>
-          ) : (
-            // Counts only the buses on the map: the watched routes (plus the
-            // rider's own ride), not every bus in the org.
-            <View style={styles.statusPill}>
-              <View style={styles.busCountDot} />
-              <Text style={styles.statusPillText}>
-                {shownBusIds.length} bus{shownBusIds.length !== 1 ? 'es' : ''} online
-              </Text>
-            </View>
-          )}
-          {serviceIsOpen && busOnline && showMapTip && (
-            <View style={{ marginTop: 8 }}>
-              <InfoBanner
-                icon="lightbulb-outline"
-                title={role === 'parent' ? 'Live tracking' : 'Quick pointers'}
-                description={role === 'parent'
-                  ? 'Tap a bus to see its ETA and next stop. Your child\'s pickup status will appear below.'
-                  : 'Tap "Request a stop" to pick your pickup, or tap a bus to see its ETA and next stop.'}
-              />
+      {mapTips.value && (
+        <Animated.View
+          pointerEvents={mapTips.exiting ? 'none' : 'box-none'}
+          style={[styles.chromeLayer, { zIndex: 90 }, presenceStyle(mapTips.anim, { rise: -6, scale: 1 })]}
+        >
+          <View style={[styles.tipContainer, {
+            top: role === 'parent' && childProfiles.length === 0
+              ? topOverlay + 96    // CTA card (~82px) + 14 gap
+              : role === 'parent' && childProfiles.length > 0
+                ? topOverlay + 116  // pill (36) + gap (10) + search bar (50) + gap (20)
+                : topOverlay + 60,  // search bar (50) + gap (10)
+          }]}>
+            <AnnouncementBanner orgId={org?.orgId} style={{ marginBottom: 10 }} />
+            {/* One compact status pill instead of large cards covering the map. */}
+            {!serviceIsOpen ? (
               <TouchableOpacity
-                style={styles.tipClose}
-                onPress={dismissMapTip}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.statusPill}
+                onPress={() => (navigation as any).navigate('Routes')}
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss tip"
+                accessibilityHint="Opens route hours"
               >
-                <Icon name="close" size={16} color={GRAY_400} />
+                <Icon name="schedule" size={15} color={GRAY_700} />
+                <Text style={styles.statusPillText} numberOfLines={1}>
+                  Closed{closedNextOpenText ? ` · ${closedNextOpenText}` : ''}
+                </Text>
+                <Icon name="chevron-right" size={16} color={GRAY_400} />
               </TouchableOpacity>
-            </View>
-          )}
-        </View>
+            ) : !busOnline ? (
+              <View style={styles.statusPill}>
+                <Icon name="directions-bus" size={15} color={GRAY_500} />
+                <Text style={styles.statusPillText} numberOfLines={1}>No buses online yet · check back shortly</Text>
+              </View>
+            ) : shownBusIds.length === 0 ? (
+              // Buses are running, just not on the routes the rider is watching.
+              <View style={styles.statusPill}>
+                <Icon name="directions-bus" size={15} color={GRAY_500} />
+                <Text style={styles.statusPillText} numberOfLines={1}>No buses on your routes right now</Text>
+              </View>
+            ) : (
+              // Counts only the buses on the map: the watched routes (plus the
+              // rider's own ride), not every bus in the org.
+              <View style={styles.statusPill}>
+                <View style={styles.busCountDot} />
+                <Text style={styles.statusPillText}>
+                  {shownBusIds.length} bus{shownBusIds.length !== 1 ? 'es' : ''} online
+                </Text>
+              </View>
+            )}
+            {serviceIsOpen && busOnline && showMapTip && (
+              <View style={{ marginTop: 8 }}>
+                <InfoBanner
+                  icon="lightbulb-outline"
+                  title={role === 'parent' ? 'Live tracking' : 'Quick pointers'}
+                  description={role === 'parent'
+                    ? 'Tap a bus to see its ETA and next stop. Your child\'s pickup status will appear below.'
+                    : 'Tap "Request a stop" to pick your pickup, or tap a bus to see its ETA and next stop.'}
+                />
+                <TouchableOpacity
+                  style={styles.tipClose}
+                  onPress={dismissMapTip}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss tip"
+                >
+                  <Icon name="close" size={16} color={GRAY_400} />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </Animated.View>
       )}
 
-      {!rideActive && showLocationList && !selectedBusId && (
+      {stopList.value && (
         <TouchableWithoutFeedback onPress={() => setShowLocationList(false)}>
-          <View style={styles.overlay}>
-            <View style={[styles.locationListContainer, { top: role === 'parent' ? topOverlay + 106 : topOverlay + 60 }]}>
+          <Animated.View
+            style={[styles.overlay, { opacity: stopList.anim }]}
+            pointerEvents={stopList.exiting ? 'none' : 'auto'}
+          >
+            {/* Drops down from the "Request a stop" bar above it. */}
+            <Animated.View style={[
+              styles.locationListContainer,
+              { top: role === 'parent' ? topOverlay + 106 : topOverlay + 60 },
+              presenceStyle(stopList.anim, { rise: -8, scale: 0.98 }),
+            ]}>
               <FlatList
                 // Stops on routes that aren't running go last, dimmed. They stay
                 // tappable: handleRequest explains when the route opens.
@@ -2501,8 +2525,8 @@ const handleConfirmSheetConfirm = async () => {
                   );
                 }}
               />
-            </View>
-          </View>
+            </Animated.View>
+          </Animated.View>
         </TouchableWithoutFeedback>
       )}
 
@@ -2886,15 +2910,21 @@ const handleConfirmSheetConfirm = async () => {
       )}
 
       {groupChooser && !selectedBusId && (
-        <>
-          <TouchableWithoutFeedback onPress={() => setGroupChooser(null)}>
-            <View style={styles.transparentOverlay} />
-          </TouchableWithoutFeedback>
-          <View style={[styles.busInfoCardWrap, { top: topOverlay }]} pointerEvents="box-none">
+        <TouchableWithoutFeedback onPress={() => setGroupChooser(null)}>
+          <View style={styles.transparentOverlay} />
+        </TouchableWithoutFeedback>
+      )}
+      {chooser.value && (() => {
+        const chooserIds = chooser.value;
+        return (
+          <Animated.View
+            style={[styles.busInfoCardWrap, { top: topOverlay }, presenceStyle(chooser.anim, { rise: 6, scale: 0.92 })]}
+            pointerEvents={chooser.exiting ? 'none' : 'box-none'}
+          >
             <View style={[styles.busCloudInner, { backgroundColor: WHITE }]}>
               <View style={styles.busCloudHeader}>
                 <Text style={[styles.busCloudTitle, { flex: 1 }]}>
-                  {groupChooser.length} buses here
+                  {chooserIds.length} buses here
                 </Text>
                 <TouchableOpacity
                   onPress={() => setGroupChooser(null)}
@@ -2905,7 +2935,7 @@ const handleConfirmSheetConfirm = async () => {
                   <Icon name="close" size={18} color={GRAY_400} />
                 </TouchableOpacity>
               </View>
-              {groupChooser.filter((id) => busLocations[id]).map((id) => {
+              {chooserIds.filter((id) => busLocations[id]).map((id) => {
                 const route = orgRoutes.find((r) => r.id === busRouteIds[id]);
                 const loc = busLocations[id];
                 return (
@@ -2927,12 +2957,17 @@ const handleConfirmSheetConfirm = async () => {
                 );
               })}
             </View>
-          </View>
-        </>
-      )}
+          </Animated.View>
+        );
+      })()}
 
-      {selectedStopCardId && !selectedBusId && (() => {
-        const stop = stops.find((st) => st.id === selectedStopCardId);
+      {selectedStopCardId && !selectedBusId && (
+        <TouchableWithoutFeedback onPress={closeStopCard}>
+          <View style={styles.transparentOverlay} />
+        </TouchableWithoutFeedback>
+      )}
+      {stopCard.value && (() => {
+        const stop = stops.find((st) => st.id === stopCard.value);
         if (!stop) return null;
         const entries = requestableStops.filter((e) => e.stop.id === stop.id);
         const nextBusText = stopNextBusText(stop.id);
@@ -2954,22 +2989,13 @@ const handleConfirmSheetConfirm = async () => {
           : null;
         return (
           <>
-            <TouchableWithoutFeedback onPress={closeStopCard}>
-              <View style={styles.transparentOverlay} />
-            </TouchableWithoutFeedback>
             <Animated.View
               style={[
                 styles.busInfoCardWrap,
-                {
-                  top: topOverlay,
-                  opacity: stopCardAnim,
-                  transform: [
-                    { translateY: stopCardAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) },
-                    { scale: stopCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
-                  ],
-                },
+                { top: topOverlay },
+                presenceStyle(stopCard.anim),
               ]}
-              pointerEvents="box-none"
+              pointerEvents={stopCard.exiting ? 'none' : 'box-none'}
             >
               <View style={[styles.busCloudInner, { backgroundColor: WHITE }]}>
                 <View style={styles.busCloudHeader}>
@@ -3034,18 +3060,15 @@ const handleConfirmSheetConfirm = async () => {
         </TouchableWithoutFeedback>
       )}
 
-      {selectedBusId && busLocations[selectedBusId] && (() => {
-        const loc = busLocations[selectedBusId];
+      {cardBusId && busLocations[cardBusId] && (() => {
+        const loc = busLocations[cardBusId];
         return (
           <Animated.View
-            pointerEvents="box-none"
+            pointerEvents={busCard.exiting ? 'none' : 'box-none'}
             style={[
               styles.busInfoCardWrap,
-              {
-                top: topOverlay,
-                opacity: cloudOpacity,
-                transform: [{ translateY: cloudTranslateY }, { scale: cloudScale }],
-              },
+              { top: topOverlay },
+              presenceStyle(busCard.anim, { rise: 6, scale: 0.92 }),
             ]}
           >
             <View style={styles.busCloudInner}>
@@ -3138,46 +3161,48 @@ const handleConfirmSheetConfirm = async () => {
         style={[
           styles.bottomCard,
           {
-            transform: [{ translateY: slideAnim.interpolate({ inputRange: [0, 1], outputRange: [300, 0] }) }],
-            opacity: slideAnim,
+            transform: [{ translateY: rideCard.anim.interpolate({ inputRange: [0, 1], outputRange: [300, 0] }) }],
+            opacity: rideCard.anim,
           },
         ]}
       >
-        {visibleRequest ? (
+        {rideCardRequest ? (
           <>
             <View style={styles.cardHandle} />
 
             <View style={styles.cardRow}>
-              {visibleRequest.stop?.name ? (
-                <Text style={styles.cardStopName}>{visibleRequest.stop.name}</Text>
+              {rideCardRequest.stop?.name ? (
+                <Text style={styles.cardStopName}>{rideCardRequest.stop.name}</Text>
               ) : null}
-              <View style={[
-                styles.cardBadge,
-                visibleRequest.status === 'completed'
-                  ? styles.cardBadgeDone
-                  : visibleRequest.status === 'awaiting_confirmation'
-                    ? styles.cardBadgeConfirming
-                    : visibleRequest.status === 'cancelled'
-                      ? styles.cardBadgeExpired
-                      : styles.cardBadgeActive,
-              ]}>
-                <Text style={styles.cardBadgeText}>
-                  {visibleRequest.status === 'cancelled'
-                    ? (visibleRequest.cancelledReason === 'ttl_expired_15m' ? 'Expired' : 'Cancelled')
-                    : visibleRequest.status === 'completed'
-                      ? 'Completed'
-                      : visibleRequest.status === 'awaiting_confirmation'
-                        ? 'Confirming…'
-                        : 'Active'}
-                </Text>
-              </View>
+              <Animated.View style={rideStatusFade}>
+                <View style={[
+                  styles.cardBadge,
+                  rideCardRequest.status === 'completed'
+                    ? styles.cardBadgeDone
+                    : rideCardRequest.status === 'awaiting_confirmation'
+                      ? styles.cardBadgeConfirming
+                      : rideCardRequest.status === 'cancelled'
+                        ? styles.cardBadgeExpired
+                        : styles.cardBadgeActive,
+                ]}>
+                  <Text style={styles.cardBadgeText}>
+                    {rideCardRequest.status === 'cancelled'
+                      ? (rideCardRequest.cancelledReason === 'ttl_expired_15m' ? 'Expired' : 'Cancelled')
+                      : rideCardRequest.status === 'completed'
+                        ? 'Completed'
+                        : rideCardRequest.status === 'awaiting_confirmation'
+                          ? 'Confirming…'
+                          : 'Active'}
+                  </Text>
+                </View>
+              </Animated.View>
             </View>
 
             {(() => {
               // The request's own route — a terminal shared by several routes
               // would otherwise show whichever route lists it first.
-              const stopId = visibleRequest.stop?.id ?? visibleRequest.stopId;
-              const reqRoute = orgRoutes.find((r) => r.id === visibleRequest.routeId && r.stopIds.includes(stopId));
+              const stopId = rideCardRequest.stop?.id ?? rideCardRequest.stopId;
+              const reqRoute = orgRoutes.find((r) => r.id === rideCardRequest.routeId && r.stopIds.includes(stopId));
               const info = reqRoute
                 ? { routeName: reqRoute.name, position: reqRoute.stopIds.indexOf(stopId) + 1, totalStops: reqRoute.stopIds.length }
                 : routeStopMap.get(stopId);
@@ -3189,23 +3214,25 @@ const handleConfirmSheetConfirm = async () => {
               );
             })()}
 
-            <Text style={styles.cardSubtitle}>
-              {visibleRequest.status === 'cancelled'
-                ? visibleRequest.cancelledReason === 'driver_offline'
-                  ? 'Your driver went offline. Tap dismiss to start a new request.'
-                  : visibleRequest.cancelledReason === 'driver_on_break'
-                    ? 'Your driver is on a break. Tap dismiss to start a new request.'
-                    : visibleRequest.cancelledReason === 'no_buses_online'
-                      ? 'No buses are currently online. Service has ended for now.'
-                      : 'The request timed out after 15 minutes.'
-                : visibleRequest.status === 'completed'
-                  ? 'The bus has passed this stop.'
-                  : visibleRequest.status === 'awaiting_confirmation'
-                    ? 'The driver recorded a boarding — tap to confirm your pickup.'
-                    : role === 'parent'
-                      ? `${visibleRequest.childName ? `${visibleRequest.childName}'s` : "Your child's"} stop is confirmed. The bus will pick them up.`
-                      : 'Your stop is confirmed. The bus will pick you up.'}
-            </Text>
+            <Animated.View style={rideStatusFade}>
+              <Text style={styles.cardSubtitle}>
+                {rideCardRequest.status === 'cancelled'
+                  ? rideCardRequest.cancelledReason === 'driver_offline'
+                    ? 'Your driver went offline. Tap dismiss to start a new request.'
+                    : rideCardRequest.cancelledReason === 'driver_on_break'
+                      ? 'Your driver is on a break. Tap dismiss to start a new request.'
+                      : rideCardRequest.cancelledReason === 'no_buses_online'
+                        ? 'No buses are currently online. Service has ended for now.'
+                        : 'The request timed out after 15 minutes.'
+                  : rideCardRequest.status === 'completed'
+                    ? 'The bus has passed this stop.'
+                    : rideCardRequest.status === 'awaiting_confirmation'
+                      ? 'The driver recorded a boarding — tap to confirm your pickup.'
+                      : role === 'parent'
+                        ? `${rideCardRequest.childName ? `${rideCardRequest.childName}'s` : "Your child's"} stop is confirmed. The bus will pick them up.`
+                        : 'Your stop is confirmed. The bus will pick you up.'}
+              </Text>
+            </Animated.View>
 
             {(eta || stopsBefore !== null) && (
               <View style={styles.cardInfoRow}>
@@ -3225,7 +3252,7 @@ const handleConfirmSheetConfirm = async () => {
             )}
 
             {/* Confirm pickup button */}
-            {visibleRequest.status === 'awaiting_confirmation' && (
+            {rideCardRequest.status === 'awaiting_confirmation' && (
               <TouchableOpacity
                 style={[styles.confirmPickupBtn, { backgroundColor: primaryColor }]}
                 onPress={() => setShowPickupConfirm(true)}
@@ -3236,16 +3263,16 @@ const handleConfirmSheetConfirm = async () => {
             )}
 
             {/* Dismiss button for terminal states */}
-            {(visibleRequest.status === 'completed' || visibleRequest.status === 'cancelled') && (
+            {(rideCardRequest.status === 'completed' || rideCardRequest.status === 'cancelled') && (
               <TouchableOpacity
                 style={styles.dismissButton}
-                onPress={() => setDismissedRequestId(visibleRequest.id)}
+                onPress={() => setDismissedRequestId(rideCardRequest.id)}
               >
                 <Text style={styles.dismissButtonText}>Dismiss</Text>
               </TouchableOpacity>
             )}
 
-            {visibleRequest.studentUid === studentUid && (visibleRequest.status === 'accepted' || visibleRequest.status === 'pending') && (
+            {rideCardRequest.studentUid === studentUid && (rideCardRequest.status === 'accepted' || rideCardRequest.status === 'pending') && (
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => setConfirmSheet({ type: 'cancelRequest' })}
@@ -3260,105 +3287,99 @@ const handleConfirmSheetConfirm = async () => {
       </Animated.View>
 
       {/* Route picker for the "Now watching" filter: All routes, or any mix of routes. */}
-      <Modal visible={showRoutePicker} transparent animationType="slide" onRequestClose={() => setShowRoutePicker(false)}>
-        <TouchableWithoutFeedback onPress={() => setShowRoutePicker(false)}>
-          <View style={styles.childPickerOverlay}>
-            <TouchableWithoutFeedback>
-              <View style={[styles.childPickerSheet, { paddingBottom: Math.max(40, insets.bottom + 16) }]}>
-                <Text style={styles.childPickerTitle}>Which routes do you want to watch?</Text>
-                <Text style={styles.routePickerHint}>Pick one or more. Other routes' stops and buses are hidden.</Text>
-                <ScrollView style={{ maxHeight: 360 }}>
-                  <TouchableOpacity
-                    style={[styles.childPickerRow, watchedRouteIds.length === 0 && { backgroundColor: `${primaryColor}12` }]}
-                    onPress={() => { watchRoutes([]); setSelectedStopCardId(null); }}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: watchedRouteIds.length === 0 }}
-                  >
-                    <View style={[styles.childPickerAvatar, { backgroundColor: GRAY_100 }]}>
-                      <Icon name="layers" size={18} color={GRAY_700} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.childPickerName}>All routes</Text>
-                      <Text style={styles.childPickerGrade}>Every route, stop and bus</Text>
-                    </View>
-                    {watchedRouteIds.length === 0 && <Icon name="check" size={20} color={primaryColor} />}
-                  </TouchableOpacity>
-                  {orgRoutes.map((r) => {
-                    const checked = watchedRouteIds.includes(r.id);
-                    const dotColor = r.color ?? primaryColor;
-                    return (
-                      <TouchableOpacity
-                        key={r.id}
-                        style={[styles.childPickerRow, checked && { backgroundColor: `${dotColor}12` }]}
-                        onPress={() => {
-                          watchRoutes(toggleWatchedRoute(watchedRouteIds, r.id));
-                          setSelectedStopCardId(null);
-                        }}
-                        accessibilityRole="checkbox"
-                        accessibilityState={{ checked }}
-                      >
-                        <View style={[styles.childPickerAvatar, { backgroundColor: `${dotColor}22` }]}>
-                          <View style={[styles.routePickerSwatch, { backgroundColor: dotColor }]} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.childPickerName}>{r.name}</Text>
-                          <Text style={styles.childPickerGrade}>
-                            {`${r.stopIds.length} stop${r.stopIds.length === 1 ? '' : 's'}${isRouteActive(r, new Date(), org?.timezone) ? ' · running now' : ''}`}
-                          </Text>
-                        </View>
-                        <Icon
-                          name={checked ? 'check-box' : 'check-box-outline-blank'}
-                          size={22}
-                          color={checked ? dotColor : GRAY_400}
-                        />
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-                <TouchableOpacity
-                  style={[styles.routePickerDone, { backgroundColor: primaryColor }]}
-                  onPress={() => setShowRoutePicker(false)}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.routePickerDoneText}>Done</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
+      {/* BottomSheet fades the backdrop and springs the sheet up, like the
+          app's other sheets (a plain sliding Modal dragged the backdrop up too). */}
+      <BottomSheet
+        visible={showRoutePicker}
+        onClose={() => setShowRoutePicker(false)}
+        sheetStyle={{ ...styles.childPickerSheet, paddingBottom: Math.max(40, insets.bottom + 16) }}
+      >
+        <Text style={styles.childPickerTitle}>Which routes do you want to watch?</Text>
+        <Text style={styles.routePickerHint}>Pick one or more. Other routes' stops and buses are hidden.</Text>
+        <ScrollView style={{ maxHeight: 360 }}>
+          <TouchableOpacity
+            style={[styles.childPickerRow, watchedRouteIds.length === 0 && { backgroundColor: `${primaryColor}12` }]}
+            onPress={() => { watchRoutes([]); setSelectedStopCardId(null); }}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: watchedRouteIds.length === 0 }}
+          >
+            <View style={[styles.childPickerAvatar, { backgroundColor: GRAY_100 }]}>
+              <Icon name="layers" size={18} color={GRAY_700} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.childPickerName}>All routes</Text>
+              <Text style={styles.childPickerGrade}>Every route, stop and bus</Text>
+            </View>
+            {watchedRouteIds.length === 0 && <Icon name="check" size={20} color={primaryColor} />}
+          </TouchableOpacity>
+          {orgRoutes.map((r) => {
+            const checked = watchedRouteIds.includes(r.id);
+            const dotColor = r.color ?? primaryColor;
+            return (
+              <TouchableOpacity
+                key={r.id}
+                style={[styles.childPickerRow, checked && { backgroundColor: `${dotColor}12` }]}
+                onPress={() => {
+                  watchRoutes(toggleWatchedRoute(watchedRouteIds, r.id));
+                  setSelectedStopCardId(null);
+                }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked }}
+              >
+                <View style={[styles.childPickerAvatar, { backgroundColor: `${dotColor}22` }]}>
+                  <View style={[styles.routePickerSwatch, { backgroundColor: dotColor }]} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.childPickerName}>{r.name}</Text>
+                  <Text style={styles.childPickerGrade}>
+                    {`${r.stopIds.length} stop${r.stopIds.length === 1 ? '' : 's'}${isRouteActive(r, new Date(), org?.timezone) ? ' · running now' : ''}`}
+                  </Text>
+                </View>
+                <Icon
+                  name={checked ? 'check-box' : 'check-box-outline-blank'}
+                  size={22}
+                  color={checked ? dotColor : GRAY_400}
+                />
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <TouchableOpacity
+          style={[styles.routePickerDone, { backgroundColor: primaryColor }]}
+          onPress={() => setShowRoutePicker(false)}
+          accessibilityRole="button"
+        >
+          <Text style={styles.routePickerDoneText}>Done</Text>
+        </TouchableOpacity>
+      </BottomSheet>
 
       {/* Child picker — shown when parent has multiple children */}
-      <Modal visible={showChildPicker} transparent animationType="slide" onRequestClose={() => setShowChildPicker(false)}>
-        <TouchableWithoutFeedback onPress={() => setShowChildPicker(false)}>
-          <View style={styles.childPickerOverlay}>
-            <TouchableWithoutFeedback>
-              <View style={styles.childPickerSheet}>
-                <Text style={styles.childPickerTitle}>Who is this stop for?</Text>
-                {childProfiles.map((child) => (
-                  <TouchableOpacity
-                    key={child.id}
-                    style={[styles.childPickerRow, selectedChild?.id === child.id && { backgroundColor: `${primaryColor}12` }]}
-                    onPress={() => {
-                      setSelectedChild(child);
-                      setShowChildPicker(false);
-                    }}
-                  >
-                    <View style={[styles.childPickerAvatar, { backgroundColor: `${primaryColor}22` }]}>
-                      <Icon name="person" size={18} color={primaryColor} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.childPickerName}>{child.name}</Text>
-                      {child.grade ? <Text style={styles.childPickerGrade}>{child.grade}</Text> : null}
-                    </View>
-                    {selectedChild?.id === child.id && <Icon name="check" size={20} color={primaryColor} />}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
+      <BottomSheet
+        visible={showChildPicker}
+        onClose={() => setShowChildPicker(false)}
+        sheetStyle={styles.childPickerSheet}
+      >
+        <Text style={styles.childPickerTitle}>Who is this stop for?</Text>
+        {childProfiles.map((child) => (
+          <TouchableOpacity
+            key={child.id}
+            style={[styles.childPickerRow, selectedChild?.id === child.id && { backgroundColor: `${primaryColor}12` }]}
+            onPress={() => {
+              setSelectedChild(child);
+              setShowChildPicker(false);
+            }}
+          >
+            <View style={[styles.childPickerAvatar, { backgroundColor: `${primaryColor}22` }]}>
+              <Icon name="person" size={18} color={primaryColor} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.childPickerName}>{child.name}</Text>
+              {child.grade ? <Text style={styles.childPickerGrade}>{child.grade}</Text> : null}
+            </View>
+            {selectedChild?.id === child.id && <Icon name="check" size={20} color={primaryColor} />}
+          </TouchableOpacity>
+        ))}
+      </BottomSheet>
 
       {/* Pickup confirmation + feedback modal */}
       {showPickupConfirm && request && orgId && studentUid && (
@@ -3511,6 +3532,9 @@ const styles = StyleSheet.create({
   searchTextOffline: { color: GRAY_400 },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 99 },
   transparentOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', zIndex: 99 },
+  // Full-screen, touch-transparent layer that fades a top-of-map control in
+  // and out; it takes the control's zIndex/elevation so stacking is unchanged.
+  chromeLayer: { ...StyleSheet.absoluteFillObject },
 
   locationListContainer: {
     position: 'absolute',
@@ -3708,7 +3732,6 @@ const styles = StyleSheet.create({
   },
   dismissButtonText: { color: GRAY_500, fontSize: 15, fontWeight: '600' },
   noRideText: { fontSize: 16, color: GRAY_500, textAlign: 'center' },
-  childPickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   childPickerSheet: {
     backgroundColor: WHITE,
     borderTopLeftRadius: 20,

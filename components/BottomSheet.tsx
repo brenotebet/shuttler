@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { useAccessibility } from '../src/contexts/AccessibilityContext';
 import { WHITE } from '../src/constants/theme';
+import { MOTION } from '../src/constants/motion';
 
 type Props = {
   visible: boolean;
@@ -20,7 +21,7 @@ export default function BottomSheet({ visible, onClose, children, sheetStyle }: 
   const [modalVisible, setModalVisible] = useState(visible);
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const sheetY = useRef(new Animated.Value(500)).current;
-  const { reduceMotion } = useAccessibility();
+  const { motionReduced: reduceMotion } = useAccessibility();
 
   useEffect(() => {
     if (visible) {
@@ -32,14 +33,12 @@ export default function BottomSheet({ visible, onClose, children, sheetStyle }: 
         Animated.parallel([
           Animated.timing(overlayOpacity, {
             toValue: 1,
-            duration: 220,
+            duration: MOTION.backdropInMs,
             useNativeDriver: true,
           }),
           Animated.spring(sheetY, {
             toValue: 0,
-            damping: 28,
-            stiffness: 280,
-            mass: 0.8,
+            ...MOTION.sheetSpring,
             useNativeDriver: true,
           }),
         ]).start();
@@ -53,12 +52,12 @@ export default function BottomSheet({ visible, onClose, children, sheetStyle }: 
         Animated.parallel([
           Animated.timing(overlayOpacity, {
             toValue: 0,
-            duration: 180,
+            duration: MOTION.backdropOutMs,
             useNativeDriver: true,
           }),
           Animated.timing(sheetY, {
             toValue: 500,
-            duration: 200,
+            duration: MOTION.sheetExitMs,
             useNativeDriver: true,
           }),
         ]).start(() => setModalVisible(false));
