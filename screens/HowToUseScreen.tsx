@@ -309,7 +309,7 @@ export default function HowToUseScreen() {
   const { role, isOnboarding } = route.params;
   const { role: liveRole } = useAuth();
   const { primaryColor } = useOrgTheme();
-  const { reduceMotion } = useAccessibility();
+  const { motionReduced: reduceMotion } = useAccessibility();
 
   const steps = stepsForRole(role, isOnboarding);
   const title = titleForRole(role, isOnboarding);
