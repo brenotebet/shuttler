@@ -39,6 +39,8 @@ const ORG_DOC = {
   subscriptionStatus: 'active',
   approved:           true,
   reviewStatus:       'approved',
+  // Reviewers test from anywhere — skip the 400 m stop-proximity gate.
+  requireStopProximity: false,
   mapCenter:          { latitude: 38.6270, longitude: -90.1994 }, // St. Louis
   mapBoundingBox: {
     ne: { latitude: 38.6370, longitude: -90.1894 },
@@ -130,7 +132,7 @@ async function main() {
   console.log(`\nCreating org: ${ORG_DOC.name} (${ORG_ID})`);
   if (!DRY_RUN) {
     await orgRef.set(ORG_DOC);
-    await db.collection('orgSlugs').doc(ORG_SLUG).set({ orgId: ORG_ID });
+    await db.collection('orgSlugs').doc(ORG_SLUG).set({ orgId: ORG_ID, name: ORG_DOC.name, authMethod: ORG_DOC.authMethod });
   } else {
     console.log(`  [DRY RUN] Would write orgs/${ORG_ID}`);
     console.log(`  [DRY RUN] Would write orgSlugs/${ORG_SLUG}`);
