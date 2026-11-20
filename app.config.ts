@@ -1,9 +1,22 @@
+import fs from 'fs';
 import { ConfigContext, ExpoConfig } from 'expo/config';
 import { load } from '@expo/env';
 
 load(process.cwd());
 
+// Firebase Android config (google-services.json) — required for FCM, which
+// delivers push notifications on Android. On EAS it comes from the
+// GOOGLE_SERVICES_JSON file env var; locally, place the file at the repo root.
+const googleServicesFile =
+  process.env.GOOGLE_SERVICES_JSON ??
+  (fs.existsSync('./google-services.json') ? './google-services.json' : undefined);
+
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
+// Optional Android-only key for the native Maps SDK, so it can be restricted to
+// the app's package + signing SHA-1 (a key can't be restricted to both Android
+// and iOS apps). Falls back to the shared key until one is configured.
+const googleMapsAndroidApiKey =
+  process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_API_KEY || googleMapsApiKey;
 const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
 // Reversed form of the iOS client ID — must be registered as a URL scheme so
 // Google's OAuth flow can redirect back to the app on iOS.
@@ -50,7 +63,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     config: {
-      googleMaps: { apiKey: googleMapsApiKey },
+      googleMaps: { apiKey: googleMapsAndroidApiKey },
     },
     intentFilters: [
       {
@@ -69,6 +82,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'ACCESS_COARSE_LOCATION',
       'ACCESS_BACKGROUND_LOCATION',
     ],
+    // Added by the native template or plugins (e.g. image-picker's video
+    // recording) but unused by Shuttler — Play flags unjustified permissions.
+    blockedPermissions: [
+      'android.permission.RECORD_AUDIO',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+    ],
+    ...(googleServicesFile ? { googleServicesFile } : {}),
     package: 'com.shuttler.app',
   },
   web: {
